@@ -14,4 +14,4 @@ paths = [
 description = "Swift property name, not key material"
 condition = "AND"
 paths = ['''apps/host-macos/Sources/Security/DeviceKey\.swift''']
-regexes = ['''public let privateKey: Curve25519\.Signing\.PrivateKey''']
+regexes = ['''Curve25519\.Signing\.PrivateKey''']
