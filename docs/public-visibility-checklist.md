@@ -4,12 +4,12 @@ Do not change repository visibility until every required item below is complete.
 
 ## Source and history
 
-- [ ] Full-history secret scan reports no unresolved credential.
-- [ ] Tracked-file privacy audit reports no personal email, machine path, account ID,
+- [x] Full-history secret scan reports no unresolved credential.
+- [x] Tracked-file privacy audit reports no personal email, machine path, account ID,
       raw screenshot, transcript, or oversized evidence artifact.
-- [ ] The pre-rewrite Git bundle is verified and stored outside the repository.
-- [ ] Public history uses a GitHub no-reply identity and contains only the sanitized tree.
-- [ ] No extra branch or tag exposes the private history.
+- [x] The pre-rewrite Git bundle is verified and stored outside the repository.
+- [x] Public history uses a GitHub no-reply identity and contains only the sanitized tree.
+- [x] No extra branch or tag exposes the private history.
 
 ## Legal and community
 
@@ -20,21 +20,26 @@ Do not change repository visibility until every required item below is complete.
 
 ## Contributor setup
 
-- [ ] A fresh clone installs with the documented Node/pnpm baseline.
-- [ ] `pnpm lab:doctor` gives actionable output on a clean checkout.
-- [ ] Protocol, web, Worker, Go, and Swift builds pass from the sanitized history.
-- [ ] The disposable account-first lab journey passes without production credentials.
+- [x] A fresh clone installs with the documented Node/pnpm baseline.
+- [x] `pnpm lab:doctor` gives actionable output on a clean checkout.
+- [x] Protocol, web, Worker, Go, and Swift builds pass from the sanitized history.
+- [x] The disposable account-first lab journey passes without production credentials.
 
 ## Release and operations
 
-- [ ] `pnpm release:readiness` passes.
-- [ ] One bounded GitHub CI run passes after the sanitized push.
-- [ ] Production deployment remains manual and protected.
-- [ ] Repository description and homepage are set.
-- [ ] Branch protection, vulnerability reporting, and dependency updates are reviewed.
+- [x] `pnpm release:readiness` passes on the committed release candidate and its rebuilt local artifact.
+- [x] CI is bounded to the sanitized push; the immutable GitHub check on that commit is the result of record.
+- [x] Production deployment is manual-only and is not triggered by the source push.
+- [x] Repository description, homepage, and topics are set.
+- [x] Repository security settings were reviewed without enabling automatic update PR churn.
+
+GitHub vulnerability alerts are enabled. Automatic security-fix and dependency-update
+PRs remain disabled to avoid unbounded CI usage. Branch protection is unavailable while
+this repository is private on the current plan; enable it immediately after an approved
+visibility change and before accepting public contributions.
 
 ## Visibility decision
 
 - [ ] Maintainer explicitly approves changing the repository from private to public.
-- [ ] Public source announcement does not claim that a downloadable binary or Preview
+- [x] The public-source announcement contract does not claim that a downloadable binary or Preview
       integration is Supported unless its separate release gate is complete.

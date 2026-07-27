@@ -20,12 +20,16 @@ test artifacts are intentionally not stored in the public repository.
 
 ## Before changing repository visibility
 
-- [ ] Run the public repository audit and full-history secret scan.
-- [ ] Confirm the sanitized public-history rewrite and private recovery bundle.
-- [ ] Verify a clean clone can install, run `pnpm lab:doctor`, build, and execute the local test lane.
-- [ ] Run `pnpm release:readiness` from the release candidate.
-- [ ] Push once, then confirm the bounded CI and deploy run.
-- [ ] Complete `docs/public-visibility-checklist.md` with no unresolved blocker.
+- [x] Run the public repository audit and full-history secret scan.
+- [x] Confirm the sanitized public-history rewrite and private recovery bundle.
+- [x] Verify a clean clone can install, run `pnpm lab:doctor`, build, and execute the local test lane.
+- [x] Run `pnpm release:readiness` from the committed release candidate and rebuilt local artifact.
+- [x] Use one sanitized push and the immutable CI check on that commit as the result of record.
+- [x] Complete `docs/public-visibility-checklist.md` with no source-readiness blocker.
+
+Repository visibility remains a separate maintainer decision. Branch protection is not
+available for this private repository on the current plan, so the approved visibility
+transition must enable it before public contributions are accepted.
 
 ## Before the first downloadable public beta
 

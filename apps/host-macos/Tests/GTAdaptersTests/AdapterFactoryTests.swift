@@ -196,7 +196,7 @@ final class PTYWrapperTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: liveURL.path))
     }
 
-    func testPreservesTerminalScreenSessionsOwnedByDeadHost() throws {
+    func testReapsTerminalScreenAttachmentOwnedByDeadHost() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("GTPTYWrapperTests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -221,9 +221,11 @@ final class PTYWrapperTests: XCTestCase {
             registryDirectory: directory
         )
 
-        XCTAssertEqual(count, 0)
-        XCTAssertTrue(signals.isEmpty)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: terminalURL.path))
+        XCTAssertEqual(count, 1)
+        XCTAssertEqual(signals.count, 1)
+        XCTAssertEqual(signals.first?.0, 2222)
+        XCTAssertEqual(signals.first?.1, SIGTERM)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: terminalURL.path))
     }
 
     func testRespondsToBasicTerminalCapabilityQueries() throws {

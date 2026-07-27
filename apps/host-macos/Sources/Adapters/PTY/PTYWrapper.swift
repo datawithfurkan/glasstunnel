@@ -213,10 +213,6 @@ public final class PTYWrapper: @unchecked Sendable {
                 try? manager.removeItem(at: file)
                 continue
             }
-            if record.preserveOnOwnerExit {
-                continue
-            }
-
             signalProcessGroup(record.childPid, SIGTERM)
             reaped += 1
             try? manager.removeItem(at: file)
@@ -273,9 +269,6 @@ public final class PTYWrapper: @unchecked Sendable {
     }
 
     private static func recordProcess(childPid: pid_t, executable: String, arguments: [String]) -> URL? {
-        guard !shouldPreserveOnOwnerExit(executable: executable, arguments: arguments) else {
-            return nil
-        }
         let directory = processRegistryDirectory()
         let manager = FileManager.default
         do {
@@ -305,18 +298,13 @@ public final class PTYWrapper: @unchecked Sendable {
             .appendingPathComponent("pty-processes", isDirectory: true)
     }
 
-    private static func shouldPreserveOnOwnerExit(executable: String, arguments: [String]) -> Bool {
-        executable == "/usr/bin/screen"
-            && arguments.contains("-xRR")
-            && arguments.contains("-S")
-            && arguments.contains { $0.hasPrefix("glasstunnel-terminal") }
-    }
-
     struct ProcessRecord: Codable, Equatable {
         let ownerPid: pid_t
         let childPid: pid_t
         let executable: String
         let arguments: [String]
+        // Retained so records written by older builds still decode. Attachments are
+        // always reaped when their owner is gone; the screen server keeps the session.
         let preserveOnOwnerExit: Bool
         let createdAt: Date
     }
