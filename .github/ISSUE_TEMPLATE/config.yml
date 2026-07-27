@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: mailto:security@glasstunnel.io
+    about: Please report security issues privately instead of opening a public issue.
+  - name: Conduct concern
+    url: mailto:conduct@glasstunnel.io
+    about: Report community conduct concerns privately.
+  - name: Self-hosting guide
+    url: https://github.com/datawithfurkan/glasstunnel/blob/main/docs/self-hosting.md
+    about: Check deployment and self-hosting setup before opening an infrastructure issue.

@@ -1,0 +1,17 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e6]:
+      - generic [ref=e7]: glasstunnel
+      - generic [ref=e8]: Pair
+  - main [ref=e9]:
+    - generic [ref=e16]:
+      - generic [ref=e17]:
+        - generic [ref=e18]:
+          - generic [ref=e19]: Pair your Mac
+          - generic [ref=e20]: Open Glasstunnel on your Mac, click Pair New Device, then scan the QR with the camera below.
+        - generic [ref=e27]:
+          - textbox "Paste the glasstunnel:// URL shown on your Mac" [ref=e28]
+          - button "Pair" [disabled] [ref=e29]
+      - generic [ref=e24]:
+        - button "Camera" [ref=e25] [cursor=pointer]
+        - button "Paste link" [active] [ref=e26] [cursor=pointer]

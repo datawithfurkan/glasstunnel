@@ -1,0 +1,6 @@
+packages:
+  - 'apps/cloudflare-signal'
+  - 'apps/mobile-pwa'
+  - 'packages/protocol'
+  - 'packages/shared-crypto'
+  - 'site'

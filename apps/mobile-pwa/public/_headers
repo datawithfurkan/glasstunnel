@@ -1,0 +1,8 @@
+/
+  Cache-Control: public, no-cache, must-revalidate
+
+/index.html
+  Cache-Control: public, no-cache, must-revalidate
+
+/sw.js
+  Cache-Control: public, no-cache, must-revalidate

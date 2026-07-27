@@ -1,0 +1,12 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e6]:
+      - generic [ref=e7]: glasstunnel
+      - generic [ref=e8]: Locked
+  - main [ref=e9]:
+    - generic [ref=e10]:
+      - generic [ref=e11]:
+        - generic [ref=e12]: 🫣
+        - generic [ref=e13]: Unlock Glasstunnel
+        - generic [ref=e14]: Not paired yet
+      - button "Pair a Mac" [ref=e15] [cursor=pointer]

@@ -1,0 +1,44 @@
+name: Feature request
+description: Propose a focused product or contributor improvement.
+title: '[Feature]: '
+labels: ['enhancement']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Explain the user problem before the implementation. Large changes should be discussed before a pull request is opened.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user or contributor problem should Glasstunnel solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the smallest useful outcome and its mobile/Mac surfaces.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Mac app
+        - Mobile PWA
+        - Mac Screen
+        - Terminal
+        - Coding app adapter
+        - Local Test Lab
+        - Self-hosting
+        - Security or privacy
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

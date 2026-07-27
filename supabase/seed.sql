@@ -1,0 +1,2 @@
+-- Auth users are created idempotently by scripts/lab/supabase.mjs.
+-- Keep this file present so `supabase db reset` is deterministic.

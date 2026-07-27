@@ -1,0 +1,102 @@
+name: Mobile screen sharing bug
+description: Report mobile browser problems with Mac Screen sharing.
+title: "[Mobile screen]: "
+labels: ["mobile-screen", "bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for Mac Screen start, stop, restart, reconnect, black video, stale frames, pointer, or mobile browser layout issues.
+  - type: dropdown
+    id: browser
+    attributes:
+      label: Mobile browser
+      options:
+        - iPhone Safari
+        - iPhone Chrome
+        - Android Chrome
+        - Desktop browser
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Phone or tablet model
+      placeholder: "iPhone 15 Pro"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Mobile OS version
+      placeholder: "iOS 18.5"
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: Mac model and macOS version
+      placeholder: "M2 Mac mini, macOS 15.5"
+    validations:
+      required: true
+  - type: input
+    id: glasstunnel-version
+    attributes:
+      label: Glasstunnel version or commit
+      placeholder: "v0.0.0 or commit SHA"
+    validations:
+      required: true
+  - type: checkboxes
+    id: permissions
+    attributes:
+      label: Mac permissions
+      options:
+        - label: Screen Recording is granted to the Glasstunnel app bundle used for this test.
+        - label: Accessibility is granted to the Glasstunnel app bundle used for this test.
+  - type: dropdown
+    id: failing-action
+    attributes:
+      label: Failing action
+      options:
+        - Start sharing
+        - Stop sharing
+        - Restart after stop
+        - Reconnect after refresh
+        - Reconnect after backgrounding
+        - Pointer or typing input
+        - Video quality or readability
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      placeholder: "What should the phone and Mac have shown?"
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      placeholder: "What did you see instead?"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open the hosted PWA on the phone.
+        2. Select Mac Screen.
+        3. Start sharing.
+        4. Stop or reconnect.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Screenshots, screen recording, or logs
+      description: Redact private content before posting. Do not attach captured code or secrets.
+

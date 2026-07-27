@@ -1,0 +1,44 @@
+{
+  "name": "@glasstunnel/mobile-pwa",
+  "version": "0.1.0-dev",
+  "private": true,
+  "description": "Glasstunnel mobile PWA - pair with your Mac, monitor agents, send prompts",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --port 5174",
+    "typecheck": "tsc -b --pretty",
+    "lint": "eslint --max-warnings 0 src",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@glasstunnel/protocol": "workspace:*",
+    "@glasstunnel/shared-crypto": "workspace:*",
+    "@supabase/supabase-js": "^2.106.1",
+    "clsx": "^2.1.1",
+    "idb-keyval": "^6.2.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zustand": "^4.5.5"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "@types/react": "^18.3.4",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^9.9.1",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.10",
+    "typescript": "^5.5.4",
+    "typescript-eslint": "^8.59.4",
+    "vite": "^6.4.2",
+    "vite-plugin-pwa": "^1.3.0",
+    "vitest": "^3.2.4",
+    "workbox-build": "^7.4.1",
+    "workbox-window": "^7.4.1"
+  }
+}

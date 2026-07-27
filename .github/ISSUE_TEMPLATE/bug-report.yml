@@ -1,0 +1,59 @@
+name: General bug report
+description: Report a reproducible problem not covered by the focused templates.
+title: '[Bug]: '
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Glasstunnel. Never upload credentials, prompts, source code, private paths, account/device identifiers, or unredacted screen captures. Security issues belong at security@glasstunnel.io.
+  - type: input
+    id: version
+    attributes:
+      label: Glasstunnel version or commit
+      placeholder: 'v0.0.0 or commit SHA'
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Include macOS, browser/mobile OS, and whether this is a release or local build.
+      placeholder: 'macOS 15.5; iPhone Safari 18.5; local main build'
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start from ...
+        2. Select ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized evidence
+      description: Prefer minimal synthetic logs. Remove private content before attaching anything.
+      render: text
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I removed secrets, private content, account/device identifiers, and absolute local paths.
+          required: true

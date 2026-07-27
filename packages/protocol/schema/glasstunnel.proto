@@ -1,0 +1,425 @@
+syntax = "proto3";
+
+package glasstunnel.v1;
+
+option go_package = "github.com/glasstunnel/glasstunnel/apps/signaling/internal/proto;glasstunnelv1";
+option swift_prefix = "GT";
+
+// =============================================================================
+// SIGNALING ENVELOPES
+// =============================================================================
+// The signaling server only sees Envelopes. Everything inside the `payload`
+// field is opaque to the server and signed by the sender's ed25519 key.
+// =============================================================================
+
+message Envelope {
+  string envelope_id = 1;
+  string from_device_id = 2;
+  string to_device_id = 3;
+  int64 sent_at_unix_ms = 4;
+  bytes signature = 5;
+  oneof payload {
+    SdpOffer sdp_offer = 12;
+    SdpAnswer sdp_answer = 13;
+    IceCandidate ice_candidate = 14;
+    PushRegister push_register = 15;
+    AgentStateEvent agent_state_event = 16;
+    Ping ping = 20;
+    Pong pong = 21;
+    Error error = 99;
+  }
+}
+
+message SdpOffer {
+  string sdp = 1;
+  string session_id = 2;
+}
+
+message SdpAnswer {
+  string sdp = 1;
+  string session_id = 2;
+}
+
+message IceCandidate {
+  string candidate = 1;
+  string sdp_mid = 2;
+  int32 sdp_mline_index = 3;
+  string session_id = 4;
+}
+
+message PushRegister {
+  string endpoint = 1;
+  string p256dh = 2;
+  string auth = 3;
+  bytes phone_public_key = 4;
+}
+
+message AgentStateEvent {
+  string agent_id = 1;
+  AgentStatus status = 2;
+  string summary = 3;
+  int64 at_unix_ms = 4;
+}
+
+message Ping { int64 at_unix_ms = 1; }
+message Pong { int64 at_unix_ms = 1; }
+
+message Error {
+  string code = 1;
+  string message = 2;
+}
+
+// =============================================================================
+// WEBRTC DATA CHANNEL MESSAGES
+// =============================================================================
+// Sent over the encrypted WebRTC DataChannel between Mac host and phone.
+// These never touch the signaling server.
+// =============================================================================
+
+message DataChannelMessage {
+  string message_id = 1;
+  int64 at_unix_ms = 2;
+  oneof body {
+    Hello hello = 10;
+    AgentStateSnapshot agent_state = 11;
+    AgentChatMessage agent_chat_message = 12;
+    UserInput user_input = 13;
+    ImageAttachmentInput image_attachment_input = 14;
+    ImageAttachmentChunk image_attachment_chunk = 25;
+    FileAttachmentChunk file_attachment_chunk = 26;
+    QuickReply quick_reply = 15;
+    InterruptRequest interrupt_request = 16;
+    TargetSelectionRequest target_selection_request = 17;
+    TargetRenameRequest target_rename_request = 31;
+    RemoteAppActionRequest remote_app_action_request = 28;
+    ScreenPointerInput screen_pointer_input = 29;
+    AgentInputRequestResponse input_request_response = 27;
+    GridLayoutUpdate grid_layout_update = 18;
+    ReadOnlyModeUpdate read_only_mode_update = 19;
+    HeartbeatPing heartbeat_ping = 20;
+    HeartbeatPong heartbeat_pong = 21;
+    VideoTrackHint video_track_hint = 22;
+    RedactionPolicyUpdate redaction_policy_update = 23;
+    RemoteAppsUpdate remote_apps_update = 24;
+    AgentRuntimeSettingsUpdate agent_runtime_settings_update = 30;
+  }
+}
+
+message Hello {
+  string host_version = 1;
+  string host_os_version = 2;
+  string host_device_label = 3;
+  repeated string supported_adapters = 4;
+  GridLayout current_layout = 5;
+  repeated RemoteApp remote_apps = 6;
+  // Protocol version for negotiation. Even = stable, odd = development.
+  // Mismatches > 1 major version should close the connection.
+  uint32 protocol_version = 7;
+}
+
+message AgentStateSnapshot {
+  string agent_id = 1;
+  string agent_label = 2;
+  AdapterKind adapter_kind = 3;
+  AgentStatus status = 4;
+  string status_detail = 5;
+  repeated AgentChatMessage recent_messages = 6;
+  int64 last_activity_unix_ms = 7;
+  GridCellPosition position = 8;
+  bool has_video_track = 9;
+  repeated AgentTargetOption available_targets = 10;
+  string remote_app_id = 11;
+  AgentInputRequest pending_input_request = 12;
+  AgentRuntimeControls runtime_controls = 13;
+}
+
+message AgentRuntimeOption {
+  string id = 1;
+  string label = 2;
+  string description = 3;
+}
+
+message AgentRuntimeControls {
+  string model_id = 1;
+  string model_label = 2;
+  repeated AgentRuntimeOption model_options = 3;
+  string reasoning_effort = 4;
+  string reasoning_effort_label = 5;
+  repeated AgentRuntimeOption reasoning_effort_options = 6;
+  bool fast_mode = 7;
+  bool supports_model_selection = 8;
+  bool supports_reasoning_effort = 9;
+  bool supports_fast_mode = 10;
+  bool editable = 11;
+  string applies_on = 12;
+  string note = 13;
+}
+
+message AgentInputRequestChoice {
+  string choice_id = 1;
+  string label = 2;
+  string description = 3;
+  bool recommended = 4;
+}
+
+message AgentInputRequestQuestion {
+  string question_id = 1;
+  string header = 2;
+  string question = 3;
+  repeated AgentInputRequestChoice choices = 4;
+}
+
+message AgentInputRequest {
+  string request_id = 1;
+  repeated AgentInputRequestQuestion questions = 2;
+}
+
+message AgentInputRequestAnswer {
+  string question_id = 1;
+  repeated string choice_ids = 2;
+}
+
+message AgentInputRequestResponse {
+  string agent_id = 1;
+  string request_id = 2;
+  repeated AgentInputRequestAnswer answers = 3;
+}
+
+message RemoteApp {
+  string remote_app_id = 1;
+  string display_name = 2;
+  AdapterKind adapter_kind = 3;
+  string agent_id = 4;
+  bool enabled = 5;
+  bool available = 6;
+  AgentStatus status = 7;
+  string status_detail = 8;
+  string window_title = 9;
+  string application_bundle_id = 10;
+  bool has_video = 11;
+}
+
+message RemoteAppsUpdate {
+  repeated RemoteApp remote_apps = 1;
+}
+
+message AgentChatMessage {
+  string message_id = 1;
+  ChatRole role = 2;
+  string text = 3;
+  int64 at_unix_ms = 4;
+  bool redacted = 5;
+  repeated PendingToolCall pending_tool_calls = 6;
+  // Names of the redaction patterns that fired for this message, e.g.
+  // "aws_access_key", "github_pat". The actual matched text is NEVER sent;
+  // only the pattern name. Phones show these in a tooltip on the redacted pill.
+  repeated string redaction_reasons = 7;
+}
+
+message PendingToolCall {
+  string tool_name = 1;
+  string tool_call_id = 2;
+  string summary = 3;
+}
+
+message AgentTargetOption {
+  string target_id = 1;
+  string label = 2;
+  string subtitle = 3;
+  bool selected = 4;
+  string project_id = 5;
+  string project_label = 6;
+  string project_path = 7;
+  string thread_id = 8;
+  string thread_label = 9;
+  string target_kind = 10;
+  int64 last_activity_unix_ms = 11;
+  bool is_active = 12;
+  bool supports_new_thread = 13;
+}
+
+message UserInput {
+  string agent_id = 1;
+  string text = 2;
+  bool submit_on_send = 3;
+}
+
+message ScreenPointerInput {
+  string agent_id = 1;
+  double x = 2;
+  double y = 3;
+  ScreenPointerAction action = 4;
+}
+
+message ImageAttachmentInput {
+  string agent_id = 1;
+  string text = 2;
+  string filename = 3;
+  string mime_type = 4;
+  bytes bytes = 5;
+  bool submit_on_send = 6;
+}
+
+message ImageAttachmentChunk {
+  string transfer_id = 1;
+  string agent_id = 2;
+  string text = 3;
+  string filename = 4;
+  string mime_type = 5;
+  int64 total_bytes = 6;
+  int32 chunk_index = 7;
+  int32 chunk_count = 8;
+  bytes bytes = 9;
+  bool submit_on_send = 10;
+}
+
+message FileAttachmentChunk {
+  string batch_id = 1;
+  string transfer_id = 2;
+  string agent_id = 3;
+  string text = 4;
+  string filename = 5;
+  string mime_type = 6;
+  int64 total_bytes = 7;
+  int32 file_index = 8;
+  int32 file_count = 9;
+  int32 chunk_index = 10;
+  int32 chunk_count = 11;
+  bytes bytes = 12;
+  bool submit_on_send = 13;
+}
+
+message QuickReply {
+  string agent_id = 1;
+  QuickReplyKind kind = 2;
+}
+
+message InterruptRequest {
+  string agent_id = 1;
+}
+
+message TargetSelectionRequest {
+  string agent_id = 1;
+  string target_id = 2;
+}
+
+message TargetRenameRequest {
+  string agent_id = 1;
+  string target_id = 2;
+  string label = 3;
+}
+
+message AgentRuntimeSettingsUpdate {
+  string agent_id = 1;
+  string model_id = 2;
+  string reasoning_effort = 3;
+  bool fast_mode = 4;
+}
+
+message RemoteAppActionRequest {
+  string remote_app_id = 1;
+  string action = 2;
+  string screen_quality = 3;
+}
+
+message GridLayoutUpdate {
+  GridLayout layout = 1;
+}
+
+message ReadOnlyModeUpdate {
+  bool read_only = 1;
+}
+
+message HeartbeatPing { int64 at_unix_ms = 1; }
+message HeartbeatPong { int64 at_unix_ms = 1; }
+
+message VideoTrackHint {
+  string agent_id = 1;
+  string track_id = 2;
+  bool active = 3;
+}
+
+message RedactionPolicyUpdate {
+  repeated string patterns = 1;
+}
+
+message GridLayout {
+  GridShape shape = 1;
+  repeated GridCell cells = 2;
+}
+
+message GridCell {
+  GridCellPosition position = 1;
+  string agent_id = 2;
+  string window_title = 3;
+  string application_bundle_id = 4;
+  AdapterKind adapter_kind = 5;
+  bool video_enabled = 6;
+}
+
+message GridCellPosition {
+  int32 row = 1;
+  int32 col = 2;
+  int32 row_span = 3;
+  int32 col_span = 4;
+}
+
+// =============================================================================
+// ENUMS
+// =============================================================================
+
+enum AgentStatus {
+  AGENT_STATUS_UNSPECIFIED = 0;
+  AGENT_STATUS_IDLE = 1;
+  AGENT_STATUS_WORKING = 2;
+  AGENT_STATUS_WAITING_INPUT = 3;
+  AGENT_STATUS_AWAITING_APPROVAL = 4;
+  AGENT_STATUS_DONE = 5;
+  AGENT_STATUS_ERROR = 6;
+  AGENT_STATUS_DISCONNECTED = 7;
+}
+
+enum AdapterKind {
+  ADAPTER_KIND_UNSPECIFIED = 0;
+  ADAPTER_KIND_MIRROR = 1;
+  ADAPTER_KIND_CURSOR = 2;
+  ADAPTER_KIND_CLAUDE_CODE = 3;
+  ADAPTER_KIND_CODEX_CLI = 4;
+  ADAPTER_KIND_OPENCODE = 5;
+  ADAPTER_KIND_TERMINAL = 6;
+  ADAPTER_KIND_GEMINI_CLI = 7;
+  ADAPTER_KIND_CURSOR_AGENT = 8;
+}
+
+enum ChatRole {
+  CHAT_ROLE_UNSPECIFIED = 0;
+  CHAT_ROLE_USER = 1;
+  CHAT_ROLE_ASSISTANT = 2;
+  CHAT_ROLE_SYSTEM = 3;
+  CHAT_ROLE_TOOL = 4;
+}
+
+enum QuickReplyKind {
+  QUICK_REPLY_UNSPECIFIED = 0;
+  QUICK_REPLY_CONTINUE = 1;
+  QUICK_REPLY_TRY_AGAIN = 2;
+  QUICK_REPLY_EXPLAIN = 3;
+  QUICK_REPLY_COMMIT = 4;
+  QUICK_REPLY_STOP = 5;
+  QUICK_REPLY_APPROVE = 6;
+  QUICK_REPLY_REJECT = 7;
+}
+
+enum ScreenPointerAction {
+  SCREEN_POINTER_ACTION_UNSPECIFIED = 0;
+  SCREEN_POINTER_ACTION_CLICK = 1;
+  SCREEN_POINTER_ACTION_DOUBLE_CLICK = 2;
+}
+
+enum GridShape {
+  GRID_SHAPE_UNSPECIFIED = 0;
+  GRID_SHAPE_1X1 = 1;
+  GRID_SHAPE_2X1 = 2;
+  GRID_SHAPE_1X2 = 3;
+  GRID_SHAPE_2X2 = 4;
+}

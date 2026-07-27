@@ -1,0 +1,90 @@
+name: App support bug
+description: Report a problem with a supported coding app adapter.
+title: '[App support]: '
+labels: ['app-support', 'bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for a coding app or command-line integration. Preview and Experimental integrations may have known gaps; check the support matrix first. Never upload prompts, source code, credentials, private paths, or unredacted screens.
+  - type: dropdown
+    id: app
+    attributes:
+      label: App or feature
+      options:
+        - Codex desktop
+        - Codex CLI
+        - Cursor
+        - Cursor Agent
+        - Claude Code
+        - Gemini CLI
+        - OpenCode
+        - Terminal
+        - Mac Screen
+        - Generic mirror
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: app-version
+    attributes:
+      label: App version
+      description: Include CLI output such as `codex --version` or the desktop app version when available.
+      placeholder: 'Codex 0.0.0, Cursor 0.0.0, Claude Code 0.0.0'
+  - type: input
+    id: glasstunnel-version
+    attributes:
+      label: Glasstunnel version or commit
+      placeholder: 'v0.0.0 or commit SHA'
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: 'macOS 15.5'
+    validations:
+      required: true
+  - type: dropdown
+    id: browser
+    attributes:
+      label: Mobile browser
+      options:
+        - iPhone Safari
+        - iPhone Chrome
+        - Android Chrome
+        - Desktop browser
+        - Not browser-specific
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      placeholder: 'What should Glasstunnel have shown or done?'
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      placeholder: 'What happened instead?'
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open the Mac app.
+        2. Open the mobile PWA.
+        3. Select the app.
+        4. Send a prompt or action.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Redact secrets, prompts, code, tokens, email addresses, account/device IDs, and private file paths before posting. Prefer a minimal synthetic reproduction.
+      render: text

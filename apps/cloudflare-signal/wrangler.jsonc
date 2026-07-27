@@ -1,0 +1,42 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "glasstunnel-signal",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-04-19",
+  "account_id": "6e40b5b780f64c89c38d041b4b676922",
+  "vars": {
+    "PUBLIC_APP_URL": "https://app.glasstunnel.io"
+  },
+  "routes": [
+    {
+      "pattern": "signaling.glasstunnel.io",
+      "custom_domain": true
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SIGNALING_HUB",
+        "class_name": "SignalingHub"
+      },
+      {
+        "name": "RELAY_HUB",
+        "class_name": "RelayHub"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "SignalingHub"
+      ]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": [
+        "RelayHub"
+      ]
+    }
+  ]
+}

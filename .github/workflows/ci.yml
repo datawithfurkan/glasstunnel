@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  js:
+    name: JS (PWA + packages)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: node scripts/public-repository-audit.mjs
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter=@glasstunnel/protocol build
+      - run: pnpm --filter=@glasstunnel/shared-crypto build
+      - run: pnpm -r typecheck
+      - run: pnpm --filter=./apps/mobile-pwa lint
+      - run: pnpm --filter=@glasstunnel/shared-crypto test
+      - run: pnpm --filter=./apps/mobile-pwa test
+      - run: pnpm build
+
+  go:
+    name: Go (signaling)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.23'
+          cache-dependency-path: apps/signaling/go.sum
+      - working-directory: apps/signaling
+        run: |
+          go mod download
+          go build ./...
+          go vet ./...
+          go test ./...
+
+  swift:
+    name: Swift (Mac host)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v6
+      - name: Select Xcode 15.4
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+      - name: Swift build
+        working-directory: apps/host-macos
+        run: swift build --package-path .
+      - name: Swift test (SPM libraries)
+        working-directory: apps/host-macos
+        run: swift test --package-path .
+
+  proto:
+    name: Protobuf codegen diff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.23'
+          cache-dependency-path: apps/signaling/go.sum
+      - name: Install protoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+          echo "$HOME/go/bin" >> $GITHUB_PATH
+      - name: Regenerate
+        run: bash packages/protocol/scripts/gen.sh
+      - name: Fail on dirty tree
+        run: |
+          if ! git diff --quiet; then
+            echo "Generated proto files are out of date. Run packages/protocol/scripts/gen.sh and commit."
+            git diff --stat
+            exit 1
+          fi
+
+  secrets-scan:
+    name: Secrets scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: trufflesecurity/trufflehog@v3.63.0
+        with:
+          path: ./
+          base: ${{ github.event.pull_request.base.sha || github.event.before }}
+          head: ${{ github.event.pull_request.head.sha || github.sha }}
+          extra_args: --only-verified

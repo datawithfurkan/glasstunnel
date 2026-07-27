@@ -1,0 +1,4 @@
+Privacy-reviewed summary artifact.
+Scope: native permission onboarding, account linking, and relaunch persistence.
+Result: pass.
+Raw screenshots, account identifiers, and local machine names are intentionally not retained in Git.

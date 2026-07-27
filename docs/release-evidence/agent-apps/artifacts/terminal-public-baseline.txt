@@ -1,0 +1,4 @@
+Privacy-reviewed summary artifact.
+Scope: Terminal command, output, interrupt, recovery, and session controls.
+Result: pass.
+Raw transcripts and account-specific output are intentionally not retained in Git.

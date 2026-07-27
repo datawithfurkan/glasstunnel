@@ -1,0 +1,17 @@
+title = "Glasstunnel public repository"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Synthetic security and adapter redaction fixtures"
+paths = [
+  '''apps/host-macos/Tests/GTSecurityTests/SecretRedactorTests\.swift''',
+  '''apps/host-macos/Tests/GTAdaptersTests/(CodexRuntimeCatalogTests|GeminiRuntimeTests|OpenCodeRuntimeTests|TerminalAdapterTests)\.swift'''
+]
+
+[[allowlists]]
+description = "Swift property name, not key material"
+condition = "AND"
+paths = ['''apps/host-macos/Sources/Security/DeviceKey\.swift''']
+regexes = ['''public let privateKey: Curve25519\.Signing\.PrivateKey''']

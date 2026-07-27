@@ -1,0 +1,18 @@
+{
+  "name": "@glasstunnel/site",
+  "version": "0.1.0-dev",
+  "private": true,
+  "description": "Glasstunnel marketing + docs landing site",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 5175",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "vite": "^6.4.2"
+  }
+}

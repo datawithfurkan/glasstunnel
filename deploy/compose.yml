@@ -1,0 +1,31 @@
+name: glasstunnel
+
+services:
+  signaling:
+    build:
+      context: ..
+      dockerfile: deploy/signaling/Dockerfile
+    environment:
+      PORT: "8080"
+      GLASSTUNNEL_VAPID_PUBLIC: "${VAPID_PUBLIC:-}"
+      GLASSTUNNEL_VAPID_PRIVATE: "${VAPID_PRIVATE:-}"
+      GLASSTUNNEL_VAPID_SUBJECT: "${VAPID_SUBJECT:-mailto:ops@glasstunnel.local}"
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  coturn:
+    build:
+      context: ./coturn
+    environment:
+      TURN_REALM: "${TURN_REALM:-glasstunnel.local}"
+      TURN_SERVER_NAME: "${TURN_SERVER_NAME:-glasstunnel.local}"
+      TURN_USER: "${TURN_USER:-glasstunnel}"
+      TURN_PASSWORD: "${TURN_PASSWORD:?TURN_PASSWORD must be set}"
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      - "5349:5349/udp"
+      - "5349:5349/tcp"
+      - "49160-49200:49160-49200/udp"
+    restart: unless-stopped

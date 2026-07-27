@@ -1,0 +1,89 @@
+name: Onboarding or login bug
+description: Report first-run permissions, sign-in, account linking, or relaunch persistence problems.
+title: "[Onboarding]: "
+labels: ["onboarding", "bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for first launch, macOS permissions, sign-in, account linking, or relaunch/session persistence.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - First-run explanation
+        - Screen Recording permission
+        - Accessibility permission
+        - Sign in or sign up
+        - Account linking
+        - Relaunch persistence
+        - Reinstall or rebuild behavior
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: glasstunnel-version
+    attributes:
+      label: Glasstunnel version or commit
+      placeholder: "v0.0.0 or commit SHA"
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: Mac model and macOS version
+      placeholder: "M2 Mac mini, macOS 15.5"
+    validations:
+      required: true
+  - type: dropdown
+    id: build-kind
+    attributes:
+      label: App build type
+      options:
+        - Downloaded release app
+        - Local development build
+        - Rebuilt app
+        - Reinstalled app
+        - Not sure
+    validations:
+      required: true
+  - type: checkboxes
+    id: permission-state
+    attributes:
+      label: Current macOS permission state
+      options:
+        - label: Screen Recording is shown as enabled in System Settings.
+        - label: Accessibility is shown as enabled in System Settings.
+        - label: I removed Glasstunnel from permissions and tested a fresh grant flow.
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      placeholder: "What should the onboarding or login flow have done?"
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      placeholder: "What happened instead?"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Launch Glasstunnel.
+        2. Grant or inspect permissions.
+        3. Continue to sign in.
+        4. Relaunch or reinstall if relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Screenshots or logs
+      description: Redact email addresses, account IDs, local paths, tokens, and other private data before posting.
+

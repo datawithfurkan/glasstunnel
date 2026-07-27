@@ -1,0 +1,19 @@
+{
+  "name": "@glasstunnel/cloudflare-signal",
+  "version": "0.1.0-dev",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "wrangler deploy --dry-run --outdir ../../.cache/glasstunnel-lab/worker-build",
+    "test": "vitest run",
+    "typecheck": "pnpm types:check && tsc --noEmit",
+    "types": "wrangler types worker-configuration.d.ts --config test/wrangler.jsonc",
+    "types:check": "wrangler types worker-configuration.d.ts --config test/wrangler.jsonc --check"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.18.7",
+    "typescript": "^5.5.4",
+    "vitest": "^4.1.10",
+    "wrangler": "^4.113.0"
+  }
+}

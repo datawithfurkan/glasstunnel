@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0b0f17" />
+    <title>Glasstunnel — see your local AI coding agents from your phone</title>
+    <meta
+      name="description"
+      content="Open-source tunnel from a Mac running local AI coding agents (Cursor, Claude Code, Codex, OpenCode) to a mobile PWA. Keep the local context. Walk away. Check in from anywhere."
+    />
+    <link rel="icon" href="/favicon.png" type="image/png" />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header class="hero">
+      <nav>
+        <a class="brand" href="/">
+          <span class="brand-name">Glasstunnel</span>
+        </a>
+        <div class="nav-links">
+          <a href="https://github.com/datawithfurkan/glasstunnel">GitHub</a>
+          <a href="#self-host">Self-host</a>
+          <a href="#security">Security</a>
+        </div>
+      </nav>
+      <div class="hero-copy">
+        <div class="hero-brand">
+          <img src="./brand/glasstunnel-lockup-light.png" alt="Glasstunnel" />
+        </div>
+        <h1>See your local AI coding agents from your phone.</h1>
+        <p>
+          Walk away from your desk. Check in from the subway. Send a prompt. Come home to a
+          finished task. <b>Glasstunnel</b> is an open-source tunnel from a Mac running Cursor,
+          Claude Code, Codex, or OpenCode to a mobile PWA. The agent keeps running in its original
+          local context — no token burn, no half-synced GitHub state.
+        </p>
+        <div class="cta">
+          <a class="btn btn-primary" href="#install">Install for Mac</a>
+          <a class="btn btn-ghost" href="https://github.com/datawithfurkan/glasstunnel">Source on GitHub</a>
+        </div>
+      </div>
+    </header>
+
+    <section class="pitch" id="install">
+      <h2>Stop moving your context to the cloud.</h2>
+      <div class="pitch-grid">
+        <div>
+          <h3>Open your Mac agents remotely.</h3>
+          <p>
+            Link the host once, then open Cursor, Claude Code, Codex, OpenCode, or a mirrored
+            window as remote apps from your phone.
+          </p>
+        </div>
+        <div>
+          <h3>Respond from your phone.</h3>
+          <p>
+            Quick-reply templates (<i>continue</i>, <i>try again</i>, <i>commit</i>), voice input,
+            full keyboard. Everything lands in the real local agent, not a cloud re-index.
+          </p>
+        </div>
+        <div>
+          <h3>Push when it's done.</h3>
+          <p>
+            For Cursor and Claude Code we use first-class adapters that know when the agent
+            finishes or needs approval. Your phone pings; you tap; you keep moving.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section class="why" id="why">
+      <h2>Why not a cloud agent?</h2>
+      <div class="why-cols">
+        <div>
+          <h4>Because your context is huge and local.</h4>
+          <p>
+            You've spent two hours loading a project into Cursor's window. Spinning up a remote
+            Codespace just to respond to a diff burns minutes and tokens you don't need to spend.
+          </p>
+        </div>
+        <div>
+          <h4>Because your secrets live in your home.</h4>
+          <p>
+            The <code>.env</code>, the SSH keys, the half-finished ideas. Glasstunnel never moves
+            them. We even redact them before they hit the tunnel.
+          </p>
+        </div>
+        <div>
+          <h4>Because open source.</h4>
+          <p>
+            Apache 2.0 core. Self-hostable signaling + TURN in one <code>docker compose up</code>.
+            Your code, your data, your tunnel.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section class="self-host" id="self-host">
+      <h2>Self-host in one command.</h2>
+      <pre><code>git clone https://github.com/datawithfurkan/glasstunnel
+cd glasstunnel/deploy
+cp .env.example .env    # tune the TURN password
+docker compose --env-file .env up -d</code></pre>
+      <p>
+        Signaling on <code>:8080</code>. coturn on <code>:3478</code>. The local Go self-host path
+        stays device-key scoped; the hosted path adds Cloudflare + Supabase account linking. Full
+        guide in
+        <a href="https://github.com/datawithfurkan/glasstunnel/blob/main/docs/self-hosting.md">
+          docs/self-hosting.md
+        </a>.
+      </p>
+    </section>
+
+    <section class="security" id="security">
+      <h2>How is this safe?</h2>
+      <ul>
+        <li>End-to-end WebRTC (DTLS-SRTP). The signaling server never sees your content.</li>
+        <li>ed25519 device pairing. Lost your phone? Revoke from the Mac in one tap.</li>
+        <li>Biometric unlock on every cold start of the mobile PWA.</li>
+        <li>Secret redaction for AWS/GitHub/OpenAI/Anthropic keys, SSH blobs, and bearer tokens.</li>
+        <li>Read-only mode that hard-disables input injection when you're on a sketchy network.</li>
+      </ul>
+      <p>
+        Full threat model:
+        <a href="https://github.com/datawithfurkan/glasstunnel/blob/main/docs/security.md">
+          docs/security.md
+        </a>.
+      </p>
+    </section>
+
+    <footer>
+      <div>
+        <b>Glasstunnel</b> is built by people who got tired of Codespaces losing context every time
+        they walked outside. Apache 2.0 licensed, forever.
+      </div>
+      <div class="links">
+        <a href="https://github.com/datawithfurkan/glasstunnel">GitHub</a>
+        <a href="mailto:hello@glasstunnel.io">Contact</a>
+        <a href="mailto:security@glasstunnel.io">Security</a>
+      </div>
+    </footer>
+  </body>
+</html>

@@ -1,0 +1,31 @@
+{
+  "name": "@glasstunnel/protocol",
+  "version": "0.1.0-dev",
+  "private": true,
+  "description": "Protobuf schemas and generated Swift/TS/Go types for the glasstunnel protocol",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "schema",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "gen": "bash scripts/gen.sh",
+    "clean": "rm -rf dist gen"
+  },
+  "devDependencies": {
+    "ts-proto": "^2.11.8",
+    "typescript": "^5.5.4"
+  }
+}

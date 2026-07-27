@@ -1,0 +1,88 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Commit, tag, or branch to deploy after CI passes
+        required: true
+        default: main
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  deployments: write
+
+env:
+  NODE_VERSION: '22'
+  CLOUDFLARE_PAGES_PROJECT: glasstunnel
+  PWA_PUBLIC_APP_URL: https://app.glasstunnel.io
+  PWA_SIGNALING_URL: wss://signaling.glasstunnel.io/signal
+
+jobs:
+  deploy-pwa:
+    name: Deploy PWA
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: pnpm/action-setup@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build PWA
+        env:
+          VITE_PUBLIC_APP_URL: ${{ env.PWA_PUBLIC_APP_URL }}
+          VITE_SIGNALING_URL: ${{ env.PWA_SIGNALING_URL }}
+          VITE_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          test -n "$VITE_SUPABASE_URL" || { echo "Missing SUPABASE_URL secret"; exit 1; }
+          test -n "$VITE_SUPABASE_ANON_KEY" || { echo "Missing SUPABASE_ANON_KEY secret"; exit 1; }
+          pnpm --filter=@glasstunnel/protocol build
+          pnpm --filter=@glasstunnel/shared-crypto build
+          pnpm --filter=@glasstunnel/mobile-pwa build
+
+      - name: Deploy PWA to Cloudflare Pages
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: >-
+          pnpm dlx wrangler@4 pages deploy apps/mobile-pwa/dist
+          --project-name=${{ env.CLOUDFLARE_PAGES_PROJECT }}
+          --branch=main
+
+  deploy-signal:
+    name: Deploy Signaling Worker
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: pnpm/action-setup@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Deploy Worker to Cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: pnpm dlx wrangler@4 deploy --config apps/cloudflare-signal/wrangler.jsonc
