@@ -4,7 +4,7 @@
 - Scope: auth-relaunch
 - Result: pass
 - Environment: notarized release build with a disposable test account
-- Glasstunnel commit: PUBLIC_BASELINE_COMMIT
+- Glasstunnel commit: 922b4a4100a2d61d9fcd960cab2fba07be0115a7
 - Artifact: artifacts/mac-live-public-baseline.txt
 - Privacy review: pass
 

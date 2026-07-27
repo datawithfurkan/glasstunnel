@@ -4,7 +4,7 @@
 - App: Terminal
 - Result: pass
 - Environment: local PTY plus authenticated mobile Chromium and WebKit fixtures
-- Glasstunnel commit: PUBLIC_BASELINE_COMMIT
+- Glasstunnel commit: 922b4a4100a2d61d9fcd960cab2fba07be0115a7
 - Artifact: artifacts/terminal-public-baseline.txt
 - Privacy review: pass
 
