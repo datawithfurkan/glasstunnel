@@ -334,6 +334,30 @@ final class TerminalAdapterTests: XCTestCase {
 
             await fulfillment(of: [output], timeout: 8)
         }
+
+        await assertScreenAttachmentExited(named: sessionName)
+    }
+
+    func testScreenAttachmentExitsWhenAdapterIsReleasedWithoutStop() async throws {
+        try XCTSkipUnless(
+            FileManager.default.isExecutableFile(atPath: TerminalSessionConfiguration.screenExecutable),
+            "screen is not installed"
+        )
+        let sessionName = "glasstunnel-terminal-release-test-\(UUID().uuidString)"
+        var adapter: TerminalAdapter? = TerminalAdapter(
+            agentID: "terminal-release-test-\(UUID().uuidString)",
+            environment: ["PS1": "GT_TEST%% "],
+            cwd: FileManager.default.temporaryDirectory.path,
+            screenSessionName: sessionName
+        )
+        defer { terminateScreenSession(named: sessionName) }
+
+        try await adapter?.start()
+        await assertScreenAttachmentStarted(named: sessionName)
+
+        adapter = nil
+
+        await assertScreenAttachmentExited(named: sessionName)
     }
 
     func testTerminalInterruptsLongRunningProcessAndAcceptsNextCommand() async throws {
@@ -413,6 +437,58 @@ final class TerminalAdapterTests: XCTestCase {
         process.arguments = ["-S", name, "-X", "quit"]
         try? process.run()
         process.waitUntilExit()
+    }
+
+    private func assertScreenAttachmentExited(named name: String) async {
+        for _ in 0..<20 {
+            if screenAttachmentProcessIDs(named: name).isEmpty {
+                return
+            }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        XCTFail("screen attachment for \(name) remained alive after the adapter stopped")
+    }
+
+    private func assertScreenAttachmentStarted(named name: String) async {
+        for _ in 0..<20 {
+            if !screenAttachmentProcessIDs(named: name).isEmpty {
+                return
+            }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        XCTFail("screen attachment for \(name) did not start")
+    }
+
+    private func screenAttachmentProcessIDs(named name: String) -> [Int32] {
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/bin/ps")
+        process.arguments = ["-axo", "pid=,command="]
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+
+        do {
+            try process.run()
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+
+            let text = String(decoding: data, as: UTF8.self)
+            let suffix = "/usr/bin/screen -xRR -S \(name)"
+            return text.split(separator: "\n").compactMap { line in
+                let fields = line.split(maxSplits: 1, whereSeparator: { $0.isWhitespace })
+                guard fields.count == 2,
+                      fields[1] == Substring(suffix),
+                      let pid = Int32(fields[0]) else {
+                    return nil
+                }
+                return pid
+            }
+        } catch {
+            XCTFail("could not inspect screen attachment processes: \(error)")
+            return []
+        }
     }
 }
 

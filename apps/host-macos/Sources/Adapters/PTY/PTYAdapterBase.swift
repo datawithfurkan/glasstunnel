@@ -122,6 +122,14 @@ open class PTYAdapterBase: AgentAdapter, @unchecked Sendable {
         emitSnapshot(detail: "stopped")
     }
 
+    public func shutdownImmediately() {
+        idleTimerTask?.cancel()
+        idleTimerTask = nil
+        pty.onData = nil
+        pty.onStateChange = nil
+        pty.stopImmediately()
+    }
+
     public func configureLaunch(arguments: [String]? = nil, cwd: String? = nil) {
         if let arguments {
             self.arguments = arguments

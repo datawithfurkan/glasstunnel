@@ -39,6 +39,10 @@ public final class PTYWrapper: @unchecked Sendable {
         self.cwd = cwd
     }
 
+    deinit {
+        stop(force: true)
+    }
+
     public func start() throws {
         var master: Int32 = 0
         var slave: Int32 = 0
@@ -110,9 +114,12 @@ public final class PTYWrapper: @unchecked Sendable {
 
         let processRecordURL = self.processRecordURL
         Task.detached { [weak self, spawnedPid, processRecordURL] in
-            guard let self else { return }
             var status: Int32 = 0
             waitpid(spawnedPid, &status, 0)
+            if let processRecordURL {
+                try? FileManager.default.removeItem(at: processRecordURL)
+            }
+            guard let self else { return }
             self.pid = -1
             if self.masterFD != -1 {
                 close(self.masterFD)
@@ -120,9 +127,6 @@ public final class PTYWrapper: @unchecked Sendable {
             }
             self.readSource?.cancel()
             self.readSource = nil
-            if let processRecordURL {
-                try? FileManager.default.removeItem(at: processRecordURL)
-            }
             let exit = (status >> 8) & 0xff
             self.state = .exited(status: exit)
             self.onStateChange?(.exited(status: exit))
@@ -147,6 +151,14 @@ public final class PTYWrapper: @unchecked Sendable {
     }
 
     public func stop() {
+        stop(force: false)
+    }
+
+    func stopImmediately() {
+        stop(force: true)
+    }
+
+    private func stop(force: Bool) {
         let childPid = pid
         guard childPid > 0 else { return }
 
@@ -159,6 +171,14 @@ public final class PTYWrapper: @unchecked Sendable {
         }
 
         signalProcessGroup(SIGTERM, fallbackPid: childPid)
+
+        // A screen attachment is only a disposable client; its session server
+        // is separate. Force teardown synchronously when this wrapper is being
+        // released because no escalation queue will remain alive afterward.
+        if force || Self.isScreenAttachment(executable: executable, arguments: arguments) {
+            signalProcessGroup(SIGKILL, fallbackPid: childPid)
+            return
+        }
 
         // Escalate to SIGKILL if the child ignores SIGTERM.
         DispatchQueue.global().asyncAfter(deadline: .now() + 2) { [weak self] in
@@ -288,6 +308,13 @@ public final class PTYWrapper: @unchecked Sendable {
         } catch {
             return nil
         }
+    }
+
+    private static func isScreenAttachment(executable: String, arguments: [String]) -> Bool {
+        executable == "/usr/bin/screen"
+            && arguments.contains("-xRR")
+            && arguments.contains("-S")
+            && arguments.contains { $0.hasPrefix("glasstunnel-terminal") }
     }
 
     private static func processRegistryDirectory() -> URL {

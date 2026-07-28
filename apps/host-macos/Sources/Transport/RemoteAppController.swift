@@ -437,7 +437,11 @@ public final class RemoteAppController {
     deinit {
         for task in adapterObservers.values { task.cancel() }
         for adapter in adapters.values {
-            Task { await adapter.stop() }
+            if let ptyAdapter = adapter as? PTYAdapterBase {
+                ptyAdapter.shutdownImmediately()
+            } else {
+                Task { await adapter.stop() }
+            }
         }
     }
 
