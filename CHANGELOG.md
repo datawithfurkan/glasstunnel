@@ -5,6 +5,8 @@ versioning after the first public beta; pre-release compatibility may still chan
 
 ## Unreleased
 
+## 0.1.4 - First public beta
+
 ### Added
 
 - Account-first Local Test Lab for disposable end-to-end development.
@@ -22,6 +24,8 @@ versioning after the first public beta; pre-release compatibility may still chan
 
 - Raw screenshots, transcripts, local paths, and account-specific QA artifacts are
   excluded from the public repository.
+- Patched release dependencies and added full-history secret and privacy checks for
+  the public source tree.
 
 ## 0.1.3 - Pre-public beta
 
