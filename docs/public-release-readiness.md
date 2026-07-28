@@ -1,6 +1,6 @@
 # Public release readiness
 
-Last updated: 2026-07-27.
+Last updated: 2026-07-28.
 
 This checklist is the current release baseline. Historical investigations and raw
 test artifacts are intentionally not stored in the public repository.
