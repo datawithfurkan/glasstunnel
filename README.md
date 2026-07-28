@@ -90,7 +90,7 @@ cd glasstunnel
 # Install toolchain prereqs
 #   - macOS 14+ with Xcode 15+
 #   - Node 22+ and pnpm 9+
-#   - Go 1.22+
+#   - Go 1.26.5+
 #   - protoc (for codegen)
 #   - Docker Desktop and the Supabase CLI (for the full local lab)
 
