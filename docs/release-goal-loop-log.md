@@ -28,7 +28,7 @@ changes or a blocker is materially narrowed.
 - Files changed: JavaScript and Go dependency manifests, lockfiles, CI toolchain pins, compatibility patches, and sanitized release evidence.
 - Validation: Frozen install, npm audit, govulncheck, Go build/vet/tests, workspace lint/typecheck/tests/build, security/privacy audit, public audit, Chromium and WebKit Mac Screen lanes, and the Terminal smoke pass.
 - Manual testing: Cleanup inspection confirmed the local lab stopped all owned services and did not alter pre-existing Terminal sessions.
-- Evidence recorded: Mac Screen and Terminal public baseline records are bound to dependency commit 24f43df4.
+- Evidence recorded: Mac Screen and Terminal public baseline records are bound to tested commit 4a2ef67e.
 - Outcome: passed
 - Uncertainty: The unused x/crypto OpenPGP package has a module-level no-fix notice, but it is not imported or reachable; repository visibility still requires explicit maintainer approval.
 - Stale-loop risk: Low; future dependency refreshes must retain or replace the minimatch compatibility patches while keeping audits and tooling green.
