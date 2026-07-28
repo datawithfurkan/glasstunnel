@@ -1,4 +1,6 @@
 #if os(macOS)
+import AppKit
+import Foundation
 import SwiftUI
 import GTProtocol
 import GTSecurity
@@ -11,6 +13,11 @@ struct SettingsContentPolicy {
         "Access behavior and local protection",
         "Read-only mode",
         "Keep Mac awake",
+        "App",
+        "Startup and updates",
+        "Launch at Login",
+        "Installed version",
+        "Check for Updates",
         "Auto-lock timeout",
         "Read-only mode affects all connected devices immediately.",
         "Keeps this Mac available for remote sessions while Glasstunnel is running.",
@@ -40,6 +47,8 @@ struct SettingsView: View {
     @State private var turnPassword: String = ""
     @State private var customRedactionPatterns: String = ""
     @State private var showAdvancedSettings = false
+    @State private var diagnosticsCopyFeedback: DiagnosticsCopyFeedback?
+    @State private var updateActionError: String?
 
     var body: some View {
         ScrollView {
@@ -70,6 +79,32 @@ struct SettingsView: View {
                         Text("Keeps this Mac available for remote sessions while Glasstunnel is running.")
                             .font(.caption)
                             .foregroundStyle(GlasstunnelDesign.muted)
+                    }
+                }
+
+                SettingsCard(title: "App", subtitle: "Startup and updates") {
+                    VStack(alignment: .leading, spacing: 14) {
+                        LaunchAtLoginSetting(controller: appState.launchAtLogin)
+
+                        Divider()
+
+                        diagnosticRow("Installed version", value: AppVersionInfo.current().displayValue)
+
+                        Button {
+                            updateActionError = NSWorkspace.shared.open(AppVersionInfo.releasesURL)
+                                ? nil
+                                : "Could not open the Glasstunnel Releases page."
+                        } label: {
+                            Label("Check for Updates", systemImage: "arrow.triangle.2.circlepath")
+                        }
+                        .buttonStyle(.bordered)
+                        .pointingHandCursor()
+
+                        if let updateActionError {
+                            Text(updateActionError)
+                                .font(.caption)
+                                .foregroundStyle(GlasstunnelDesign.danger)
+                        }
                     }
                 }
 
@@ -117,11 +152,37 @@ struct SettingsView: View {
                         }
 
                         SettingsCard(title: "Diagnostics", subtitle: "Build and host metadata") {
-                            VStack(spacing: 12) {
-                                diagnosticRow("Host device ID", value: appState.hostDeviceID() ?? "-")
+                            VStack(alignment: .leading, spacing: 12) {
+                                diagnosticRow("App", value: AppVersionInfo.current().displayValue)
+                                diagnosticRow("macOS", value: currentMacOSVersion)
                                 diagnosticRow("Protocol version", value: GlasstunnelProtocol.version)
-                                diagnosticRow("Session state", value: appState.sessionManagerState)
-                                diagnosticRow("Access devices", value: "\(appState.trustedDeviceCount)")
+                                diagnosticRow("Screen Recording", value: permissionValue(granted: appState.screenRecordingGranted))
+                                diagnosticRow("Accessibility", value: permissionValue(granted: appState.accessibilityGranted))
+                                diagnosticRow("Connection", value: DiagnosticsConnectionState(sessionManagerState: appState.sessionManagerState).rawValue)
+                                diagnosticRow("Account", value: appState.isLinkedToAccount ? "Linked" : "Not linked")
+
+                                Divider()
+
+                                Button {
+                                    copyDiagnostics()
+                                } label: {
+                                    Label(
+                                        diagnosticsCopyFeedback == .success ? "Copied" : "Copy Diagnostics",
+                                        systemImage: diagnosticsCopyFeedback == .success ? "checkmark" : "doc.on.doc"
+                                    )
+                                }
+                                .buttonStyle(.bordered)
+                                .pointingHandCursor()
+
+                                if let diagnosticsCopyFeedback {
+                                    Text(diagnosticsCopyFeedback.message)
+                                        .font(.caption)
+                                        .foregroundStyle(
+                                            diagnosticsCopyFeedback == .success
+                                                ? GlasstunnelDesign.success
+                                                : GlasstunnelDesign.danger
+                                        )
+                                }
                             }
                         }
                     }
@@ -231,6 +292,96 @@ struct SettingsView: View {
                 .font(.subheadline.weight(.medium))
                 .multilineTextAlignment(.trailing)
         }
+    }
+
+    private var currentMacOSVersion: String {
+        let version = ProcessInfo.processInfo.operatingSystemVersion
+        return "\(version.majorVersion).\(version.minorVersion).\(version.patchVersion)"
+    }
+
+    private func permissionValue(granted: Bool) -> String {
+        guard appState.permissionsChecked else { return DiagnosticsPermissionStatus.notChecked.rawValue }
+        return granted
+            ? DiagnosticsPermissionStatus.allowed.rawValue
+            : DiagnosticsPermissionStatus.needsAccess.rawValue
+    }
+
+    private func copyDiagnostics() {
+        let input = DiagnosticsReportBuilder.currentInput(
+            permissionsChecked: appState.permissionsChecked,
+            screenRecordingGranted: appState.screenRecordingGranted,
+            accessibilityGranted: appState.accessibilityGranted,
+            sessionManagerState: appState.sessionManagerState,
+            accountLinked: appState.isLinkedToAccount
+        )
+        let report = DiagnosticsReportBuilder.build(input)
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        let result: DiagnosticsCopyFeedback = pasteboard.setString(report, forType: .string) ? .success : .failure
+        diagnosticsCopyFeedback = result
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
+            if diagnosticsCopyFeedback == result {
+                diagnosticsCopyFeedback = nil
+            }
+        }
+    }
+}
+
+private enum DiagnosticsCopyFeedback: Equatable {
+    case success
+    case failure
+
+    var message: String {
+        switch self {
+        case .success: return "Diagnostics copied."
+        case .failure: return "Could not copy diagnostics."
+        }
+    }
+}
+
+private struct LaunchAtLoginSetting: View {
+    @ObservedObject var controller: LaunchAtLoginController
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Launch at Login")
+                    Text("Open Glasstunnel after you sign in to this Mac.")
+                        .font(.caption)
+                        .foregroundStyle(GlasstunnelDesign.muted)
+                }
+
+                Spacer()
+
+                if controller.isUpdating {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+
+                Toggle(
+                    "Launch at Login",
+                    isOn: Binding(
+                        get: { controller.isEnabled },
+                        set: { controller.setEnabled($0) }
+                    )
+                )
+                .labelsHidden()
+                .disabled(controller.isUpdating)
+                .pointingHandCursor(!controller.isUpdating)
+            }
+
+            if let feedback = controller.feedback {
+                Text(feedback.message)
+                    .font(.caption)
+                    .foregroundStyle(
+                        feedback.tone == .error
+                            ? GlasstunnelDesign.danger
+                            : GlasstunnelDesign.warning
+                    )
+            }
+        }
+        .onAppear { controller.refresh() }
     }
 }
 

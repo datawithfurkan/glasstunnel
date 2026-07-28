@@ -35,6 +35,18 @@ require_text() {
   fi
 }
 
+reject_text() {
+  local path="$1"
+  local needle="$2"
+  local normalized
+
+  normalized="$(tr '\n\t' '  ' < "$path" | tr -s '[:space:]' ' ')"
+  if grep -Fqi "$needle" <<<"$normalized"; then
+    echo "Unsupported security/privacy wording in $path: $needle" >&2
+    return 1
+  fi
+}
+
 check_docs() {
   require_file README.md
   require_file SECURITY.md
@@ -56,7 +68,11 @@ check_docs() {
   require_text docs/security.md "SecretRedactor"
   require_text docs/security.md "best-effort"
   require_text docs/security.md "We do not log captured content, prompts, chats, media, SDP bodies, or ICE candidates"
+  require_text docs/security.md "does not include an analytics SDK"
+  require_text docs/security.md "hosting providers may still produce their own diagnostic or request logs"
   require_text docs/security.md "self-hosting"
+  reject_text docs/security.md "GLASSTUNNEL_CRASH_REPORTS"
+  reject_text docs/security.md "billing Pro-tier users"
 
   require_text docs/known-limitations.md "Preview and Experimental paths are not public-beta promises"
   require_text docs/known-limitations.md "moves to"

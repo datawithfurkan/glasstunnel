@@ -186,10 +186,18 @@ GT_DEVELOPER_ID="Developer ID Application: YOUR NAME (TEAMID)" \
 
 ## Homebrew cask
 
-`Casks/glasstunnel.rb` is the Homebrew cask recipe. It points at the `.dmg` you publish to GitHub Releases. Users install with:
+`Casks/glasstunnel.rb` is the Homebrew cask recipe. It points at the `.dmg` you publish to GitHub Releases. Glasstunnel does not update itself, so the cask must not declare `auto_updates true`. Users install from the project tap with:
 
 ```bash
-brew install --cask glasstunnel
+brew tap datawithfurkan/glasstunnel https://github.com/datawithfurkan/glasstunnel
+brew install --cask datawithfurkan/glasstunnel/glasstunnel
+```
+
+After a newer release and matching cask revision are published, users upgrade with:
+
+```bash
+brew update
+brew upgrade --cask datawithfurkan/glasstunnel/glasstunnel
 ```
 
 Cask updates use `scripts/update-homebrew-cask.sh`, which bumps the version and SHA256 in the recipe:

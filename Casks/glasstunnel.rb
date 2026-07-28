@@ -8,7 +8,6 @@ cask "glasstunnel" do
   desc "See your local AI coding agents from your phone"
   homepage "https://glasstunnel.io/"
 
-  auto_updates true
   depends_on macos: :ventura
 
   app "Glasstunnel.app"

@@ -82,6 +82,7 @@ final class AppState: ObservableObject {
     @Published var accountIdentityChecked: Bool = false
     let approvalController = ApprovalController()
     let accountLinkController = AccountLinkController()
+    let launchAtLogin = LaunchAtLoginController()
 
     @Published var linkedAccount: AccountLinkController.LinkedAccountSummary? = AccountLinkController.loadCachedLinkedAccountSummary()
     @Published var accountLinkCode: String? = nil

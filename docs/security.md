@@ -91,18 +91,18 @@ If the phone is stolen and unlocked, the attacker gets full access to the tunnel
 
 ## Logging and telemetry
 
-The Mac app writes logs via `os_log`. Logs never contain captured content — they contain only control-plane events (account link attempted, peer connected, remote app action accepted or rejected, adapter started). Remote-app log fields are limited to app/action/agent identifiers, policy/result booleans, adapter kind, and private-redacted error text. The PWA does not log at all. No telemetry is sent to any glasstunnel-operated endpoint. Crash reports are opt-in via a Settings toggle and only kick in if you set `GLASSTUNNEL_CRASH_REPORTS=1`.
+The Mac app uses Apple's unified logging for operational events such as remote-app actions and adapter lifecycle changes. Reviewed log calls do not intentionally include captured screen content, prompts, chats, or Terminal output; error descriptions are marked private where they are logged. The PWA may write a local browser-console warning when push registration fails, and the Cloudflare Worker logs relay-snapshot persistence failures for operational diagnosis.
+
+The repository does not include an analytics SDK, a crash-reporting SDK, a crash-reporting Settings toggle, or a Glasstunnel telemetry-ingestion endpoint. Operating systems, browsers, and hosting providers may still produce their own diagnostic or request logs according to the user's device settings and the deployment's provider configuration.
 
 ## What about the signaling server operators?
 
-We run `signaling.glasstunnel.io` and `turn.glasstunnel.io`. Our operational commitments:
+The public service uses Cloudflare, Supabase, and TURN infrastructure. Those services necessarily process operational metadata needed to route and secure connections, such as network addresses, request timing, account/device lifecycle records, and relay byte counts. The application is designed so that captured content and WebRTC DataChannel content remain end-to-end encrypted and are not available to the signaling or TURN services.
 
-- We do not log user content. There is none to log.
+- The hosted control plane does not receive plaintext WebRTC user content.
 - We do not log captured content, prompts, chats, media, SDP bodies, or ICE candidates.
 - The Go signaling server may inspect the `agentStateEvent` status metadata needed for Web Push. The Cloudflare worker currently treats push fanout as pending.
-- We do log: connection IPs, envelope counts, TURN bandwidth usage, and hosted account/device lifecycle events, for the sole purpose of rate-limiting abuse, debugging the control plane, and billing Pro-tier users.
-- We do not sell or share logs.
-- If we are compelled to disclose by law, we will disclose only the above data types.
+- The repository does not define a universal provider-log retention period. Self-hosters control their own logging and retention; hosted-service retention is an operational configuration that must be reviewed separately from this source-code audit.
 
 If you don't trust us (which is a perfectly reasonable position), the self-hosting path is one `docker compose up` away. See [`docs/self-hosting.md`](self-hosting.md).
 

@@ -36,10 +36,10 @@ Everything between Mac and phone is end-to-end encrypted via WebRTC DTLS-SRTP. T
 
 ## Status
 
-Pre-1.0 public-beta candidate. The account-first product journey, Mac Screen, scoped
+Pre-1.0 public beta. The account-first product journey, Mac Screen, scoped
 Terminal control, Developer ID signing, Apple notarization, Gatekeeper launch,
-and production permission/auth relaunch flow have release evidence. A public
-GitHub Release and published Homebrew download are not available yet.
+and production permission/auth relaunch flow have release evidence. The signed,
+notarized `0.1.4` prerelease is available through GitHub Releases and Homebrew.
 
 The public-beta support tiers are:
 
@@ -53,22 +53,22 @@ Check [`docs/known-limitations.md`](docs/known-limitations.md) and
 [`docs/agent-app-support-matrix.md`](docs/agent-app-support-matrix.md) for the
 current evidence and open gaps.
 
-## Install (pre-release)
-
-Glasstunnel is not publicly released yet. Release packaging, signing,
-notarization, Gatekeeper installation, and the production permission/auth
-journey are verified. The remaining distribution step is publishing a current
-clean-build DMG and checksum through GitHub Releases, then verifying Homebrew
-installation from that public URL.
-
-When a signed release is published, the user path is:
+## Install the public beta
 
 ```bash
-# Install the Mac app
-brew install --cask glasstunnel
+# Add the Glasstunnel tap and install the Mac app
+brew tap datawithfurkan/glasstunnel https://github.com/datawithfurkan/glasstunnel
+brew install --cask datawithfurkan/glasstunnel/glasstunnel
 
 # Launch it and complete the required permission onboarding
 open -a Glasstunnel
+```
+
+To install a newer published build later:
+
+```bash
+brew update
+brew upgrade --cask datawithfurkan/glasstunnel/glasstunnel
 ```
 
 After the Mac app opens:

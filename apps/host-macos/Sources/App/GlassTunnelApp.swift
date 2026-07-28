@@ -46,6 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     nonisolated func applicationDidBecomeActive(_ notification: Notification) {
         MainActor.assumeIsolated {
             appState?.refreshPermissions()
+            appState?.launchAtLogin.refresh()
             ensureMainWindowVisible()
         }
     }
