@@ -32,6 +32,7 @@ Do not change repository visibility until every required item below is complete.
 - [x] Production deployment is manual-only and is not triggered by the source push.
 - [x] Repository description, homepage, and topics are set.
 - [x] Repository security settings were reviewed without enabling automatic update PR churn.
+- [x] npm dependency audit reports zero advisories and `govulncheck` reports zero reachable vulnerabilities.
 
 GitHub vulnerability alerts are enabled. Automatic security-fix and dependency-update
 PRs remain disabled to avoid unbounded CI usage. Branch protection is unavailable while

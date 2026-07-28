@@ -17,8 +17,10 @@ Last updated: 2026-07-27.
 
 Prepare a privacy-safe, understandable public repository. Keep raw test artifacts,
 private account details, absolute machine paths, and personal credentials out of
-Git. The next product-development loop should start from the highest-impact open
-gate in `docs/public-release-readiness.md` rather than replaying historical logs.
+Git. The sanitized history and dependency-security gate are complete. Repository
+visibility remains an explicit maintainer decision; the next product-development
+loop should start from the highest-impact open gate in
+`docs/public-release-readiness.md` rather than replaying historical logs.
 
 ## Working rule
 

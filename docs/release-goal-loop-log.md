@@ -19,3 +19,19 @@ changes or a blocker is materially narrowed.
 - Next action: Push the sanitized history once, inspect its CI check once, and leave production deployment manual.
 - End commit: The final documentation commit containing this entry is the immutable result of record.
 - CI/deploy: CI runs once on the immutable pushed commit; production Deploy is manual and was not triggered.
+
+## 2026-07-28 04:25 - Dependency security remediation
+
+- Start commit: fdf62d7c
+- Release gate: Public dependency and runtime security.
+- Why chosen: GitHub vulnerability alerts exposed critical and high advisories after the sanitized history push.
+- Files changed: JavaScript and Go dependency manifests, lockfiles, CI toolchain pins, compatibility patches, and sanitized release evidence.
+- Validation: Frozen install, npm audit, govulncheck, Go build/vet/tests, workspace lint/typecheck/tests/build, security/privacy audit, public audit, Chromium and WebKit Mac Screen lanes, and the Terminal smoke pass.
+- Manual testing: Cleanup inspection confirmed the local lab stopped all owned services and did not alter pre-existing Terminal sessions.
+- Evidence recorded: Mac Screen and Terminal public baseline records are bound to dependency commit 24f43df4.
+- Outcome: passed
+- Uncertainty: The unused x/crypto OpenPGP package has a module-level no-fix notice, but it is not imported or reachable; repository visibility still requires explicit maintainer approval.
+- Stale-loop risk: Low; future dependency refreshes must retain or replace the minimatch compatibility patches while keeping audits and tooling green.
+- Next action: Make one consolidated push, inspect one bounded CI run, and leave production deployment manual.
+- End commit: The documentation-only descendant containing this entry is the immutable result of record.
+- CI/deploy: The final consolidated push is validated by its single immutable CI run; production Deploy remains manual and is not triggered.

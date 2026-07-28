@@ -1,10 +1,10 @@
 # Agent App Release Evidence
 
-- Date: 2026-07-28T01:01:41Z
+- Date: 2026-07-28T02:18:00Z
 - App: Mac Screen
 - Result: pass
 - Environment: signed local Mac host with authenticated mobile Chromium and WebKit fixtures
-- Glasstunnel commit: fdc3cd07920f9ec555d3d82715912c8503e89cd5
+- Glasstunnel commit: 24f43df44470ba3ff15557913916e7f807c0a672
 - Artifact: artifacts/mac-screen-public-baseline.txt
 - Privacy review: pass
 

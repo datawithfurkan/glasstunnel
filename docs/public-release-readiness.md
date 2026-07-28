@@ -16,6 +16,7 @@ test artifacts are intentionally not stored in the public repository.
 - [x] Notarization path is documented and tested.
 - [x] Gatekeeper launch and install/upgrade scripts are documented.
 - [x] Secret-bearing local files and raw release artifacts are ignored.
+- [x] npm audit reports zero advisories and Go reports zero reachable vulnerabilities.
 - [x] Support tiers and known limitations are documented without overclaiming Preview integrations.
 
 ## Before changing repository visibility
