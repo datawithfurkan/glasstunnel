@@ -111,6 +111,22 @@ cleanup() {
 }
 trap cleanup EXIT
 
+is_release_only_artifact_path() {
+  case "$1" in
+    Casks/glasstunnel.rb|\
+    docs/*|\
+    scripts/check-agent-app-release-claims.sh|\
+    scripts/lab/workflow-contract.test.mjs|\
+    scripts/mac-install-upgrade-smoke.sh|\
+    scripts/mac-release-preflight.sh)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 detach_dmg() {
   if [[ "$attached" == "1" ]]; then
     hdiutil detach "$mount_root" -quiet
@@ -179,13 +195,30 @@ verify_app() {
   local source_commit source_dirty
   source_commit="$(/usr/libexec/PlistBuddy -c "Print :GTSourceCommit" "$plist" 2>/dev/null || true)"
   source_dirty="$(/usr/libexec/PlistBuddy -c "Print :GTSourceDirty" "$plist" 2>/dev/null || true)"
-  if [[ "$source_commit" != "$current_commit" ]]; then
-    echo "$context: artifact source commit '${source_commit:-missing}' does not match current HEAD $current_commit." >&2
-    exit 1
-  fi
   if [[ "$source_dirty" != "false" ]]; then
     echo "$context: artifact was built from a dirty or unbound source tree." >&2
     exit 1
+  fi
+  if [[ "$source_commit" != "$current_commit" ]]; then
+    if ! git -C "$ROOT_DIR" rev-parse --verify "${source_commit}^{commit}" >/dev/null 2>&1 || \
+      ! git -C "$ROOT_DIR" merge-base --is-ancestor "$source_commit" "$current_commit"; then
+      echo "$context: artifact commit '${source_commit:-missing}' is not an ancestor of current HEAD $current_commit." >&2
+      exit 1
+    fi
+
+    local non_release_paths=()
+    local changed_path
+    while IFS= read -r changed_path; do
+      [[ -z "$changed_path" ]] && continue
+      if ! is_release_only_artifact_path "$changed_path"; then
+        non_release_paths+=("$changed_path")
+      fi
+    done < <(git -C "$ROOT_DIR" diff --name-only "$source_commit" --)
+
+    if [[ "${#non_release_paths[@]}" -gt 0 ]]; then
+      echo "$context: rebuild required; non-release paths changed after ${source_commit:0:8}: ${non_release_paths[*]}." >&2
+      exit 1
+    fi
   fi
 
   codesign --verify --deep --strict "$app_path" >/dev/null
@@ -279,9 +312,9 @@ fi
 
 echo
 if [[ "$upgrade_tested" == "1" ]]; then
-  echo "Result: passed; DMG app installs, reinstalls, and upgrades from $initial_version to $upgrade_version with current-source metadata, stable signing requirements, universal executable/frameworks, and required entitlements."
+  echo "Result: passed; DMG app installs, reinstalls, and upgrades from $initial_version to $upgrade_version with source-bound metadata, stable signing requirements, universal executable/frameworks, and required entitlements."
 else
-  echo "Result: passed; DMG app installs and reinstalls cleanly with current-source metadata, universal executable/frameworks, and required signed entitlements."
+  echo "Result: passed; DMG app installs and reinstalls cleanly with source-bound metadata, universal executable/frameworks, and required signed entitlements."
   echo "Upgrade was not exercised; pass a second, newer DMG or set GT_MAC_INSTALL_REQUIRE_UPGRADE=1 to require it."
 fi
 echo "This does not prove Developer ID notarization, Gatekeeper first launch, /Applications permissions, or macOS TCC attachment."

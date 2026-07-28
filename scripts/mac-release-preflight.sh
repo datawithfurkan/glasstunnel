@@ -68,6 +68,22 @@ pass_row() {
   add_row "$1" "pass" "$2"
 }
 
+is_release_only_artifact_path() {
+  case "$1" in
+    Casks/glasstunnel.rb|\
+    docs/*|\
+    scripts/check-agent-app-release-claims.sh|\
+    scripts/lab/workflow-contract.test.mjs|\
+    scripts/mac-install-upgrade-smoke.sh|\
+    scripts/mac-release-preflight.sh)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 plist_bool_enabled() {
   local plist="$1"
   local key="$2"
@@ -249,10 +265,27 @@ if [[ -d "$APP_DIR" ]]; then
   fi
   artifact_source_commit="$(/usr/libexec/PlistBuddy -c "Print :GTSourceCommit" "$APP_DIR/Contents/Info.plist" 2>/dev/null || true)"
   artifact_source_dirty="$(/usr/libexec/PlistBuddy -c "Print :GTSourceDirty" "$APP_DIR/Contents/Info.plist" 2>/dev/null || true)"
-  if [[ "$artifact_source_commit" == "$CURRENT_COMMIT" && "$artifact_source_dirty" == "false" ]]; then
+  if [[ "$artifact_source_dirty" != "false" ]]; then
+    fail_row "Existing app source" "Artifact source was built from a dirty tree."
+  elif [[ "$artifact_source_commit" == "$CURRENT_COMMIT" ]]; then
     pass_row "Existing app source" "Artifact is bound to current clean commit ${CURRENT_COMMIT:0:8}."
+  elif git rev-parse --verify "${artifact_source_commit}^{commit}" >/dev/null 2>&1 && \
+    git merge-base --is-ancestor "$artifact_source_commit" "$CURRENT_COMMIT"; then
+    non_release_paths=()
+    while IFS= read -r changed_path; do
+      [[ -z "$changed_path" ]] && continue
+      if ! is_release_only_artifact_path "$changed_path"; then
+        non_release_paths+=("$changed_path")
+      fi
+    done < <(git diff --name-only "$artifact_source_commit" --)
+
+    if [[ "${#non_release_paths[@]}" -eq 0 ]]; then
+      pass_row "Existing app source" "Artifact is bound to ${artifact_source_commit:0:8}; descendants contain release-only metadata."
+    else
+      fail_row "Existing app source" "Rebuild required; non-release paths changed after ${artifact_source_commit:0:8}: ${non_release_paths[*]}."
+    fi
   else
-    fail_row "Existing app source" "Rebuild from current clean HEAD; artifact commit is '${artifact_source_commit:-missing}' and dirty flag is '${artifact_source_dirty:-missing}'."
+    fail_row "Existing app source" "Rebuild required; artifact commit '${artifact_source_commit:-missing}' is not an ancestor of current HEAD."
   fi
   if artifact_entitlements="$(signed_artifact_entitlements "$APP_DIR")"; then
     missing_artifact_entitlements=()

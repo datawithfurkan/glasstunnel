@@ -19,7 +19,7 @@ test artifacts are intentionally not stored in the public repository.
 - [x] npm audit reports zero advisories and Go reports zero reachable vulnerabilities.
 - [x] Support tiers and known limitations are documented without overclaiming Preview integrations.
 
-## Before changing repository visibility
+## Public repository
 
 - [x] Run the public repository audit and full-history secret scan.
 - [x] Confirm the sanitized public-history rewrite and private recovery bundle.
@@ -28,17 +28,24 @@ test artifacts are intentionally not stored in the public repository.
 - [x] Use one sanitized push and the immutable CI check on that commit as the result of record.
 - [x] Complete `docs/public-visibility-checklist.md` with no source-readiness blocker.
 
-Repository visibility remains a separate maintainer decision. Branch protection is not
-available for this private repository on the current plan, so the approved visibility
-transition must enable it before public contributions are accepted.
+- [x] Maintainer approved the visibility change and the repository is public.
+- [x] Repository description, homepage, topics, vulnerability alerts, secret scanning,
+      and push protection are configured.
+- [x] Protect `main` with the five required CI checks, linear history, one approving
+      review for contributor pull requests, and force-push/deletion prevention.
 
-## Before the first downloadable public beta
+## First downloadable public beta
 
-- [ ] Publish the accepted, notarized DMG and SHA-256 checksum through GitHub Releases.
-- [ ] Point the Homebrew cask at the immutable release asset and checksum.
-- [ ] Verify a clean-machine Homebrew install and Gatekeeper first launch.
-- [ ] Publish release notes that identify Supported, Preview, and Experimental features.
+- [x] Publish the accepted, notarized DMG and SHA-256 checksum through GitHub Releases.
+- [x] Point the Homebrew cask at the immutable release asset and checksum.
+- [x] Verify a clean-prefix Homebrew install and Gatekeeper first launch from the public URL.
+- [x] Publish release notes that identify Supported, Preview, and Experimental features.
+- [x] Verify the published Mac app retains live permissions, account linking, and relaunch state.
+- [x] Verify Supported Terminal and Mac Screen paths plus one real Codex CLI Preview smoke.
+- [x] Verify production app-shell and service-worker cache headers revalidate.
 
-Developer ID signing/notarization is complete as a tested distribution path. A
-public repository and a public binary release are separate decisions: opening the
-source does not imply that an installable binary is already available.
+The `0.1.4` prerelease is the first downloadable public beta. Its signed and notarized
+DMG is intentionally tied to source commit `c457c2b2d271186716d7301bad14cb4a3132defd`;
+release-only documentation and cask updates are descendants of that immutable source.
+Developer ID signing/notarization, stapling, and Gatekeeper verification all passed for
+that published artifact.

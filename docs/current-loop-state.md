@@ -1,6 +1,6 @@
 # Current loop state
 
-Last updated: 2026-07-27.
+Last updated: 2026-07-28.
 
 ## Baseline
 
@@ -15,12 +15,11 @@ Last updated: 2026-07-27.
 
 ## Current focus
 
-Prepare a privacy-safe, understandable public repository. Keep raw test artifacts,
-private account details, absolute machine paths, and personal credentials out of
-Git. The sanitized history and dependency-security gate are complete. Repository
-visibility remains an explicit maintainer decision; the next product-development
-loop should start from the highest-impact open gate in
-`docs/public-release-readiness.md` rather than replaying historical logs.
+Publish and stabilize the first honest public beta. The repository is public and the
+signed, notarized `0.1.4` prerelease is available. Keep raw test artifacts, private
+account details, absolute machine paths, and personal credentials out of Git. The next
+product-development loop should start from the highest-impact remaining beta risk in
+`docs/public-release-readiness.md` rather than replaying this release movement.
 
 ## Working rule
 

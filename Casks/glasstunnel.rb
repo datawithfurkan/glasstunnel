@@ -1,6 +1,6 @@
 cask "glasstunnel" do
-  version "0.1.0"
-  sha256 :no_check # replace with the real sha256 of the release DMG once published
+  version "0.1.4"
+  sha256 "caa5af121773ce379e41d36c8def34c84fc1a706fc6dc3186156c12d128cc570"
 
   url "https://github.com/datawithfurkan/glasstunnel/releases/download/v#{version}/Glasstunnel-#{version}.dmg",
     verified: "github.com/datawithfurkan/glasstunnel"
@@ -9,7 +9,7 @@ cask "glasstunnel" do
   homepage "https://glasstunnel.io/"
 
   auto_updates true
-  depends_on macos: ">= :ventura"
+  depends_on macos: :ventura
 
   app "Glasstunnel.app"
 

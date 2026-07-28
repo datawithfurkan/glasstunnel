@@ -35,3 +35,19 @@ changes or a blocker is materially narrowed.
 - Next action: Make one consolidated push, inspect one bounded CI run, and leave production deployment manual.
 - End commit: The documentation-only descendant containing this entry is the immutable result of record.
 - CI/deploy: The final consolidated push is validated by its single immutable CI run; production Deploy remains manual and is not triggered.
+
+## 2026-07-28 09:45 - First public beta
+
+- Start commit: 24781da8
+- Release gate: Public source, installable notarized beta, and honest runtime evidence.
+- Why chosen: Source preparation was complete, but users still had no immutable public binary or verified cask.
+- Files changed: Version metadata, release notes, cask metadata, current release evidence, and bounded release tooling.
+- Validation: 323 Swift tests, local account E2E, real installed Codex CLI smoke, Terminal recovery, Mac Screen regression, public-URL Homebrew install, codesign, Gatekeeper, notarization, and production cache headers passed.
+- Manual testing: The published `0.1.4` app retained live permissions and account state across relaunch. The linked Mac appeared connected in production. Native Mac Screen reached streaming, stopped, restarted to streaming, and was left off.
+- Evidence recorded: The DMG is tied to source commit `c457c2b2d271186716d7301bad14cb4a3132defd`; SHA-256 is `caa5af121773ce379e41d36c8def34c84fc1a706fc6dc3186156c12d128cc570`.
+- Outcome: passed
+- Uncertainty: Preview integrations remain upstream-sensitive; physical cellular handoff and every TURN path are not release gates.
+- Stale-loop risk: Low; one notarization submission, one tag, one prerelease, and one final branch push are used.
+- Next action: Inspect the single final CI run, then start the next loop from a documented beta risk.
+- End commit: The final release documentation and cask commit is the result of record.
+- CI/deploy: The final `main` push is the single result-of-record run; no rerun or production deploy is requested.

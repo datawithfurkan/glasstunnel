@@ -94,6 +94,7 @@ test('the default Chromium lab proves the authenticated account journey on mobil
 test('Mac release audits read the development bundle identity from the launcher contract', () => {
   const devAppPath = `${root}/scripts/dev-app.sh`;
   const preflight = read('scripts/mac-release-preflight.sh');
+  const installSmoke = read('scripts/mac-install-upgrade-smoke.sh');
   const distributionDocsAudit = read('scripts/mac-distribution-docs-audit.sh');
   const cleanEnvironment = { ...process.env };
   delete cleanEnvironment.GLASSTUNNEL_DEV_BUNDLE_ID;
@@ -115,5 +116,10 @@ test('Mac release audits read the development bundle identity from the launcher 
   assert.equal(defaultBundleID, 'io.glasstunnel.host.dev');
   assert.equal(overriddenBundleID, 'io.glasstunnel.host.lab');
   assert.match(preflight, /bash "\$DEV_APP_SCRIPT" --print-bundle-id/);
+  assert.match(preflight, /is_release_only_artifact_path/);
+  assert.match(preflight, /git merge-base --is-ancestor/);
+  assert.match(preflight, /scripts\/mac-install-upgrade-smoke\.sh/);
+  assert.match(installSmoke, /is_release_only_artifact_path/);
+  assert.match(installSmoke, /git -C "\$ROOT_DIR" merge-base --is-ancestor/);
   assert.match(distributionDocsAudit, /bash "\$DEV_SCRIPT" --print-bundle-id/);
 });

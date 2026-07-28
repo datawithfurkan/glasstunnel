@@ -34,13 +34,13 @@ Do not change repository visibility until every required item below is complete.
 - [x] Repository security settings were reviewed without enabling automatic update PR churn.
 - [x] npm dependency audit reports zero advisories and `govulncheck` reports zero reachable vulnerabilities.
 
-GitHub vulnerability alerts are enabled. Automatic security-fix and dependency-update
-PRs remain disabled to avoid unbounded CI usage. Branch protection is unavailable while
-this repository is private on the current plan; enable it immediately after an approved
-visibility change and before accepting public contributions.
+GitHub vulnerability alerts, secret scanning, and push protection are enabled.
+Automatic security-fix and dependency-update PRs remain disabled to avoid unbounded CI
+usage. `main` requires all five CI jobs, linear history, resolved conversations, and
+one approving review for contributor pull requests; force pushes and deletion are disabled.
 
 ## Visibility decision
 
-- [ ] Maintainer explicitly approves changing the repository from private to public.
+- [x] Maintainer explicitly approved the visibility change; the repository is public.
 - [x] The public-source announcement contract does not claim that a downloadable binary or Preview
       integration is Supported unless its separate release gate is complete.
