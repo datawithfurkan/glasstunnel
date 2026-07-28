@@ -4,7 +4,7 @@
 - App: Mac Screen
 - Result: pass
 - Environment: signed local Mac host with authenticated mobile Chromium and WebKit fixtures
-- Glasstunnel commit: 4a2ef67e4e75a1e9c2fcd796d7b1eed62c47dfb4
+- Glasstunnel commit: c457c2b2d271186716d7301bad14cb4a3132defd
 - Artifact: artifacts/mac-screen-public-baseline.txt
 - Privacy review: pass
 
