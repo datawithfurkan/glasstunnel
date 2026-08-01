@@ -93,9 +93,11 @@ pnpm lab:mac
 
 The launch uses the local PWA and Worker URLs, an isolated device key, a stable
 scratch path, and a dedicated keychain suffix. It does not reset TCC. Stable
-local signing is preferred; the development script documents its fallback when
-no identity exists. Native permission behavior still requires a real app
-launch because command-line tests cannot prove macOS TCC state.
+local signing is pinned to the `Glasstunnel Local Development` identity so
+installing or removing Xcode certificates cannot invalidate existing lab TCC
+grants. The development script documents its fallback when that identity cannot
+be prepared. Native permission behavior still requires a real app launch because
+command-line tests cannot prove macOS TCC state.
 
 The signed lab app, device key, and trusted-device registry are stored under
 `~/Library/Caches/Glasstunnel/LocalLab/<workspace-id>`. Keeping the native

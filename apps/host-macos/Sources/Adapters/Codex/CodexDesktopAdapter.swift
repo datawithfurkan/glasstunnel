@@ -108,6 +108,10 @@ public final class CodexDesktopAdapter: AgentAdapter, @unchecked Sendable {
     }
 
     public func sendInput(_ text: String, submit: Bool) async throws {
+        if let target = selectedTargetDescriptor(), let url = target.desktopThreadURL {
+            try openCodexThread(url, label: target.label)
+            try? await Task.sleep(nanoseconds: 450_000_000)
+        }
         try deliverInputToCodex(text, submit: submit)
 
         let optimistic = AgentChatMessage(
@@ -332,6 +336,11 @@ public final class CodexDesktopAdapter: AgentAdapter, @unchecked Sendable {
     }
 
     private func selectTargetInDesktop(_ target: CodexTargetDescriptor) throws {
+        if let url = target.desktopThreadURL {
+            try openCodexThread(url, label: target.label)
+            return
+        }
+
         if let threadName = target.recentThreadName, !threadName.isEmpty {
             if (try? accessibility.press(bundleID: Self.bundleID, matching: threadName, exact: true)) != nil {
                 return
@@ -347,6 +356,32 @@ public final class CodexDesktopAdapter: AgentAdapter, @unchecked Sendable {
         }
 
         try accessibility.press(bundleID: Self.bundleID, matching: target.label, exact: true)
+    }
+
+    private func openCodexThread(_ url: URL, label: String) throws {
+        #if os(macOS)
+        let opened: Bool
+        if Thread.isMainThread {
+            opened = NSWorkspace.shared.open(url)
+        } else {
+            opened = DispatchQueue.main.sync {
+                NSWorkspace.shared.open(url)
+            }
+        }
+        guard opened else {
+            throw NSError(
+                domain: "CodexDesktopAdapter",
+                code: 503,
+                userInfo: [NSLocalizedDescriptionKey: "Could not open \(label) in Codex"]
+            )
+        }
+        #else
+        throw NSError(
+            domain: "CodexDesktopAdapter",
+            code: 503,
+            userInfo: [NSLocalizedDescriptionKey: "Opening Codex threads is only available on macOS"]
+        )
+        #endif
     }
 
     private var lastRefreshAt = Date.distantPast
@@ -573,6 +608,18 @@ public final class CodexDesktopAdapter: AgentAdapter, @unchecked Sendable {
         return targetDescriptors.first { $0.targetId == targetID }
     }
 
+    private func selectedTargetDescriptor() -> CodexTargetDescriptor? {
+        lock.lock()
+        defer { lock.unlock() }
+        if let selectedSessionPath {
+            return targetDescriptors.first { $0.sessionPath == selectedSessionPath }
+        }
+        if let selectedWorkspaceRoot {
+            return targetDescriptors.first { $0.workspaceRoot == selectedWorkspaceRoot }
+        }
+        return nil
+    }
+
     private func emitCurrentSnapshot(detail: String) {
         lock.lock()
         let status = currentStatus
@@ -648,7 +695,7 @@ public final class CodexDesktopAdapter: AgentAdapter, @unchecked Sendable {
             title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
-        guard !title.isEmpty, title != "Codex", title != label else {
+        guard !title.isEmpty, title != "Codex", title != "ChatGPT", title != label else {
             return nil
         }
 
@@ -794,12 +841,24 @@ struct CodexTargetDescriptor: Equatable {
     let recentActivityUnixMs: Int64?
     let targetKind: String
 
+    var desktopThreadURL: URL? {
+        guard
+            let sessionPath,
+            let sessionID = CodexSessionIndex.sessionID(fromPath: sessionPath)
+        else {
+            return nil
+        }
+        return URL(string: "codex://threads/\(sessionID)")
+    }
+
     func protocolTarget(selected: Bool, activeDesktopThreadName: String? = nil) -> AgentTargetOption {
         let threadLabel = recentThreadName
         let targetLabel = targetKind == "thread"
             ? threadLabel ?? label
             : label
-        let active = selected && Self.sameThreadName(recentThreadName, activeDesktopThreadName)
+        let active = selected && (
+            Self.sameThreadName(recentThreadName, activeDesktopThreadName) || desktopThreadURL != nil
+        )
         return AgentTargetOption(
             targetId: targetId,
             label: targetLabel,
@@ -971,10 +1030,30 @@ enum CodexProjectCatalog {
             )
         }
 
+        var rootsByLocalProjectID: [String: [String]] = [:]
+        for (projectID, rawProject) in json["local-projects"] as? [String: Any] ?? [:] {
+            guard let project = rawProject as? [String: Any] else { continue }
+            let roots = (project["rootPaths"] as? [String] ?? []).filter { !$0.isEmpty }
+            guard !roots.isEmpty else { continue }
+            rootsByLocalProjectID[projectID] = roots
+            if let embeddedID = project["id"] as? String, !embeddedID.isEmpty {
+                rootsByLocalProjectID[embeddedID] = roots
+            }
+        }
+
+        func resolveRoots(_ values: [String]) -> [String] {
+            values.flatMap { rootsByLocalProjectID[$0] ?? [$0] }
+        }
+
+        let selectedProject = json["selected-project"] as? [String: Any]
+        let selectedProjectID = selectedProject?["projectId"] as? String
+        let selectedProjectRoots = selectedProjectID.flatMap { rootsByLocalProjectID[$0] } ?? []
+        let legacyActiveRoots = resolveRoots(json["active-workspace-roots"] as? [String] ?? [])
+
         return GlobalState(
-            projectOrder: json["project-order"] as? [String] ?? [],
-            savedWorkspaceRoots: json["electron-saved-workspace-roots"] as? [String] ?? [],
-            activeWorkspaceRoots: json["active-workspace-roots"] as? [String] ?? [],
+            projectOrder: resolveRoots(json["project-order"] as? [String] ?? []),
+            savedWorkspaceRoots: resolveRoots(json["electron-saved-workspace-roots"] as? [String] ?? []),
+            activeWorkspaceRoots: selectedProjectRoots.isEmpty ? legacyActiveRoots : selectedProjectRoots,
             projectlessThreadIDs: Set(
                 (json["projectless-thread-ids"] as? [String] ?? []).map { $0.lowercased() }
             )

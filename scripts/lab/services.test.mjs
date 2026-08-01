@@ -191,6 +191,10 @@ test('signed Mac definition keeps local URLs, stable identity, and scratch path 
   );
   assert.equal(definition.env.GLASSTUNNEL_DEV_BUNDLE_ID, 'io.glasstunnel.host.lab');
   assert.equal(definition.env.GLASSTUNNEL_DEV_DISPLAY_NAME, 'Glasstunnel Lab');
+  assert.equal(
+    definition.env.GLASSTUNNEL_DEV_CODESIGN_IDENTITY,
+    'Glasstunnel Local Development',
+  );
   assert.equal(definition.env.GLASSTUNNEL_RESET_TCC, undefined);
 });
 

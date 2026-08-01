@@ -190,31 +190,31 @@ cat > "$ENTITLEMENTS" <<'ENT'
 </plist>
 ENT
 
-# Pick the best available signing identity. A stable signing identity gives
-# TCC something persistent to attach Screen Recording / Accessibility grants to.
+# Prefer Glasstunnel's dedicated local identity. Discovering an Apple identity
+# first makes the designated requirement change when Xcode certificates are
+# added or removed, leaving TCC switches enabled for a different binary.
 IDENTITY=""
 IDENTITY_SOURCE=""
-for search in "Apple Development" "Mac Developer" "Developer ID Application"; do
-  IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null \
-    | awk -F '"' -v s="$search" 'index($0, s) { print $2; exit }')
-  if [[ -n "$IDENTITY" ]]; then
-    IDENTITY_SOURCE="apple"
-    break
-  fi
-done
-if [[ -z "$IDENTITY" ]]; then
-  if [[ "${GLASSTUNNEL_DISABLE_LOCAL_DEV_CODESIGN:-0}" != "1" ]] \
-    && [[ -x "$REPO/scripts/ensure-dev-codesign-identity.sh" ]]; then
-    if IDENTITY="$("$REPO/scripts/ensure-dev-codesign-identity.sh")"; then
-      IDENTITY_SOURCE="local"
-    else
-      IDENTITY=""
-      echo "==> Local development signing identity unavailable; using ad-hoc signing"
-    fi
+if [[ "${GLASSTUNNEL_DISABLE_LOCAL_DEV_CODESIGN:-0}" != "1" ]] \
+  && [[ -x "$REPO/scripts/ensure-dev-codesign-identity.sh" ]]; then
+  if IDENTITY="$("$REPO/scripts/ensure-dev-codesign-identity.sh")"; then
+    IDENTITY_SOURCE="local"
   else
-    echo "==> No Apple signing identity found; using ad-hoc signing"
-    echo "   (local development signing helper disabled)"
+    IDENTITY=""
+    echo "==> Local development signing identity unavailable; checking Apple identities"
   fi
+else
+  echo "==> Local development signing helper disabled; checking Apple identities"
+fi
+if [[ -z "$IDENTITY" ]]; then
+  for search in "Apple Development" "Mac Developer" "Developer ID Application"; do
+    IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null \
+      | awk -F '"' -v s="$search" 'index($0, s) { print $2; exit }')
+    if [[ -n "$IDENTITY" ]]; then
+      IDENTITY_SOURCE="apple"
+      break
+    fi
+  done
 fi
 if [[ -z "$IDENTITY" ]]; then
   IDENTITY="-"

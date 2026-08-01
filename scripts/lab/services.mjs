@@ -170,6 +170,7 @@ export function signedMacLaunchDefinition(config) {
       GLASSTUNNEL_DEV_APP_PATH: appPath,
       GLASSTUNNEL_DEV_BUNDLE_ID: 'io.glasstunnel.host.lab',
       GLASSTUNNEL_DEV_DISPLAY_NAME: 'Glasstunnel Lab',
+      GLASSTUNNEL_DEV_CODESIGN_IDENTITY: 'Glasstunnel Local Development',
     },
   };
 }

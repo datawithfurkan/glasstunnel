@@ -402,6 +402,63 @@ final class CodexProjectCatalogTests: XCTestCase {
         XCTAssertNil(catalog.descriptors[5].workspaceRoot)
     }
 
+    func testResolvesCurrentLocalProjectIDsToWorkspaceRoots() throws {
+        let tempDir = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let aksanRoot = "/Users/developer/Documents/GitHub2/AKSAN-automation"
+        let glasstunnelRoot = "/Users/developer/Documents/GitHub2/glasstunnel"
+        let globalStateURL = tempDir.appendingPathComponent(".codex-global-state.json")
+        try """
+        {
+          "project-order": ["local-aksan", "local-glasstunnel"],
+          "local-projects": {
+            "local-aksan": {
+              "id": "local-aksan",
+              "name": "AKSAN-automation",
+              "rootPaths": ["\(aksanRoot)"]
+            },
+            "local-glasstunnel": {
+              "id": "local-glasstunnel",
+              "name": "glasstunnel",
+              "rootPaths": ["\(glasstunnelRoot)"]
+            }
+          },
+          "selected-project": {
+            "type": "local",
+            "projectId": "local-glasstunnel"
+          },
+          "electron-saved-workspace-roots": ["local-aksan"],
+          "active-workspace-roots": []
+        }
+        """.write(to: globalStateURL, atomically: true, encoding: .utf8)
+
+        let catalog = CodexProjectCatalog.build(
+            globalStateURL: globalStateURL,
+            sessionSummaries: [
+                CodexSessionSummary(
+                    path: "/tmp/rollout-2026-07-31-019eb2dc-b538-7110-92d0-9a27783672e0.jsonl",
+                    modifiedAt: Date(timeIntervalSince1970: 30),
+                    workspaceRoot: aksanRoot,
+                    threadName: "AKSAN full batch"
+                ),
+                CodexSessionSummary(
+                    path: "/tmp/rollout-2026-07-31-019eb2dc-b538-7110-92d0-9a27783672e1.jsonl",
+                    modifiedAt: Date(timeIntervalSince1970: 20),
+                    workspaceRoot: glasstunnelRoot,
+                    threadName: "Fix Codex sync"
+                ),
+            ]
+        )
+
+        XCTAssertEqual(catalog.activeWorkspaceRoot, glasstunnelRoot)
+        XCTAssertEqual(catalog.descriptors.map(\.workspaceRoot), [aksanRoot, glasstunnelRoot])
+        XCTAssertEqual(catalog.descriptors.map(\.recentThreadName), ["AKSAN full batch", "Fix Codex sync"])
+        XCTAssertFalse(catalog.descriptors.contains { $0.workspaceRoot?.hasPrefix("local-") == true })
+    }
+
     func testThreadTargetKeepsThreadNameSeparateFromProjectLabel() throws {
         let tempDir = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -482,6 +539,28 @@ final class CodexProjectCatalogTests: XCTestCase {
         XCTAssertEqual(unverified.threadLabel, "Glasstunnel 1")
         XCTAssertEqual(unverified.isActive, false)
         XCTAssertEqual(verified.isActive, true)
+    }
+
+    func testProtocolTargetCanActivateUUIDBackedThreadWhenDesktopTitleIsGeneric() {
+        let descriptor = CodexTargetDescriptor(
+            targetId: "/tmp/rollout-2026-07-31-019eb2dc-b538-7110-92d0-9a27783672e0.jsonl",
+            workspaceRoot: "/Users/developer/Documents/GitHub2/glasstunnel",
+            sessionPath: "/tmp/rollout-2026-07-31-019eb2dc-b538-7110-92d0-9a27783672e0.jsonl",
+            label: "glasstunnel",
+            subtitle: "~/Documents/GitHub2/glasstunnel",
+            recentThreadName: "Fix Codex sync",
+            recentActivityUnixMs: 1_776_590_000_000,
+            targetKind: "thread"
+        )
+
+        XCTAssertEqual(
+            descriptor.desktopThreadURL?.absoluteString,
+            "codex://threads/019eb2dc-b538-7110-92d0-9a27783672e0"
+        )
+        XCTAssertEqual(
+            descriptor.protocolTarget(selected: true, activeDesktopThreadName: "ChatGPT").isActive,
+            true
+        )
     }
 }
 
