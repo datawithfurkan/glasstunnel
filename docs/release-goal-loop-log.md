@@ -51,3 +51,19 @@ changes or a blocker is materially narrowed.
 - Next action: Inspect the single final CI run, then start the next loop from a documented beta risk.
 - End commit: The final release documentation and cask commit is the result of record.
 - CI/deploy: The final `main` push is the single result-of-record run; no rerun or production deploy is requested.
+
+## 2026-08-01 13:30 - Codex compatibility beta update
+
+- Start commit: added831
+- Release gate: Restore mobile prompt delivery with the current Codex desktop app and publish the accumulated Mac hardening.
+- Why chosen: Codex changed its local project schema and generic desktop window title, leaving real projects labeled as raw IDs and the mobile composer disabled.
+- Files changed: Codex desktop adapter and tests, Mac release metadata, release notes, cask metadata, local signing stability, and upgrade-smoke source policy.
+- Validation: 334 Swift tests, 47 Lab tests, 53 focused mobile tests, live Codex task selection, Developer ID preflight, Apple notarization, stapling, Gatekeeper, isolated `0.1.4` to `0.1.5` upgrade, and disposable Homebrew install passed.
+- Manual testing: The signed Local Test Lab opened the exact existing Codex task, loaded its matching history, showed a truthful done state, and accepted then cleared unsent composer text.
+- Evidence recorded: The DMG is tied to source commit `8eb429ce`; SHA-256 is `4f74a23ca64df907d7b44c8ab7edbf722c19819f8f9c1118f8b12de2f0409fef`.
+- Outcome: passed
+- Uncertainty: Codex desktop remains Preview because upstream UI compatibility and broader relaunch behavior still need repeatable coverage.
+- Stale-loop risk: Low; one notarization submission, one tag, one prerelease, and one consolidated branch push are used.
+- Next action: Continue Preview hardening from the support matrix without widening public support claims.
+- End commit: The final release documentation and cask commit is the result of record.
+- CI/deploy: The consolidated publication commit is checked by one CI run; no production web deploy is requested.

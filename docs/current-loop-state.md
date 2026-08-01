@@ -1,6 +1,6 @@
 # Current loop state
 
-Last updated: 2026-07-28.
+Last updated: 2026-08-01.
 
 ## Baseline
 
@@ -16,7 +16,7 @@ Last updated: 2026-07-28.
 ## Current focus
 
 Publish and stabilize the first honest public beta. The repository is public and the
-signed, notarized `0.1.4` prerelease is available. Keep raw test artifacts, private
+signed, notarized `0.1.5` prerelease is available. Keep raw test artifacts, private
 account details, absolute machine paths, and personal credentials out of Git. The next
 product-development loop should start from the highest-impact remaining beta risk in
 `docs/public-release-readiness.md` rather than replaying this release movement.

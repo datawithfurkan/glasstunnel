@@ -114,11 +114,13 @@ trap cleanup EXIT
 is_release_only_artifact_path() {
   case "$1" in
     Casks/glasstunnel.rb|\
+    README.md|\
     docs/*|\
     scripts/check-agent-app-release-claims.sh|\
     scripts/lab/workflow-contract.test.mjs|\
     scripts/mac-install-upgrade-smoke.sh|\
-    scripts/mac-release-preflight.sh)
+    scripts/mac-release-preflight.sh|\
+    tests/e2e/signed-screen.spec.ts)
       return 0
       ;;
     *)
@@ -146,6 +148,7 @@ VERIFIED_REQUIREMENT=""
 verify_app() {
   local app_path="$1"
   local context="$2"
+  local source_policy="${3:-current}"
   local plist="$app_path/Contents/Info.plist"
   local binary="$app_path/Contents/MacOS/GlassTunnel"
   local webrtc_framework="$app_path/Contents/Frameworks/WebRTC.framework"
@@ -206,18 +209,20 @@ verify_app() {
       exit 1
     fi
 
-    local non_release_paths=()
-    local changed_path
-    while IFS= read -r changed_path; do
-      [[ -z "$changed_path" ]] && continue
-      if ! is_release_only_artifact_path "$changed_path"; then
-        non_release_paths+=("$changed_path")
-      fi
-    done < <(git -C "$ROOT_DIR" diff --name-only "$source_commit" --)
+    if [[ "$source_policy" == "current" ]]; then
+      local non_release_paths=()
+      local changed_path
+      while IFS= read -r changed_path; do
+        [[ -z "$changed_path" ]] && continue
+        if ! is_release_only_artifact_path "$changed_path"; then
+          non_release_paths+=("$changed_path")
+        fi
+      done < <(git -C "$ROOT_DIR" diff --name-only "$source_commit" --)
 
-    if [[ "${#non_release_paths[@]}" -gt 0 ]]; then
-      echo "$context: rebuild required; non-release paths changed after ${source_commit:0:8}: ${non_release_paths[*]}." >&2
-      exit 1
+      if [[ "${#non_release_paths[@]}" -gt 0 ]]; then
+        echo "$context: rebuild required; non-release paths changed after ${source_commit:0:8}: ${non_release_paths[*]}." >&2
+        exit 1
+      fi
     fi
   fi
 
@@ -266,7 +271,11 @@ echo "==> Mounting initial DMG"
 attach_dmg "$INITIAL_DMG"
 
 source_app="$mount_root/$APP_NAME"
-verify_app "$source_app" "mounted initial app"
+initial_source_policy="current"
+if [[ -n "$UPGRADE_DMG" ]]; then
+  initial_source_policy="historical"
+fi
+verify_app "$source_app" "mounted initial app" "$initial_source_policy"
 initial_version="$VERIFIED_VERSION"
 initial_requirement="$VERIFIED_REQUIREMENT"
 
@@ -274,12 +283,12 @@ installed_app="$install_root/$APP_NAME"
 
 echo "==> Installing into isolated temp Applications"
 ditto "$source_app" "$installed_app"
-verify_app "$installed_app" "first install"
+verify_app "$installed_app" "first install" "$initial_source_policy"
 
 echo "==> Replacing installed copy"
 rm -rf "$installed_app"
 ditto "$source_app" "$installed_app"
-verify_app "$installed_app" "same-version reinstall"
+verify_app "$installed_app" "same-version reinstall" "$initial_source_policy"
 
 detach_dmg
 

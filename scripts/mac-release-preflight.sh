@@ -71,11 +71,13 @@ pass_row() {
 is_release_only_artifact_path() {
   case "$1" in
     Casks/glasstunnel.rb|\
+    README.md|\
     docs/*|\
     scripts/check-agent-app-release-claims.sh|\
     scripts/lab/workflow-contract.test.mjs|\
     scripts/mac-install-upgrade-smoke.sh|\
-    scripts/mac-release-preflight.sh)
+    scripts/mac-release-preflight.sh|\
+    tests/e2e/signed-screen.spec.ts)
       return 0
       ;;
     *)

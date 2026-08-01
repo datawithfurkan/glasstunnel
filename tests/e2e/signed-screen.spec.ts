@@ -40,16 +40,21 @@ test('@signed-screen controls real signed Mac capture locally', async ({ page })
     });
   };
 
+  const screenSurface = () =>
+    page.locator('img[alt="Mac screen"], video').filter({ visible: true }).first();
+
   await openScreen();
   let sharingSwitch = page.getByRole('switch').filter({ visible: true });
   if ((await sharingSwitch.getAttribute('aria-checked')) === 'false') {
     await sharingSwitch.click();
   }
 
-  let screen = page.getByRole('img', { name: 'Mac screen' });
+  let screen = screenSurface();
   await expect(screen).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText('Screen ready', { exact: true }).filter({ visible: true })).toBeVisible();
-  await expect(screen).toHaveAttribute('width', /\d+/);
+  await expect
+    .poll(async () => (await screen.boundingBox())?.width ?? 0, { timeout: 30_000 })
+    .toBeGreaterThan(0);
 
   await page.getByRole('button', { name: 'Fast', exact: true }).click();
   await expect(page.getByText('Screen ready', { exact: true }).filter({ visible: true })).toBeVisible({
@@ -63,7 +68,7 @@ test('@signed-screen controls real signed Mac capture locally', async ({ page })
 
   await page.reload();
   await openScreen();
-  screen = page.getByRole('img', { name: 'Mac screen' });
+  screen = screenSurface();
   await expect(screen).toBeVisible({ timeout: 30_000 });
   sharingSwitch = page.getByRole('switch').filter({ visible: true });
   await sharingSwitch.click();

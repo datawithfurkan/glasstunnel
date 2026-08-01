@@ -1,6 +1,6 @@
 # Public release readiness
 
-Last updated: 2026-07-28.
+Last updated: 2026-08-01.
 
 This checklist is the current release baseline. Historical investigations and raw
 test artifacts are intentionally not stored in the public repository.
@@ -49,3 +49,9 @@ DMG is intentionally tied to source commit `c457c2b2d271186716d7301bad14cb4a3132
 release-only documentation and cask updates are descendants of that immutable source.
 Developer ID signing/notarization, stapling, and Gatekeeper verification all passed for
 that published artifact.
+
+The `0.1.5` prerelease is the current public beta. Its signed and notarized DMG is tied
+to source commit `8eb429ce` and SHA-256
+`4f74a23ca64df907d7b44c8ab7edbf722c19819f8f9c1118f8b12de2f0409fef`.
+Developer ID signing/notarization, stapling, Gatekeeper verification, an isolated
+`0.1.4` to `0.1.5` upgrade, and a disposable Homebrew install passed.

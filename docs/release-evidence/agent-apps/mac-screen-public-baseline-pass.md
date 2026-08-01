@@ -1,18 +1,19 @@
 # Agent App Release Evidence
 
-- Date: 2026-07-28T02:33:37Z
+- Date: 2026-08-01T14:18:00Z
 - App: Mac Screen
 - Result: pass
-- Environment: signed local Mac host with authenticated mobile Chromium and WebKit fixtures
-- Glasstunnel commit: c457c2b2d271186716d7301bad14cb4a3132defd
+- Environment: signed local Mac host with authenticated mobile Chromium plus WebKit fixture coverage
+- Glasstunnel commit: 8eb429ceeca762a499955f2df3dbab51e950bb1f
 - Artifact: artifacts/mac-screen-public-baseline.txt
 - Privacy review: pass
 
 ## Passed
 
 Changing screen output rendered remotely; pointer input was delivered; sharing
-started, stopped, restarted, recovered from stale stopping state, rejected stale
-relay frames, and cleaned up superseded video peers.
+started, stopped, restarted, survived browser reload, recovered from stale stopping
+state, rejected stale relay frames, and cleaned up superseded video peers. Both relay
+image fallback and direct WebRTC video rendering were recognized by the signed lane.
 
 ## Limitations
 

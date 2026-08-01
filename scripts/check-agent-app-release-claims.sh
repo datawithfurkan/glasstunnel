@@ -104,6 +104,7 @@ normalized_lowercase() {
 is_agent_evidence_neutral_path() {
   case "$1" in
     Casks/glasstunnel.rb|\
+README.md|\
 docs/*|\
 scripts/agent-app-release-claims-smoke.sh|\
 scripts/build-app.sh|\
@@ -116,7 +117,8 @@ scripts/mac-live-evidence-recorder-smoke.sh|\
 scripts/mac-release-preflight.sh|\
 scripts/mobile-evidence-recorder-smoke.sh|\
 scripts/record-mac-live-evidence.sh|\
-scripts/release-readiness.sh)
+scripts/release-readiness.sh|\
+tests/e2e/signed-screen.spec.ts)
       return 0
       ;;
     *)
