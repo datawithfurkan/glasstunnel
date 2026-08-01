@@ -5,6 +5,29 @@ versioning after the first public beta; pre-release compatibility may still chan
 
 ## Unreleased
 
+## 0.1.5 - Codex compatibility and Mac hardening
+
+### Added
+
+- Privacy-safe diagnostics copying from Mac Settings.
+- Launch at Login control backed by the real macOS registration state.
+- Installed version/build display and an official release-page update action.
+
+### Fixed
+
+- Restored Codex project names after the desktop app moved project state to
+  `local-*` identifiers.
+- Restored mobile prompt delivery by opening the exact selected Codex task before
+  typing, including when the current desktop app reports a generic window title.
+- Kept the signed Local Test Lab on its dedicated signing identity when Xcode
+  certificates are added or removed.
+
+### Changed
+
+- Corrected Homebrew update guidance and removed the unsupported automatic-update
+  declaration from the cask.
+- Tightened public security and privacy wording to match implemented behavior.
+
 ## 0.1.4 - First public beta
 
 ### Added
