@@ -7,7 +7,11 @@ import {
 export interface Env {
   SIGNALING_HUB: DurableObjectNamespace;
   RELAY_HUB: DurableObjectNamespace;
+  ACCOUNT_RATE_LIMITER: RateLimit;
+  ACCOUNT_ADDRESS_RATE_LIMITER: RateLimit;
+  UPGRADE_RATE_LIMITER: RateLimit;
   PUBLIC_APP_URL: string;
+  ALLOWED_ORIGINS?: string;
   SUPABASE_URL?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
   VAPID_PUBLIC_KEY?: string;
@@ -180,31 +184,127 @@ const RELAY_LAST_SEEN_PERSIST_INTERVAL_MS = 60_000;
 const RELAY_PRESENCE_STALE_MS = 2 * 60_000;
 const MAX_RELAY_HOST_HEALTH_CHECKS = 24;
 const LINK_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const RATE_LIMIT_RETRY_SECONDS = 60;
 
-function withCors(init?: ResponseInit): ResponseInit {
-  return {
-    ...init,
-    headers: {
-      "access-control-allow-origin": "*",
-      "access-control-allow-methods": "GET, POST, OPTIONS",
-      "access-control-allow-headers": "content-type, authorization",
-      ...(init?.headers ?? {}),
-    },
-  };
+function configuredBrowserOrigins(env: Env): Set<string> {
+  const configured = env.ALLOWED_ORIGINS ?? env.PUBLIC_APP_URL;
+  const origins = configured
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((value) => {
+      try {
+        return new URL(value).origin;
+      } catch {
+        return "";
+      }
+    })
+    .filter(Boolean);
+  return new Set(origins);
+}
+
+function isAllowedBrowserOrigin(origin: string | null, env: Env): boolean {
+  if (origin === null) return true;
+  return configuredBrowserOrigins(env).has(origin);
+}
+
+function appendVary(headers: Headers, value: string): void {
+  const values = (headers.get("vary") ?? "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (!values.some((item) => item.toLowerCase() === value.toLowerCase())) {
+    values.push(value);
+  }
+  headers.set("vary", values.join(", "));
+}
+
+function corsHeaders(origin: string): Headers {
+  const headers = new Headers({
+    "access-control-allow-origin": origin,
+    "access-control-allow-methods": "GET, POST, OPTIONS",
+    "access-control-allow-headers": "content-type, authorization",
+    "access-control-max-age": "600",
+  });
+  appendVary(headers, "Origin");
+  return headers;
+}
+
+function responseWithCors(response: Response, origin: string | null): Response {
+  if (origin === null) return response;
+  const headers = new Headers(response.headers);
+  for (const [name, value] of corsHeaders(origin)) headers.set(name, value);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 function json(data: object, init?: ResponseInit): Response {
-  return new Response(JSON.stringify(data), withCors({
+  return new Response(JSON.stringify(data), {
     ...init,
     headers: {
       "content-type": "application/json; charset=utf-8",
       ...(init?.headers ?? {}),
     },
-  }));
+  });
 }
 
 function textResponse(body: string, init?: ResponseInit): Response {
-  return new Response(body, withCors(init));
+  return new Response(body, init);
+}
+
+function isWebSocketUpgrade(request: Request): boolean {
+  return request.headers.get("upgrade")?.toLowerCase() === "websocket";
+}
+
+function connectingClientAddress(request: Request): string {
+  const cloudflareAddress = request.headers.get("cf-connecting-ip")?.trim();
+  if (cloudflareAddress) return cloudflareAddress;
+  const forwardedAddress = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+  return forwardedAddress || "unknown";
+}
+
+async function digestRateLimitKey(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return hexFromBytes(new Uint8Array(digest).slice(0, 16));
+}
+
+async function accountRateLimitKey(request: Request, pathname: string): Promise<string> {
+  const authorization = request.headers.get("authorization")?.trim() ?? "";
+  const actor = authorization.toLowerCase().startsWith("bearer ")
+    ? `bearer:${authorization.slice(7).trim()}`
+    : `address:${connectingClientAddress(request)}`;
+  return `account:${pathname}:${await digestRateLimitKey(actor)}`;
+}
+
+async function accountAddressRateLimitKey(request: Request, pathname: string): Promise<string> {
+  const address = await digestRateLimitKey(connectingClientAddress(request));
+  return `account-address:${pathname}:${address}`;
+}
+
+async function upgradeRateLimitKey(request: Request, pathname: string): Promise<string> {
+  return `upgrade:${pathname}:${await digestRateLimitKey(connectingClientAddress(request))}`;
+}
+
+async function isRateLimited(limiter: RateLimit, key: string): Promise<boolean> {
+  try {
+    return !(await limiter.limit({ key })).success;
+  } catch (error) {
+    console.error("Rate limiter unavailable", error);
+    return false;
+  }
+}
+
+function rateLimitedResponse(): Response {
+  return json(
+    { ok: false, error: "too many requests" },
+    {
+      status: 429,
+      headers: { "retry-after": String(RATE_LIMIT_RETRY_SECONDS) },
+    },
+  );
 }
 
 function asAttachmentSocket(ws: WebSocket): WebSocketWithAttachment {
@@ -2043,45 +2143,75 @@ function accountAuthorizationCacheKey(requesterDeviceId: string, hostDeviceId: s
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    const origin = request.headers.get("origin");
 
-    if (request.method === "OPTIONS") {
-      return new Response(null, withCors({ status: 204 }));
+    if (!isAllowedBrowserOrigin(origin, env)) {
+      return json({ ok: false, error: "origin not allowed" }, { status: 403 });
     }
 
+    if (request.method === "OPTIONS") {
+      return new Response(null, {
+        status: 204,
+        headers: origin === null ? undefined : corsHeaders(origin),
+      });
+    }
+
+    if (url.pathname.startsWith("/account/")) {
+      const [accountKey, addressKey] = await Promise.all([
+        accountRateLimitKey(request, url.pathname),
+        accountAddressRateLimitKey(request, url.pathname),
+      ]);
+      const [accountLimited, addressLimited] = await Promise.all([
+        isRateLimited(env.ACCOUNT_RATE_LIMITER, accountKey),
+        isRateLimited(env.ACCOUNT_ADDRESS_RATE_LIMITER, addressKey),
+      ]);
+      if (accountLimited || addressLimited) {
+        return responseWithCors(rateLimitedResponse(), origin);
+      }
+    } else if (
+      (url.pathname === "/signal" || url.pathname === "/relay")
+      && isWebSocketUpgrade(request)
+    ) {
+      const key = await upgradeRateLimitKey(request, url.pathname);
+      if (await isRateLimited(env.UPGRADE_RATE_LIMITER, key)) {
+        return rateLimitedResponse();
+      }
+    }
+
+    let response: Response;
     if (url.pathname === "/health") {
-      return json({
+      response = json({
         ok: true,
         service: "glasstunnel-signal-worker",
         appUrl: env.PUBLIC_APP_URL,
         version: VERSION,
       });
-    }
-
-    if (url.pathname === "/push/vapid") {
+    } else if (url.pathname === "/push/vapid") {
       if (!env.VAPID_PUBLIC_KEY) {
-        return json({ ok: false, error: "vapid not configured" }, { status: 404 });
+        response = json({ ok: false, error: "vapid not configured" }, { status: 404 });
+      } else {
+        response = json({ public_key: env.VAPID_PUBLIC_KEY });
       }
-      return json({ public_key: env.VAPID_PUBLIC_KEY });
-    }
-
-    if (url.pathname === "/push/register") {
-      return json({ ok: true, stored: false, reason: "push migration pending" }, { status: 202 });
-    }
-
-    if (url.pathname === "/relay") {
+    } else if (url.pathname === "/push/register") {
+      response = json(
+        { ok: true, stored: false, reason: "push migration pending" },
+        { status: 202 },
+      );
+    } else if (url.pathname === "/relay") {
       const hostDeviceId = url.searchParams.get("host_device_id") ?? "";
       if (!hostDeviceId) {
-        return json({ ok: false, error: "host_device_id is required" }, { status: 400 });
+        response = json({ ok: false, error: "host_device_id is required" }, { status: 400 });
+      } else {
+        const id = env.RELAY_HUB.idFromName(hostDeviceId);
+        response = await env.RELAY_HUB.get(id).fetch(request);
       }
-      const id = env.RELAY_HUB.idFromName(hostDeviceId);
-      return env.RELAY_HUB.get(id).fetch(request);
-    }
-
-    if (url.pathname === "/signal" || url.pathname.startsWith("/account/")) {
+    } else if (url.pathname === "/signal" || url.pathname.startsWith("/account/")) {
       const id = env.SIGNALING_HUB.idFromName(GLOBAL_HUB_NAME);
-      return env.SIGNALING_HUB.get(id).fetch(request);
+      response = await env.SIGNALING_HUB.get(id).fetch(request);
+    } else {
+      response = json({ ok: false, error: "not found" }, { status: 404 });
     }
 
-    return json({ ok: false, error: "not found" }, { status: 404 });
+    return isWebSocketUpgrade(request) ? response : responseWithCors(response, origin);
   },
 };

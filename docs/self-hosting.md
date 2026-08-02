@@ -63,14 +63,17 @@ OAuth providers, domains, TURN service, and the following deployment values:
 - PWA build: `VITE_PUBLIC_APP_URL`, `VITE_SIGNALING_URL`, `VITE_SUPABASE_URL`,
   `VITE_SUPABASE_ANON_KEY`.
 - Worker secret/config: `PUBLIC_APP_URL`, `SUPABASE_URL`,
-  `SUPABASE_SERVICE_ROLE_KEY`, and optional `VAPID_PUBLIC_KEY`.
+  `ALLOWED_ORIGINS`, `SUPABASE_SERVICE_ROLE_KEY`, and optional
+  `VAPID_PUBLIC_KEY`.
 - GitHub release deployment: `CLOUDFLARE_API_TOKEN` and
   `CLOUDFLARE_ACCOUNT_ID` if using the included manual workflow.
 
 Do not reuse the checked-in production Cloudflare account ID, route, or project name
 in a fork. Copy `apps/cloudflare-signal/wrangler.jsonc`, replace those identifiers,
-apply both Supabase migrations, configure authentication redirect URLs, and deploy the
-PWA and Worker from your own account.
+set `ALLOWED_ORIGINS` to the exact comma-separated browser origins you operate,
+choose unique Rate Limiting binding namespace IDs, apply both Supabase migrations,
+configure authentication redirect URLs, and deploy the PWA and Worker from your own
+account.
 
 Turnkey production self-hosting is still Preview. The repository provides the code
 and repeatable local environment, but not an automated installer for domains, OAuth,

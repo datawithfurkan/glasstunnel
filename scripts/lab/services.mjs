@@ -25,6 +25,7 @@ export function writeWorkerEnvironment(config, supabase) {
   ensureRuntimeDirectories(config);
   const contents = [
     envLine('PUBLIC_APP_URL', config.urls.pwa),
+    envLine('ALLOWED_ORIGINS', config.urls.pwa),
     envLine('SUPABASE_URL', supabase.apiUrl),
     envLine('SUPABASE_SERVICE_ROLE_KEY', supabase.serviceRoleKey),
     '',

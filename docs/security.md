@@ -33,6 +33,26 @@ When using the hosted control plane (Supabase + Cloudflare Workers), the trust f
 
 The account layer is the required discovery and authorization path. The security boundary remains device-level Ed25519 trust after account authorization.
 
+## Hosted request boundary
+
+The hosted Cloudflare Worker accepts browser requests only when the request's
+`Origin` exactly matches a configured application origin. CORS responses echo
+that approved origin and include `Vary: Origin`; the Worker does not use a
+wildcard origin. Native Mac clients normally omit `Origin`, so their requests
+remain supported and still require the same account and device-key
+authentication. Origin checking limits browser-based cross-origin use but is
+not treated as authentication because non-browser clients can omit that header.
+
+Cloudflare Rate Limiting bindings provide a second, deliberately generous abuse
+guard. Account API requests are limited per endpoint and a one-way digest of the
+bearer token, plus a higher-capacity connecting-address bucket that prevents
+token rotation from bypassing the guard. Requests without a bearer token use the
+connecting address for both account buckets. WebSocket upgrade attempts are
+limited per endpoint and connecting address. Bearer tokens are never stored in
+rate-limit keys. A rejected request receives HTTP `429` with `Retry-After`;
+established WebSocket messages remain protected by nonce authentication, device
+signatures, bounded queues, and the existing authorization checks.
+
 ## Crypto primitives
 
 - **Device identity:** Ed25519 signatures. Provided by Apple's CryptoKit (Swift), `@noble/ed25519` (TypeScript), and Go's stdlib `crypto/ed25519`.

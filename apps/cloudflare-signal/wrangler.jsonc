@@ -5,8 +5,26 @@
   "compatibility_date": "2026-04-19",
   "account_id": "6e40b5b780f64c89c38d041b4b676922",
   "vars": {
-    "PUBLIC_APP_URL": "https://app.glasstunnel.io"
+    "PUBLIC_APP_URL": "https://app.glasstunnel.io",
+    "ALLOWED_ORIGINS": "https://app.glasstunnel.io"
   },
+  "ratelimits": [
+    {
+      "name": "ACCOUNT_RATE_LIMITER",
+      "namespace_id": "1001",
+      "simple": { "limit": 120, "period": 60 }
+    },
+    {
+      "name": "ACCOUNT_ADDRESS_RATE_LIMITER",
+      "namespace_id": "1003",
+      "simple": { "limit": 600, "period": 60 }
+    },
+    {
+      "name": "UPGRADE_RATE_LIMITER",
+      "namespace_id": "1002",
+      "simple": { "limit": 120, "period": 60 }
+    }
+  ],
   "routes": [
     {
       "pattern": "signaling.glasstunnel.io",

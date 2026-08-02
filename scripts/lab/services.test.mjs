@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -38,6 +38,7 @@ test('Worker definition uses strict local ports and an ignored generated env fil
   const config = fixtureConfig(t);
   writeWorkerEnvironment(config, localSupabase);
   const definition = workerServiceDefinition(config);
+  const workerEnvironment = readFileSync(config.files.workerEnv, 'utf8');
 
   assert.equal(
     definition.command,
@@ -61,6 +62,7 @@ test('Worker definition uses strict local ports and an ignored generated env fil
     '--show-interactive-dev-session=false',
   ]);
   assert.equal(JSON.stringify(definition).includes('service-value'), false);
+  assert.match(workerEnvironment, /ALLOWED_ORIGINS="http:\/\/127\.0\.0\.1:5173"/);
 });
 
 test('PWA definition supplies only explicit local account-first environment', (t) => {
