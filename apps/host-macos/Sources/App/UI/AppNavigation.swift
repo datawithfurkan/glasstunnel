@@ -16,8 +16,8 @@ enum AppNavigationTab: String, CaseIterable, Hashable {
 
     var systemImage: String {
         switch self {
-        case .workspace: return "switch.2"
-        case .access: return "iphone.gen3.badge.exclamationmark"
+        case .workspace: return "square.grid.2x2"
+        case .access: return "person.2"
         case .settings: return "slider.horizontal.3"
         }
     }

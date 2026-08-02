@@ -53,7 +53,7 @@ struct MainWindow: View {
     private var header: some View {
         HStack(spacing: 16) {
             HStack(spacing: 12) {
-                BrandMarkView(size: 44)
+                BrandMarkView(size: 40)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Glasstunnel")
                         .font(.title3.weight(.semibold))
@@ -82,50 +82,31 @@ struct MainWindow: View {
             .buttonStyle(.plain)
             .pointingHandCursor()
             .popover(isPresented: $profilePopoverPresented, arrowEdge: .top) {
-                ProfilePopoverView()
+                ProfilePopoverView(isPresented: $profilePopoverPresented)
                     .environmentObject(appState)
                     .frame(width: 280)
                     .padding(18)
             }
         }
         .padding(.horizontal, 24)
-        .padding(.vertical, 18)
+        .padding(.vertical, 14)
         .background(GlasstunnelDesign.background)
     }
 
     private var sidebar: some View {
         VStack(spacing: 0) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    HStack(alignment: .top, spacing: 8) {
-                        if !sidebarCollapsed {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Navigation")
-                                    .font(.caption)
-                                    .foregroundStyle(GlasstunnelDesign.muted)
-                                    .textCase(.uppercase)
-                                Text("Manage this Mac")
-                                    .font(.headline)
-                            }
-                        }
-
-                        Spacer(minLength: 0)
-                    }
-                    .frame(maxWidth: .infinity, alignment: sidebarCollapsed ? .center : .leading)
-                    .padding(.horizontal, sidebarCollapsed ? 14 : 18)
-
-                    VStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 4) {
+                    VStack(spacing: 4) {
                         navigationButton(for: .workspace, badge: nil)
-                        sidebarNavigationSeparator
                         navigationButton(for: .access, badge: nil)
-                        sidebarNavigationSeparator
                         navigationButton(for: .settings, badge: nil)
                     }
-                    .padding(.horizontal, sidebarCollapsed ? 10 : 10)
+                    .padding(.horizontal, 10)
 
                     Spacer(minLength: 0)
                 }
-                .padding(.top, 18)
+                .padding(.top, 14)
                 .padding(.bottom, 12)
             }
 
@@ -133,17 +114,8 @@ struct MainWindow: View {
                 .overlay(GlasstunnelDesign.border)
 
             sidebarToggleFooter
-                .padding(.horizontal, 12)
-                .padding(.vertical, 12)
+                .padding(10)
         }
-    }
-
-    private var sidebarNavigationSeparator: some View {
-        Rectangle()
-            .fill(GlasstunnelDesign.outline.opacity(0.20))
-            .frame(height: 1)
-            .padding(.horizontal, sidebarCollapsed ? 8 : 12)
-            .padding(.vertical, sidebarCollapsed ? 7 : 8)
     }
 
     private var sidebarToggleFooter: some View {
@@ -153,23 +125,26 @@ struct MainWindow: View {
             }
         } label: {
             HStack(spacing: 0) {
-                Spacer(minLength: 0)
+                if !sidebarCollapsed {
+                    Spacer(minLength: 0)
+                }
                 Image(systemName: "chevron.left")
                     .font(.system(size: 12, weight: .bold))
                     .rotationEffect(.degrees(sidebarCollapsed ? 180 : 0))
                     .animation(.spring(response: 0.24, dampingFraction: 0.86, blendDuration: 0.08), value: sidebarCollapsed)
-                    .frame(width: 14, height: 14)
-                Spacer(minLength: 0)
+                    .frame(width: 32, height: 28)
+                if sidebarCollapsed {
+                    Spacer(minLength: 0)
+                }
             }
-            .foregroundStyle(sidebarCollapsed ? GlasstunnelDesign.muted : GlasstunnelDesign.text)
-            .frame(maxWidth: .infinity, minHeight: 20)
-            .padding(.vertical, 8)
+            .foregroundStyle(GlasstunnelDesign.muted)
+            .frame(maxWidth: .infinity)
             .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(GlasstunnelDesign.surfaceAlt.opacity(sidebarCollapsed ? 0.26 : 0.38))
+                RoundedRectangle(cornerRadius: GlasstunnelDesign.microRadius, style: .continuous)
+                    .fill(GlasstunnelDesign.surfaceAlt.opacity(0.24))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                RoundedRectangle(cornerRadius: GlasstunnelDesign.microRadius, style: .continuous)
                     .stroke(GlasstunnelDesign.border, lineWidth: 1)
             )
         }
@@ -237,17 +212,17 @@ struct MainWindow: View {
                 }
             }
             .padding(.horizontal, sidebarCollapsed ? 10 : 12)
-            .padding(.vertical, 10)
+            .padding(.vertical, 9)
             .frame(maxWidth: .infinity, alignment: sidebarCollapsed ? .center : .leading)
             .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                RoundedRectangle(cornerRadius: GlasstunnelDesign.microRadius, style: .continuous)
                     .fill(appState.selectedTab == tab ? GlasstunnelDesign.accent.opacity(0.14) : .clear)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                RoundedRectangle(cornerRadius: GlasstunnelDesign.microRadius, style: .continuous)
                     .stroke(appState.selectedTab == tab ? GlasstunnelDesign.accent.opacity(0.25) : Color.clear, lineWidth: 1)
             )
-            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: GlasstunnelDesign.microRadius, style: .continuous))
         }
         .buttonStyle(.plain)
         .pointingHandCursor()
@@ -607,11 +582,12 @@ private struct AvatarBadge: View {
 
 private struct ProfilePopoverView: View {
     @EnvironmentObject var appState: AppState
+    @Binding var isPresented: Bool
     @State private var showingSignOutConfirmation = false
     @State private var accountActionInFlight = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
                 AvatarBadge(
                     label: profileInitials,
@@ -626,11 +602,27 @@ private struct ProfilePopoverView: View {
                 }
             }
 
-            VStack(alignment: .leading, spacing: 10) {
-                profileRow("Host", value: appState.hostDisplayName)
-                profileRow("Status", value: appState.hostStatusLabel)
-                profileRow("Access devices", value: "\(appState.trustedDeviceCount)")
+            Divider()
+
+            Button {
+                appState.selectTab(.access)
+                isPresented = false
+            } label: {
+                Label("Manage Access", systemImage: AppNavigationTab.access.systemImage)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .buttonStyle(.plain)
+            .pointingHandCursor()
+
+            Button {
+                appState.selectTab(.settings)
+                isPresented = false
+            } label: {
+                Label("Settings", systemImage: AppNavigationTab.settings.systemImage)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            .pointingHandCursor()
 
             Divider()
 
@@ -662,21 +654,9 @@ private struct ProfilePopoverView: View {
                 .pointingHandCursor(!accountActionInFlight)
             }
 
-            Button {
-                appState.selectTab(.access)
-            } label: {
-                Label("Open Access", systemImage: AppNavigationTab.access.systemImage)
-            }
-            .buttonStyle(.plain)
-            .pointingHandCursor()
-
-            Button {
-                appState.selectTab(.settings)
-            } label: {
-                Label("Open Settings", systemImage: AppNavigationTab.settings.systemImage)
-            }
-            .buttonStyle(.plain)
-            .pointingHandCursor()
+            Text("Glasstunnel \(AppVersionInfo.current().displayValue)")
+                .font(.caption2)
+                .foregroundStyle(GlasstunnelDesign.muted)
         }
         .foregroundStyle(GlasstunnelDesign.text)
         .confirmationDialog("Sign out of this Mac?", isPresented: $showingSignOutConfirmation) {
@@ -697,19 +677,6 @@ private struct ProfilePopoverView: View {
             if !initials.isEmpty { return initials.uppercased() }
         }
         return "GT"
-    }
-
-    private func profileRow(_ title: String, value: String) -> some View {
-        HStack {
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(GlasstunnelDesign.muted)
-            Spacer()
-            Text(value)
-                .font(.caption.weight(.medium))
-                .multilineTextAlignment(.trailing)
-                .foregroundStyle(GlasstunnelDesign.text)
-        }
     }
 
     private func beginHostedSignIn() async {

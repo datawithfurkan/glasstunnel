@@ -17,51 +17,18 @@ struct WorkspaceView: View {
         }
     }
 
-    private var supportedCount: Int {
-        appState.remoteApps.count
-    }
-
-    private var availableCount: Int {
-        appState.remoteApps.filter(\.available).count
-    }
-
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
+            VStack(alignment: .leading, spacing: 16) {
                 header
 
-                RemoteAppsSummaryStrip(
-                    supportedCount: supportedCount,
-                    availableCount: availableCount,
-                    sessionState: appState.sessionManagerState,
-                    accountLinked: appState.isLinkedToAccount
-                )
-
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(spacing: 12) {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundStyle(GlasstunnelDesign.muted)
-                        TextField("Search remote apps", text: $searchText)
-                            .textFieldStyle(.plain)
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(GlasstunnelDesign.surfaceAlt.opacity(0.42))
-                    )
-
-                    VStack(spacing: 10) {
-                        ForEach(filteredApps) { app in
-                            RemoteAppRow(app: app)
-                        }
-                    }
-                }
-                .glasstunnelPanelStyle(radius: 18)
+                searchField
+                remoteAppsList
                 .padding(.bottom, 24)
             }
             .padding(28)
-            .frame(maxWidth: 1180, alignment: .leading)
+            .frame(maxWidth: 1040, alignment: .leading)
+            .frame(maxWidth: .infinity)
         }
         .background(GlasstunnelDesign.background)
     }
@@ -69,11 +36,10 @@ struct WorkspaceView: View {
     private var header: some View {
         HStack(alignment: .top, spacing: 18) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Remote apps")
-                    .font(.system(size: 34, weight: .semibold))
-                Text("Start apps from the web. Glasstunnel opens and syncs them here when needed.")
-                    .font(.system(size: 15))
-                    .foregroundStyle(GlasstunnelDesign.muted)
+                GlasstunnelPageHeading(
+                    title: "Workspace",
+                    subtitle: "Apps available for remote use from your browser."
+                )
             }
 
             Spacer()
@@ -90,92 +56,52 @@ struct WorkspaceView: View {
             }
         }
     }
-}
 
-private struct RemoteAppsSummaryStrip: View {
-    let supportedCount: Int
-    let availableCount: Int
-    let sessionState: String
-    let accountLinked: Bool
-
-    private var signalingOnline: Bool { sessionState == "connected" }
-    private var reconnecting: Bool { sessionState == "connecting" || sessionState == "error" }
-
-    var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), spacing: 10)], spacing: 10) {
-            SummaryBadge(
-                title: "\(supportedCount)",
-                label: "Remote actions",
-                systemImage: "square.grid.2x2",
-                tone: supportedCount > 0 ? .accent : .neutral
-            )
-            SummaryBadge(
-                title: "\(availableCount)",
-                label: "Detected",
-                systemImage: "app.connected.to.app.below.fill",
-                tone: availableCount > 0 ? .success : .warning
-            )
-            SummaryBadge(
-                title: signalingOnline ? "Online" : (reconnecting ? "Reconnecting" : "Offline"),
-                label: signalingOnline ? "Ready for browser access" : "Restoring signaling",
-                systemImage: "dot.radiowaves.left.and.right",
-                tone: signalingOnline ? .success : .warning
-            )
-            SummaryBadge(
-                title: accountLinked ? "Linked" : "Unlinked",
-                label: accountLinked ? "Account access active" : "Set up in Access",
-                systemImage: "person.crop.circle",
-                tone: accountLinked ? .accent : .warning
-            )
-        }
-    }
-}
-
-private struct SummaryBadge: View {
-    enum Tone {
-        case accent
-        case success
-        case warning
-        case neutral
-
-        var color: Color {
-            switch self {
-            case .accent: return GlasstunnelDesign.accent
-            case .success: return GlasstunnelDesign.success
-            case .warning: return GlasstunnelDesign.warning
-            case .neutral: return GlasstunnelDesign.muted
-            }
-        }
-    }
-
-    let title: String
-    let label: String
-    let systemImage: String
-    let tone: Tone
-
-    var body: some View {
+    private var searchField: some View {
         HStack(spacing: 10) {
-            Image(systemName: systemImage)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(tone.color)
-                .frame(width: 28, height: 28)
-                .background(
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(tone.color.opacity(0.14))
-                )
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 14, weight: .semibold))
-                Text(label)
-                    .font(.caption)
-                    .foregroundStyle(GlasstunnelDesign.muted)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 0)
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(GlasstunnelDesign.muted)
+            TextField("Search apps", text: $searchText)
+                .textFieldStyle(.plain)
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glasstunnelPanelStyle(radius: 16)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(
+            RoundedRectangle(cornerRadius: GlasstunnelDesign.microRadius, style: .continuous)
+                .fill(GlasstunnelDesign.surface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: GlasstunnelDesign.microRadius, style: .continuous)
+                .stroke(GlasstunnelDesign.border, lineWidth: 1)
+        )
+    }
+
+    private var remoteAppsList: some View {
+        GlasstunnelGroupedList {
+            GlasstunnelGroupHeader(
+                title: "Apps",
+                subtitle: "\(appState.remoteApps.filter(\.available).count) of \(appState.remoteApps.count) available"
+            )
+            GlasstunnelRowDivider(leadingInset: 0)
+
+            if filteredApps.isEmpty {
+                GlasstunnelListRow(
+                    title: "No matching apps",
+                    subtitle: "Try another search.",
+                    systemImage: "magnifyingglass",
+                    iconColor: GlasstunnelDesign.muted
+                ) {
+                    EmptyView()
+                }
+            } else {
+                ForEach(Array(filteredApps.enumerated()), id: \.element.id) { index, app in
+                    if index > 0 {
+                        GlasstunnelRowDivider()
+                    }
+                    RemoteAppRow(app: app)
+                }
+            }
+        }
     }
 }
 
@@ -196,85 +122,59 @@ private struct RemoteAppRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .center, spacing: 14) {
-                AppIconTile(app: app, symbolName: definition?.symbolName ?? "terminal")
+        HStack(alignment: .center, spacing: 12) {
+            AppIconTile(app: app, symbolName: definition?.symbolName ?? "terminal")
 
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack(spacing: 8) {
-                        Text(app.displayName)
-                            .font(.system(size: 16, weight: .semibold))
-                        RemoteAppStatusPill(app: app)
-                    }
-                    Text(primaryDetail)
-                        .font(.system(size: 13))
-                        .foregroundStyle(GlasstunnelDesign.muted)
-                        .lineLimit(1)
-                }
-
-                Spacer()
-
-                if presentation.hasToggle {
-                    VStack(alignment: .trailing, spacing: 4) {
-                        Toggle(presentation.controlLabelText, isOn: remoteAppToggleBinding)
-                            .toggleStyle(.switch)
-                            .controlSize(.small)
-                            .pointingHandCursor()
-                        Text(presentation.controlStatusText)
-                            .font(.caption2)
-                            .foregroundStyle(controlStatusColor(for: presentation))
-                    }
-                }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(app.displayName)
+                    .font(.system(size: 14, weight: .medium))
+                Text(primaryDetail)
+                    .font(.caption)
+                    .foregroundStyle(app.available ? GlasstunnelDesign.muted : GlasstunnelDesign.warning)
+                    .lineLimit(2)
             }
 
-            HStack(spacing: 10) {
-                if windowOptions.count > 1 {
-                    Menu {
-                        ForEach(windowOptions) { option in
-                            Button {
-                                appState.selectRemoteAppWindow(
-                                    remoteAppId: app.remoteAppId,
-                                    windowKey: option.windowKey
-                                )
-                            } label: {
-                                VStack(alignment: .leading) {
-                                    Text(option.title)
-                                    Text(option.subtitle)
-                                }
-                            }
+            Spacer(minLength: 16)
+
+            if windowOptions.count > 1 {
+                Menu {
+                    ForEach(windowOptions) { option in
+                        Button {
+                            appState.selectRemoteAppWindow(
+                                remoteAppId: app.remoteAppId,
+                                windowKey: option.windowKey
+                            )
+                        } label: {
+                            Text(option.title)
                         }
-                    } label: {
-                        Label("Change window", systemImage: "rectangle.stack")
                     }
-                    .buttonStyle(.bordered)
+                } label: {
+                    Image(systemName: "rectangle.stack")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .pointingHandCursor()
+                .help("Change window")
+            }
+
+            if presentation.hasToggle {
+                Toggle(presentation.controlLabelText, isOn: remoteAppToggleBinding)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
                     .controlSize(.small)
                     .pointingHandCursor()
-                }
-
-                if app.available {
-                    Label(statusDetailText, systemImage: syncIcon)
-                        .font(.caption)
-                        .foregroundStyle(GlasstunnelDesign.muted)
-                        .lineLimit(1)
-                } else if !app.available {
-                    Label(unavailableDetailText, systemImage: "exclamationmark.circle")
-                        .font(.caption)
-                        .foregroundStyle(GlasstunnelDesign.warning)
-                }
-
-                Spacer()
+                    .help(presentation.controlLabelText)
+            } else {
+                GlasstunnelStatusLabel(
+                    title: statusLabel,
+                    systemImage: statusIcon,
+                    color: statusColor
+                )
             }
-            .padding(.leading, 58)
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(rowIsReady ? GlasstunnelDesign.accent.opacity(0.08) : GlasstunnelDesign.surfaceAlt.opacity(0.36))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(rowIsReady ? GlasstunnelDesign.accent.opacity(0.26) : GlasstunnelDesign.border, lineWidth: 1)
-        )
+        .padding(.horizontal, 16)
+        .padding(.vertical, 11)
     }
 
     private var remoteAppToggleBinding: Binding<Bool> {
@@ -286,41 +186,40 @@ private struct RemoteAppRow: View {
         )
     }
 
-    private var rowIsReady: Bool {
-        app.available && app.enabled
-    }
-
     private var primaryDetail: String {
         presentation.primaryDetail
     }
 
-    private var statusDetailText: String {
-        presentation.statusDetailText
-    }
-
-    private var unavailableDetailText: String {
-        presentation.unavailableDetailText
-    }
-
-    private func controlStatusColor(for presentation: RemoteAppRowPresentation) -> Color {
-        switch presentation.controlTone {
-        case .warning:
-            return GlasstunnelDesign.warning
-        case .accent:
-            return GlasstunnelDesign.accent
-        case .success:
-            return GlasstunnelDesign.success
-        case .muted:
-            return GlasstunnelDesign.muted
+    private var statusLabel: String {
+        if !app.enabled { return "Off" }
+        if !app.available { return "Not ready" }
+        switch app.status {
+        case .working: return "Syncing"
+        case .error: return "Needs attention"
+        case .disconnected: return "Offline"
+        default: return "Ready"
         }
     }
 
-    private var syncIcon: String {
+    private var statusIcon: String {
+        if !app.enabled { return "circle" }
+        if !app.available { return "exclamationmark.circle" }
         switch app.status {
         case .working: return "arrow.triangle.2.circlepath"
         case .error: return "exclamationmark.triangle"
         case .disconnected: return "wifi.slash"
         default: return "checkmark.circle"
+        }
+    }
+
+    private var statusColor: Color {
+        if !app.enabled { return GlasstunnelDesign.muted }
+        if !app.available { return GlasstunnelDesign.warning }
+        switch app.status {
+        case .working: return GlasstunnelDesign.accent
+        case .error: return GlasstunnelDesign.danger
+        case .disconnected: return GlasstunnelDesign.warning
+        default: return GlasstunnelDesign.success
         }
     }
 }
@@ -414,15 +313,15 @@ private struct AppIconTile: View {
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: GlasstunnelDesign.microRadius, style: .continuous)
                 .fill(iconColor.opacity(app.available ? 0.18 : 0.10))
             Image(systemName: symbolName)
-                .font(.system(size: 18, weight: .semibold))
+                .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(iconColor)
         }
-        .frame(width: 44, height: 44)
+        .frame(width: 36, height: 36)
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: GlasstunnelDesign.microRadius, style: .continuous)
                 .stroke(iconColor.opacity(app.available ? 0.36 : 0.18), lineWidth: 1)
         )
     }
@@ -435,44 +334,6 @@ private struct AppIconTile: View {
         case "codex-cli": return Color(red: 0.38, green: 0.76, blue: 1.0)
         case "opencode": return Color(red: 0.58, green: 0.88, blue: 0.68)
         default: return GlasstunnelDesign.accent
-        }
-    }
-}
-
-private struct RemoteAppStatusPill: View {
-    let app: RemoteApp
-
-    var body: some View {
-        Text(label)
-            .font(.system(size: 11, weight: .medium))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(color.opacity(0.16))
-            )
-            .foregroundStyle(color)
-    }
-
-    private var label: String {
-        if !app.enabled { return "Off" }
-        if !app.available { return app.remoteAppId == "screen" ? "Needs access" : "Not ready" }
-        switch app.status {
-        case .working: return "Syncing"
-        case .error: return "Needs attention"
-        case .disconnected: return "Offline"
-        default: return "Ready"
-        }
-    }
-
-    private var color: Color {
-        if !app.enabled { return GlasstunnelDesign.muted }
-        if !app.available { return GlasstunnelDesign.warning }
-        switch app.status {
-        case .working: return GlasstunnelDesign.accent
-        case .error: return GlasstunnelDesign.danger
-        case .disconnected: return GlasstunnelDesign.warning
-        default: return GlasstunnelDesign.success
         }
     }
 }

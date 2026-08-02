@@ -9,146 +9,74 @@ struct AccessView: View {
     @State private var isPerformingAccountAction = false
     @State private var copiedWebAppURL = false
     @State private var showingSignOutConfirmation = false
-    @State private var connectionDetailsExpanded = false
 
     var body: some View {
-        GeometryReader { proxy in
-            let contentWidth = min(proxy.size.width - 48, 1080)
-            let compact = contentWidth < 940
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                GlasstunnelPageHeading(
+                    title: "Access",
+                    subtitle: "Manage your account and devices that can open this Mac."
+                )
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Access")
-                            .font(.system(size: 30, weight: .semibold))
-                        Text("This Mac is linked to your Glasstunnel account.")
-                            .font(.subheadline)
-                            .foregroundStyle(GlasstunnelDesign.muted)
-                    }
-
-                    if compact {
-                        VStack(alignment: .leading, spacing: 18) {
-                            thisMacCard
-                            openFromWebCard
-                        }
-                    } else {
-                        HStack(alignment: .top, spacing: 18) {
-                            thisMacCard
-                            openFromWebCard
-                        }
-                    }
-
-                    trustedDevicesCard
-                }
-                .frame(maxWidth: contentWidth, alignment: .leading)
-                .frame(maxWidth: .infinity)
-                .padding(24)
+                thisMacGroup
+                trustedDevicesGroup
             }
-            .background(GlasstunnelDesign.background)
-            .confirmationDialog("Sign out of this Mac?", isPresented: $showingSignOutConfirmation) {
-                Button("Sign Out", role: .destructive) {
-                    Task { await signOutLinkedAccount() }
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("This unlinks the Mac from your account and clears all access devices on this Mac.")
+            .frame(maxWidth: 1040, alignment: .leading)
+            .frame(maxWidth: .infinity)
+            .padding(28)
+        }
+        .background(GlasstunnelDesign.background)
+        .confirmationDialog("Sign out of this Mac?", isPresented: $showingSignOutConfirmation) {
+            Button("Sign Out", role: .destructive) {
+                Task { await signOutLinkedAccount() }
             }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This unlinks the Mac from your account and clears all access devices on this Mac.")
         }
     }
 
-    private var thisMacCard: some View {
-        AccessCard(
-            title: "Linked account",
-            subtitle: "Signed-in devices can open this Mac"
-        ) {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(alignment: .top, spacing: 12) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: GlasstunnelDesign.microRadius, style: .continuous)
-                            .fill(GlasstunnelDesign.success.opacity(0.16))
-                            .frame(width: 44, height: 44)
-                        Image(systemName: "person.crop.circle.badge.checkmark")
-                            .font(.system(size: 19, weight: .semibold))
-                            .foregroundStyle(GlasstunnelDesign.success)
-                    }
+    private var thisMacGroup: some View {
+        GlasstunnelGroupedList {
+            GlasstunnelGroupHeader(
+                title: "This Mac",
+                subtitle: "Ready for signed-in devices"
+            )
+            GlasstunnelRowDivider(leadingInset: 0)
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(appState.linkedAccount?.displayName ?? "Linked")
-                            .font(.headline)
-                        Text(accountSummaryLine)
-                            .font(.caption)
-                            .foregroundStyle(GlasstunnelDesign.muted)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 0)
-                }
-
+            GlasstunnelListRow(
+                title: appState.linkedAccount?.displayName ?? "Linked account",
+                subtitle: accountSummaryLine,
+                systemImage: "person.crop.circle.badge.checkmark",
+                iconColor: GlasstunnelDesign.success
+            ) {
                 Button(role: .destructive) {
                     showingSignOutConfirmation = true
                 } label: {
-                    Label(
-                        isPerformingAccountAction ? "Signing out..." : "Sign Out",
-                        systemImage: "arrow.left.circle"
-                    )
+                    Text(isPerformingAccountAction ? "Signing out..." : "Sign Out")
                 }
                 .buttonStyle(.bordered)
+                .controlSize(.small)
                 .disabled(isPerformingAccountAction)
                 .pointingHandCursor(!isPerformingAccountAction)
-
-                DisclosureGroup(isExpanded: $connectionDetailsExpanded) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        infoRow("Host", value: appState.hostDisplayName)
-                        infoRow("Host device ID", value: appState.hostDeviceID() ?? "-")
-                        infoRow("Web app", value: appState.webAppURL.absoluteString)
-                        infoRow("Signaling", value: appState.signalingURL.absoluteString)
-                    }
-                    .padding(.top, 8)
-                } label: {
-                    Text("Details")
-                        .pointingHandCursor()
-                }
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(GlasstunnelDesign.muted)
-
-                if let accessError {
-                    Text(accessError)
-                        .font(.caption)
-                        .foregroundStyle(GlasstunnelDesign.danger)
-                }
             }
-        }
-    }
 
-    private var openFromWebCard: some View {
-        AccessCard(title: "Open from web", subtitle: "Use this on any signed-in device") {
-            VStack(alignment: .leading, spacing: 16) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: GlasstunnelDesign.panelRadius, style: .continuous)
-                        .fill(GlasstunnelDesign.success.opacity(0.10))
-                        .frame(height: 160)
-                    VStack(spacing: 10) {
-                        Image(systemName: "checkmark.seal.fill")
-                            .font(.system(size: 40))
-                            .foregroundStyle(GlasstunnelDesign.success)
-                        Text("Ready for remote access")
-                            .font(.headline)
-                        Text("No approval step is needed.")
-                            .font(.caption)
-                            .foregroundStyle(GlasstunnelDesign.muted)
-                    }
-                }
-                .overlay(
-                    RoundedRectangle(cornerRadius: GlasstunnelDesign.panelRadius, style: .continuous)
-                        .stroke(GlasstunnelDesign.success.opacity(0.30), lineWidth: 1)
-                )
+            GlasstunnelRowDivider()
 
-                HStack(spacing: 10) {
+            GlasstunnelListRow(
+                title: "Ready for remote access",
+                subtitle: "Open the web app on any signed-in device.",
+                systemImage: "checkmark.seal.fill",
+                iconColor: GlasstunnelDesign.success
+            ) {
+                HStack(spacing: 8) {
                     Button {
                         NSWorkspace.shared.open(appState.webAppURL)
                     } label: {
                         Label("Open Web App", systemImage: "safari")
                     }
                     .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
                     .pointingHandCursor()
 
                     Button {
@@ -158,11 +86,21 @@ struct AccessView: View {
                             copiedWebAppURL = false
                         }
                     } label: {
-                        Label(copiedWebAppURL ? "Copied" : "Copy URL", systemImage: copiedWebAppURL ? "checkmark" : "doc.on.doc")
+                        Image(systemName: copiedWebAppURL ? "checkmark" : "doc.on.doc")
                     }
                     .buttonStyle(.bordered)
+                    .controlSize(.small)
                     .pointingHandCursor()
+                    .help(copiedWebAppURL ? "Copied" : "Copy web app URL")
                 }
+            }
+
+            if let accessError {
+                Text(accessError)
+                    .font(.caption)
+                    .foregroundStyle(GlasstunnelDesign.danger)
+                    .padding(.horizontal, 64)
+                    .padding(.bottom, 12)
             }
         }
     }
@@ -174,105 +112,77 @@ struct AccessView: View {
         return linkedAccount.email.isEmpty ? linkedAccount.displayName : linkedAccount.email
     }
 
-    private var trustedDevicesCard: some View {
-        AccessCard(title: "Devices", subtitle: "Phones and browsers that have opened this Mac") {
+    private var trustedDevicesGroup: some View {
+        GlasstunnelGroupedList {
+            GlasstunnelGroupHeader(
+                title: "Devices",
+                subtitle: "Phones and browsers that have opened this Mac"
+            )
+            GlasstunnelRowDivider(leadingInset: 0)
+
             if appState.pairedDevices.isEmpty {
-                VStack(spacing: 10) {
-                    Image(systemName: "iphone.slash")
-                        .font(.system(size: 36))
-                        .foregroundStyle(GlasstunnelDesign.muted)
-                    Text("No access devices yet.")
-                        .foregroundStyle(GlasstunnelDesign.text)
-                    Text("Open the web app from another device.")
-                        .font(.caption)
-                        .foregroundStyle(GlasstunnelDesign.muted)
+                GlasstunnelListRow(
+                    title: "No access devices yet",
+                    subtitle: "Open the web app from another signed-in device.",
+                    systemImage: "iphone.slash",
+                    iconColor: GlasstunnelDesign.muted
+                ) {
+                    EmptyView()
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 18)
             } else {
-                VStack(spacing: 12) {
-                    ForEach(appState.pairedDevices) { device in
-                        trustedDeviceRow(device)
+                ForEach(Array(appState.pairedDevices.enumerated()), id: \.element.id) { index, device in
+                    if index > 0 {
+                        GlasstunnelRowDivider()
                     }
+                    trustedDeviceRow(device)
                 }
             }
         }
     }
 
     private func trustedDeviceRow(_ device: DeviceRegistry.PairedDevice) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: GlasstunnelDesign.microRadius, style: .continuous)
-                    .fill(device.revoked ? GlasstunnelDesign.danger.opacity(0.10) : GlasstunnelDesign.accent.opacity(0.10))
-                    .frame(width: 38, height: 38)
-                Image(systemName: device.revoked ? "xmark.circle" : "iphone")
-                    .foregroundStyle(device.revoked ? GlasstunnelDesign.danger : GlasstunnelDesign.accent)
-            }
+        GlasstunnelListRow(
+            title: device.label.isEmpty ? "Unknown device" : device.label,
+            subtitle: deviceMetadata(device),
+            systemImage: device.revoked ? "xmark.circle" : "iphone",
+            iconColor: device.revoked ? GlasstunnelDesign.danger : GlasstunnelDesign.accent
+        ) {
+            HStack(spacing: 10) {
+                if device.revoked {
+                    GlasstunnelStatusLabel(
+                        title: "Revoked",
+                        systemImage: "xmark.circle",
+                        color: GlasstunnelDesign.danger
+                    )
+                }
 
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
-                    Text(device.label.isEmpty ? "Unknown device" : device.label)
-                        .font(.headline)
-                    if device.revoked {
-                        Text("Revoked")
-                            .font(.caption.weight(.semibold))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(
-                                RoundedRectangle(cornerRadius: GlasstunnelDesign.microRadius, style: .continuous)
-                                    .fill(GlasstunnelDesign.danger.opacity(0.14))
-                            )
-                            .foregroundStyle(GlasstunnelDesign.danger)
+                Menu {
+                    if !device.revoked {
+                        Button("Revoke Access", role: .destructive) {
+                            appState.revokeDevice(device.deviceId)
+                        }
                     }
-                }
-                HStack(spacing: 12) {
-                    Text("added \(device.pairedAt.formatted(.relative(presentation: .named)))")
-                        .font(.caption)
-                        .foregroundStyle(GlasstunnelDesign.muted)
-                    if let lastSeenAt = device.lastSeenAt {
-                        Text("last seen \(lastSeenAt.formatted(.relative(presentation: .named)))")
-                            .font(.caption)
-                            .foregroundStyle(GlasstunnelDesign.muted)
+                    Button("Remove Device", role: .destructive) {
+                        appState.removeDevice(device.deviceId)
                     }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
                 }
-            }
-            Spacer()
-            HStack {
-                if !device.revoked {
-                    Button("Revoke", role: .destructive) {
-                        appState.revokeDevice(device.deviceId)
-                    }
-                    .buttonStyle(.bordered)
-                    .pointingHandCursor()
-                }
-                Button("Remove") {
-                    appState.removeDevice(device.deviceId)
-                }
-                .buttonStyle(.bordered)
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
                 .pointingHandCursor()
+                .help("Device actions")
             }
         }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: GlasstunnelDesign.panelRadius, style: .continuous)
-                .fill(GlasstunnelDesign.background)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: GlasstunnelDesign.panelRadius, style: .continuous)
-                .stroke(GlasstunnelDesign.border, lineWidth: 1)
-        )
     }
 
-    private func infoRow(_ title: String, value: String) -> some View {
-        HStack(alignment: .top) {
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(GlasstunnelDesign.muted)
-                .frame(width: 110, alignment: .leading)
-            Text(value)
-                .font(.subheadline)
-                .textSelection(.enabled)
+    private func deviceMetadata(_ device: DeviceRegistry.PairedDevice) -> String {
+        var parts = ["Added \(device.pairedAt.formatted(.relative(presentation: .named)))"]
+        if let lastSeenAt = device.lastSeenAt {
+            parts.append("Last seen \(lastSeenAt.formatted(.relative(presentation: .named)))")
         }
+        return parts.joined(separator: " · ")
     }
 
     private func copyToClipboard(_ text: String) {
@@ -291,29 +201,6 @@ struct AccessView: View {
         } catch {
             accessError = error.localizedDescription
         }
-    }
-}
-
-private struct AccessCard<Content: View>: View {
-    let title: String
-    let subtitle: String
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.headline)
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(GlasstunnelDesign.muted)
-            }
-
-            content
-        }
-        .padding(20)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glasstunnelPanelStyle()
     }
 }
 #endif
