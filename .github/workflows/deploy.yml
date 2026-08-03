@@ -19,12 +19,13 @@ permissions:
 env:
   NODE_VERSION: '22'
   CLOUDFLARE_PAGES_PROJECT: glasstunnel
+  CLOUDFLARE_SITE_PROJECT: glasstunnel-site
   PWA_PUBLIC_APP_URL: https://app.glasstunnel.io
   PWA_SIGNALING_URL: wss://signaling.glasstunnel.io/signal
 
 jobs:
-  deploy-pwa:
-    name: Deploy PWA
+  deploy-web:
+    name: Deploy web surfaces
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production
@@ -63,6 +64,18 @@ jobs:
         run: >-
           pnpm dlx wrangler@4 pages deploy apps/mobile-pwa/dist
           --project-name=${{ env.CLOUDFLARE_PAGES_PROJECT }}
+          --branch=main
+
+      - name: Build marketing site
+        run: pnpm --filter=@glasstunnel/site build
+
+      - name: Deploy marketing site to Cloudflare Pages
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: >-
+          pnpm dlx wrangler@4 pages deploy site/dist
+          --project-name=${{ env.CLOUDFLARE_SITE_PROJECT }}
           --branch=main
 
   deploy-signal:

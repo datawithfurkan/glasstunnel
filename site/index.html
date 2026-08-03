@@ -2,143 +2,432 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#0b0f17" />
-    <title>Glasstunnel — see your local AI coding agents from your phone</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#09090a" />
     <meta
       name="description"
-      content="Open-source tunnel from a Mac running local AI coding agents (Cursor, Claude Code, Codex, OpenCode) to a mobile PWA. Keep the local context. Walk away. Check in from anywhere."
+      content="Control coding agents running on your Mac from your phone. Glasstunnel is an open-source, encrypted remote access layer for agentic development."
     />
-    <link rel="icon" href="/favicon.png" type="image/png" />
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href="https://glasstunnel.io/" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preload" href="./brand/glasstunnel-mark-light.png" as="image" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Glasstunnel" />
+    <meta property="og:title" content="Glasstunnel — Control your coding agents from your phone" />
+    <meta
+      property="og:description"
+      content="Check progress, send prompts, and keep your coding agents moving from anywhere. Open source and built for the Mac you already use."
+    />
+    <meta property="og:url" content="https://glasstunnel.io/" />
+    <meta property="og:image" content="https://glasstunnel.io/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="A phone sending a prompt to a coding agent running on a Mac through Glasstunnel" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Glasstunnel — Control your coding agents from your phone" />
+    <meta
+      name="twitter:description"
+      content="Your coding agents keep running on your Mac. Glasstunnel gives your phone a secure way back in."
+    />
+    <meta name="twitter:image" content="https://glasstunnel.io/og-image.png" />
+
+    <title>Glasstunnel — Control your coding agents from your phone</title>
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
-    <header class="hero">
-      <nav>
-        <a class="brand" href="/">
-          <span class="brand-name">Glasstunnel</span>
+    <a class="skip-link" href="#main-content">Skip to content</a>
+
+    <header class="site-header" data-header>
+      <a class="brand" href="#top" aria-label="Glasstunnel home">
+        <img src="./brand/glasstunnel-mark-light.png" width="38" height="38" alt="" />
+        <span>Glasstunnel</span>
+      </a>
+
+      <button class="nav-toggle icon-button" type="button" aria-expanded="false" aria-controls="site-nav" data-nav-toggle>
+        <i data-lucide="menu" aria-hidden="true"></i>
+        <span class="sr-only">Open navigation</span>
+      </button>
+
+      <nav id="site-nav" class="site-nav" aria-label="Primary navigation" data-nav>
+        <a href="#how-it-works">How it works</a>
+        <a href="#support">Supported apps</a>
+        <a href="#security">Security</a>
+        <a href="https://github.com/datawithfurkan/glasstunnel/tree/main/docs">Docs</a>
+        <a class="nav-github" href="https://github.com/datawithfurkan/glasstunnel" aria-label="Glasstunnel on GitHub">
+          <i data-lucide="github" aria-hidden="true"></i>
+          <span>GitHub</span>
         </a>
-        <div class="nav-links">
-          <a href="https://github.com/datawithfurkan/glasstunnel">GitHub</a>
-          <a href="#self-host">Self-host</a>
-          <a href="#security">Security</a>
-        </div>
+        <a class="button button-small button-light" href="https://github.com/datawithfurkan/glasstunnel/releases/download/v0.1.5/Glasstunnel-0.1.5.dmg">
+          <i data-lucide="download" aria-hidden="true"></i>
+          Download for Mac
+        </a>
       </nav>
-      <div class="hero-copy">
-        <div class="hero-brand">
-          <img src="./brand/glasstunnel-lockup-light.png" alt="Glasstunnel" />
-        </div>
-        <h1>See your local AI coding agents from your phone.</h1>
-        <p>
-          Walk away from your desk. Check in from the subway. Send a prompt. Come home to a
-          finished task. <b>Glasstunnel</b> is an open-source tunnel from a Mac running Cursor,
-          Claude Code, Codex, or OpenCode to a mobile PWA. The agent keeps running in its original
-          local context — no token burn, no half-synced GitHub state.
-        </p>
-        <div class="cta">
-          <a class="btn btn-primary" href="#install">Install for Mac</a>
-          <a class="btn btn-ghost" href="https://github.com/datawithfurkan/glasstunnel">Source on GitHub</a>
-        </div>
-      </div>
     </header>
 
-    <section class="pitch" id="install">
-      <h2>Stop moving your context to the cloud.</h2>
-      <div class="pitch-grid">
-        <div>
-          <h3>Open your Mac agents remotely.</h3>
+    <main id="main-content">
+      <section id="top" class="hero" aria-labelledby="hero-title">
+        <div class="hero-grid" aria-hidden="true"></div>
+        <div class="hero-copy">
+          <div class="eyebrow"><span class="live-dot"></span> Open source · Public beta</div>
+          <h1 id="hero-title">Control your coding agents from your phone.</h1>
           <p>
-            Link the host once, then open Cursor, Claude Code, Codex, OpenCode, or a mirrored
-            window as remote apps from your phone.
+            Check progress, send prompts, and keep your coding agents moving from anywhere.
           </p>
+          <div class="hero-actions">
+            <a class="button button-light" href="https://github.com/datawithfurkan/glasstunnel/releases/download/v0.1.5/Glasstunnel-0.1.5.dmg">
+              <i data-lucide="download" aria-hidden="true"></i>
+              Download for Mac
+            </a>
+            <a class="button button-dark" href="https://github.com/datawithfurkan/glasstunnel">
+              <i data-lucide="github" aria-hidden="true"></i>
+              View on GitHub
+            </a>
+            <a class="text-link" href="https://app.glasstunnel.io">
+              Open web app <i data-lucide="arrow-up-right" aria-hidden="true"></i>
+            </a>
+          </div>
+          <p class="release-note">macOS 14 or later · Signed and notarized · v0.1.5</p>
         </div>
-        <div>
-          <h3>Respond from your phone.</h3>
-          <p>
-            Quick-reply templates (<i>continue</i>, <i>try again</i>, <i>commit</i>), voice input,
-            full keyboard. Everything lands in the real local agent, not a cloud re-index.
-          </p>
-        </div>
-        <div>
-          <h3>Push when it's done.</h3>
-          <p>
-            For Cursor and Claude Code we use first-class adapters that know when the agent
-            finishes or needs approval. Your phone pings; you tap; you keep moving.
-          </p>
-        </div>
-      </div>
-    </section>
 
-    <section class="why" id="why">
-      <h2>Why not a cloud agent?</h2>
-      <div class="why-cols">
-        <div>
-          <h4>Because your context is huge and local.</h4>
-          <p>
-            You've spent two hours loading a project into Cursor's window. Spinning up a remote
-            Codespace just to respond to a diff burns minutes and tokens you don't need to spend.
+        <div class="hero-product" data-hero-scene>
+          <p class="sr-only">
+            An animated product demonstration. A prompt is written on a phone, delivered to Codex on a Mac, completed locally, and returned to the phone.
           </p>
-        </div>
-        <div>
-          <h4>Because your secrets live in your home.</h4>
-          <p>
-            The <code>.env</code>, the SSH keys, the half-finished ideas. Glasstunnel never moves
-            them. We even redact them before they hit the tunnel.
-          </p>
-        </div>
-        <div>
-          <h4>Because open source.</h4>
-          <p>
-            Apache 2.0 core. Self-hostable signaling + TURN in one <code>docker compose up</code>.
-            Your code, your data, your tunnel.
-          </p>
-        </div>
-      </div>
-    </section>
 
-    <section class="self-host" id="self-host">
-      <h2>Self-host in one command.</h2>
-      <pre><code>git clone https://github.com/datawithfurkan/glasstunnel
-cd glasstunnel/deploy
-cp .env.example .env    # tune the TURN password
-docker compose --env-file .env up -d</code></pre>
-      <p>
-        Signaling on <code>:8080</code>. coturn on <code>:3478</code>. The local Go self-host path
-        stays device-key scoped; the hosted path adds Cloudflare + Supabase account linking. Full
-        guide in
-        <a href="https://github.com/datawithfurkan/glasstunnel/blob/main/docs/self-hosting.md">
-          docs/self-hosting.md
-        </a>.
-      </p>
-    </section>
+          <div class="mac-window" aria-hidden="true">
+            <div class="window-titlebar">
+              <div class="traffic-lights"><span></span><span></span><span></span></div>
+              <div class="window-brand">
+                <img src="./brand/glasstunnel-mark-light.png" width="30" height="30" alt="" />
+                <div><strong>Glasstunnel</strong><small>Demo Mac</small></div>
+              </div>
+              <div class="online-state"><span></span> Online</div>
+            </div>
+            <div class="mac-layout">
+              <aside class="mac-sidebar">
+                <small>MANAGE THIS MAC</small>
+                <div class="mac-nav-item is-active"><i data-lucide="panels-top-left"></i>Workspace</div>
+                <div class="mac-nav-item"><i data-lucide="key-round"></i>Access</div>
+                <div class="mac-nav-item"><i data-lucide="sliders-horizontal"></i>Settings</div>
+              </aside>
+              <div class="workspace-view">
+                <div class="workspace-heading">
+                  <div><h2>Workspace</h2><p>Apps available from your browser.</p></div>
+                  <span class="state-pill" data-mac-status>READY</span>
+                </div>
+                <div class="app-list">
+                  <div class="app-row is-active">
+                    <span class="app-icon app-icon-codex"><i data-lucide="square-terminal"></i></span>
+                    <div><strong>Codex</strong><small>Northstar · Command palette</small></div>
+                    <span class="app-state"><b></b><span data-agent-state>Ready</span></span>
+                  </div>
+                  <div class="app-row">
+                    <span class="app-icon app-icon-cursor"><i data-lucide="mouse-pointer-2"></i></span>
+                    <div><strong>Cursor</strong><small>Ready from web</small></div>
+                    <span class="app-state is-muted"><b></b>Ready</span>
+                  </div>
+                  <div class="app-row">
+                    <span class="app-icon app-icon-terminal"><i data-lucide="terminal"></i></span>
+                    <div><strong>Terminal</strong><small>Ready from web</small></div>
+                    <span class="app-state is-muted"><b></b>Ready</span>
+                  </div>
+                </div>
+                <div class="agent-panel" data-agent-panel>
+                  <div class="agent-panel-meta"><span>CODEX · NORTHSTAR</span><b data-agent-panel-state>WAITING</b></div>
+                  <p>› Add keyboard navigation and run the tests.</p>
+                  <small data-agent-detail>Waiting for your next prompt</small>
+                  <div class="progress-track"><span data-agent-progress></span></div>
+                  <div class="test-result" data-test-result><i data-lucide="check"></i>18 tests passed</div>
+                </div>
+              </div>
+            </div>
+          </div>
 
-    <section class="security" id="security">
-      <h2>How is this safe?</h2>
-      <ul>
-        <li>End-to-end WebRTC (DTLS-SRTP). The signaling server never sees your content.</li>
-        <li>ed25519 device pairing. Lost your phone? Revoke from the Mac in one tap.</li>
-        <li>Biometric unlock on every cold start of the mobile PWA.</li>
-        <li>Secret redaction for AWS/GitHub/OpenAI/Anthropic keys, SSH blobs, and bearer tokens.</li>
-        <li>Read-only mode that hard-disables input injection when you're on a sketchy network.</li>
-      </ul>
-      <p>
-        Full threat model:
-        <a href="https://github.com/datawithfurkan/glasstunnel/blob/main/docs/security.md">
-          docs/security.md
-        </a>.
-      </p>
-    </section>
+          <svg class="tunnel-path" viewBox="0 0 1200 700" preserveAspectRatio="none" aria-hidden="true">
+            <path d="M 1035 600 C 980 480, 920 355, 740 330 C 650 318, 610 320, 540 322" />
+          </svg>
+          <div class="transit-prompt" data-transit-prompt>ADD KEYBOARD NAVIGATION…</div>
+          <div class="transit-result" data-transit-result><i data-lucide="check"></i>18 TESTS PASSED</div>
 
-    <footer>
-      <div>
-        <b>Glasstunnel</b> is built by people who got tired of Codespaces losing context every time
-        they walked outside. Apache 2.0 licensed, forever.
+          <div class="phone" aria-hidden="true">
+            <div class="phone-speaker"></div>
+            <div class="phone-header">
+              <img src="./brand/glasstunnel-mark-light.png" width="34" height="34" alt="" />
+              <div><strong>Demo Mac</strong><small><span></span> Connected</small></div>
+              <i data-lucide="menu"></i>
+            </div>
+            <div class="phone-body">
+              <div class="phone-context">
+                <div><strong>Northstar</strong><small>Codex · command-palette</small></div>
+                <span class="state-pill" data-phone-status>READY</span>
+              </div>
+              <div class="phone-prompt" data-phone-prompt>Add keyboard navigation and run the tests.</div>
+              <div class="phone-result" data-phone-result>
+                <b>CODEX · DONE</b>
+                <p>Keyboard navigation is live. 18 tests passed.</p>
+              </div>
+              <div class="phone-composer" data-phone-composer>
+                <span data-composer-text>Send a prompt…</span>
+                <button type="button" tabindex="-1" aria-hidden="true"><i data-lucide="arrow-up"></i></button>
+              </div>
+            </div>
+          </div>
+
+          <button class="motion-toggle icon-button" type="button" aria-label="Pause product animation" data-motion-toggle>
+            <i data-lucide="pause" aria-hidden="true"></i>
+          </button>
+        </div>
+
+        <div class="hero-proof" aria-label="Product facts">
+          <span><i data-lucide="laptop"></i> Runs on your Mac</span>
+          <span><i data-lucide="shield-check"></i> Encrypted media + input</span>
+          <span><i data-lucide="code-2"></i> Apache 2.0</span>
+        </div>
+      </section>
+
+      <section id="how-it-works" class="workflow section-light" aria-labelledby="workflow-title">
+        <div class="section-heading reveal">
+          <div class="eyebrow eyebrow-dark">One task. Two screens.</div>
+          <h2 id="workflow-title">Leave the desk, not the work.</h2>
+          <p>Your project, tools, and agent stay on the Mac. Your phone becomes the way back in.</p>
+        </div>
+
+        <div class="workflow-steps reveal">
+          <article>
+            <span class="step-number">01</span>
+            <i data-lucide="activity"></i>
+            <h3>Check</h3>
+            <p>See whether an agent is working, waiting, done, or needs your attention.</p>
+          </article>
+          <article>
+            <span class="step-number">02</span>
+            <i data-lucide="message-square-text"></i>
+            <h3>Reply</h3>
+            <p>Send the next prompt or approval without rebuilding context somewhere else.</p>
+          </article>
+          <article>
+            <span class="step-number">03</span>
+            <i data-lucide="monitor-smartphone"></i>
+            <h3>Control</h3>
+            <p>Open Mac Screen or a scoped Terminal session when direct control is the right tool.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="walkthrough section-dark" aria-labelledby="walkthrough-title">
+        <div class="walkthrough-inner">
+          <div class="walkthrough-copy reveal">
+            <div class="eyebrow">Built for continuity</div>
+            <h2 id="walkthrough-title">The same task follows you.</h2>
+            <p data-walkthrough-copy>
+              Open your phone and see the state your Mac already knows. No duplicate environment and no second copy of the project.
+            </p>
+            <div class="mode-tabs" role="tablist" aria-label="Product walkthrough">
+              <button type="button" role="tab" aria-selected="true" data-mode="check"><i data-lucide="activity"></i>Check</button>
+              <button type="button" role="tab" aria-selected="false" data-mode="reply"><i data-lucide="message-square-text"></i>Reply</button>
+              <button type="button" role="tab" aria-selected="false" data-mode="control"><i data-lucide="monitor-up"></i>Control</button>
+            </div>
+          </div>
+          <div class="continuity-visual reveal" data-walkthrough-visual>
+            <div class="continuity-mac">
+              <div class="mini-titlebar"><span></span><span></span><span></span><b>Northstar</b></div>
+              <div class="mini-editor">
+                <small>CODEX</small>
+                <strong data-walkthrough-title>Working on keyboard navigation</strong>
+                <div class="code-line long"></div><div class="code-line"></div><div class="code-line medium"></div>
+                <span class="mini-status" data-walkthrough-status>WORKING</span>
+              </div>
+            </div>
+            <div class="continuity-line"><span></span></div>
+            <div class="continuity-phone">
+              <div class="mini-phone-header"><span></span>Connected</div>
+              <strong data-walkthrough-phone>Codex is working</strong>
+              <small data-walkthrough-detail>Last update just now</small>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="support" class="support section-light" aria-labelledby="support-title">
+        <div class="section-heading reveal">
+          <div class="eyebrow eyebrow-dark">Support without overpromising</div>
+          <h2 id="support-title">Use the dependable paths today. Help shape what comes next.</h2>
+          <p>Every integration carries the support level its current evidence earns.</p>
+        </div>
+
+        <div class="support-table reveal">
+          <div class="support-row support-ready">
+            <div class="support-tier"><span></span><strong>Supported</strong><small>Public-beta contract</small></div>
+            <div class="support-apps"><span>Mac Screen</span><span>Scoped Terminal</span></div>
+            <i data-lucide="check-circle-2"></i>
+          </div>
+          <div class="support-row support-preview">
+            <div class="support-tier"><span></span><strong>Preview</strong><small>Useful and actively tested</small></div>
+            <div class="support-apps"><span>Codex desktop</span><span>Codex CLI</span><span>Cursor</span><span>Cursor Agent</span><span>Gemini CLI</span><span>OpenCode</span></div>
+            <i data-lucide="flask-conical"></i>
+          </div>
+          <div class="support-row support-experimental">
+            <div class="support-tier"><span></span><strong>Experimental</strong><small>No compatibility promise</small></div>
+            <div class="support-apps"><span>Claude Code</span><span>Generic window mirroring</span></div>
+            <i data-lucide="beaker"></i>
+          </div>
+        </div>
+        <a class="center-link" href="https://github.com/datawithfurkan/glasstunnel/blob/main/docs/agent-app-support-matrix.md">
+          Read the complete support matrix <i data-lucide="arrow-right"></i>
+        </a>
+      </section>
+
+      <section id="security" class="connection section-ink" aria-labelledby="connection-title">
+        <div class="connection-inner">
+          <div class="connection-copy reveal">
+            <div class="eyebrow">Connection model</div>
+            <h2 id="connection-title">Your Mac remains the workspace.</h2>
+            <p>
+              Projects and developer tools stay where they already run. Captured media and remote input travel over end-to-end encrypted WebRTC between linked devices.
+            </p>
+            <p class="metadata-note">
+              Hosted services still process the account, routing, device, request, and network metadata needed to operate the connection.
+            </p>
+            <a class="text-link text-link-light" href="https://github.com/datawithfurkan/glasstunnel/blob/main/docs/security.md">
+              Read the security model <i data-lucide="arrow-right"></i>
+            </a>
+          </div>
+          <div class="connection-diagram reveal" aria-label="Mac to phone connection diagram">
+            <div class="connection-node">
+              <i data-lucide="laptop"></i><strong>Your Mac</strong><small>Project + agent</small>
+            </div>
+            <div class="encrypted-line"><span>WebRTC · DTLS-SRTP</span><i data-lucide="lock-keyhole"></i></div>
+            <div class="connection-node">
+              <i data-lucide="smartphone"></i><strong>Your phone</strong><small>Authenticated browser</small>
+            </div>
+            <div class="routing-plane"><i data-lucide="route"></i><span>Hosted account + routing plane</span><small>No captured content storage</small></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="open-source section-light" aria-labelledby="open-source-title">
+        <div class="open-source-inner">
+          <div class="open-source-copy reveal">
+            <div class="eyebrow eyebrow-dark">Open by design</div>
+            <h2 id="open-source-title">Read it. Run it. Change it.</h2>
+            <p>
+              Glasstunnel is Apache 2.0 licensed. Inspect the source, contribute an adapter, or run the control plane yourself.
+            </p>
+            <div class="open-actions">
+              <a class="button button-ink" href="https://github.com/datawithfurkan/glasstunnel"><i data-lucide="github"></i>Explore the source</a>
+              <a class="text-link text-link-dark" href="https://github.com/datawithfurkan/glasstunnel/blob/main/CONTRIBUTING.md">Contribute <i data-lucide="arrow-right"></i></a>
+            </div>
+          </div>
+          <div class="repo-proof reveal">
+            <div class="repo-title"><i data-lucide="folder-git-2"></i><span>datawithfurkan / <strong>glasstunnel</strong></span><b>Public</b></div>
+            <div class="repo-tree">
+              <span><i data-lucide="folder"></i>apps/host-macos</span>
+              <span><i data-lucide="folder"></i>apps/mobile-pwa</span>
+              <span><i data-lucide="folder"></i>apps/cloudflare-signal</span>
+              <span><i data-lucide="folder"></i>packages/protocol</span>
+            </div>
+            <div class="repo-footer"><span>Apache-2.0</span><span>Swift · TypeScript · Go</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="install" class="install section-dark" aria-labelledby="install-title">
+        <div class="install-inner">
+          <div class="install-copy reveal">
+            <div class="eyebrow">Public beta · v0.1.5</div>
+            <h2 id="install-title">Your Mac is three steps away.</h2>
+            <ol>
+              <li><span>1</span><div><strong>Install Glasstunnel</strong><small>Use Homebrew or download the notarized DMG.</small></div></li>
+              <li><span>2</span><div><strong>Allow access and sign in</strong><small>Grant Screen Recording and Accessibility once.</small></div></li>
+              <li><span>3</span><div><strong>Open it on your phone</strong><small>Visit app.glasstunnel.io and use the same account.</small></div></li>
+            </ol>
+          </div>
+          <div class="install-terminal reveal">
+            <div class="terminal-bar"><div><span></span><span></span><span></span></div><small>Terminal</small></div>
+            <pre><code id="install-command">brew tap datawithfurkan/glasstunnel https://github.com/datawithfurkan/glasstunnel
+brew install --cask datawithfurkan/glasstunnel/glasstunnel</code></pre>
+            <button class="copy-button icon-button" type="button" data-copy-command aria-label="Copy Homebrew installation commands">
+              <i data-lucide="copy"></i><span>Copy</span>
+            </button>
+            <div class="install-buttons">
+              <a class="button button-light" href="https://github.com/datawithfurkan/glasstunnel/releases/download/v0.1.5/Glasstunnel-0.1.5.dmg"><i data-lucide="download"></i>Download DMG</a>
+              <a class="button button-dark" href="https://app.glasstunnel.io"><i data-lucide="smartphone"></i>Open web app</a>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="faq section-light" aria-labelledby="faq-title">
+        <div class="faq-inner">
+          <div class="faq-heading reveal">
+            <div class="eyebrow eyebrow-dark">Questions, answered plainly</div>
+            <h2 id="faq-title">Before you open the tunnel.</h2>
+          </div>
+          <div class="faq-list reveal">
+            <details>
+              <summary>Does my project move to the cloud?<i data-lucide="plus"></i></summary>
+              <p>No. Your project and coding tools continue running on your Mac. The phone receives the media and control data needed for the remote session over encrypted WebRTC.</p>
+            </details>
+            <details>
+              <summary>What can the hosted service see?<i data-lucide="plus"></i></summary>
+              <p>The hosted control plane processes account, device, routing, request, and network metadata. It does not receive plaintext WebRTC media or DataChannel content.</p>
+            </details>
+            <details>
+              <summary>Which coding agents are supported?<i data-lucide="plus"></i></summary>
+              <p>Mac Screen and scoped Terminal are Supported. Codex, Cursor, Gemini CLI, and OpenCode integrations are available as Preview paths. Claude Code and generic mirroring are Experimental.</p>
+            </details>
+            <details>
+              <summary>Does my Mac need to stay awake?<i data-lucide="plus"></i></summary>
+              <p>Yes. Glasstunnel includes an optional Keep Mac Awake setting for remote availability, but the Mac must remain powered on and connected.</p>
+            </details>
+            <details>
+              <summary>Do I need an iPhone app?<i data-lucide="plus"></i></summary>
+              <p>No. The phone experience is an installable web app that runs in Safari or Chrome at app.glasstunnel.io.</p>
+            </details>
+            <details>
+              <summary>Can I self-host it?<i data-lucide="plus"></i></summary>
+              <p>Yes. The repository includes self-hosting documentation for the signaling and TURN path, plus local development infrastructure.</p>
+            </details>
+            <details>
+              <summary>Why are macOS permissions required?<i data-lucide="plus"></i></summary>
+              <p>Screen Recording lets Glasstunnel capture the screen or selected window. Accessibility allows approved remote prompts, text, and clicks to reach local coding apps.</p>
+            </details>
+            <details>
+              <summary>How do updates work?<i data-lucide="plus"></i></summary>
+              <p>Glasstunnel does not silently update itself. Download a newer release from GitHub or run <code>brew update</code> followed by <code>brew upgrade --cask datawithfurkan/glasstunnel/glasstunnel</code>.</p>
+            </details>
+          </div>
+        </div>
+      </section>
+
+      <section class="final-cta section-ink" aria-labelledby="final-title">
+        <div class="final-cta-inner reveal">
+          <img src="./brand/glasstunnel-mark-light.png" width="64" height="64" alt="" />
+          <h2 id="final-title">Keep your agents moving.</h2>
+          <p>Install the Mac app, open your phone, and pick up where you left off.</p>
+          <div class="hero-actions">
+            <a class="button button-light" href="https://github.com/datawithfurkan/glasstunnel/releases/download/v0.1.5/Glasstunnel-0.1.5.dmg"><i data-lucide="download"></i>Download for Mac</a>
+            <a class="button button-dark" href="https://github.com/datawithfurkan/glasstunnel"><i data-lucide="github"></i>View on GitHub</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-brand">
+        <a class="brand" href="#top"><img src="./brand/glasstunnel-mark-light.png" width="34" height="34" alt="" /><span>Glasstunnel</span></a>
+        <p>Open-source remote access for coding agents running on your Mac.</p>
       </div>
-      <div class="links">
-        <a href="https://github.com/datawithfurkan/glasstunnel">GitHub</a>
-        <a href="mailto:hello@glasstunnel.io">Contact</a>
-        <a href="mailto:security@glasstunnel.io">Security</a>
+      <div class="footer-links">
+        <div><strong>Product</strong><a href="#how-it-works">How it works</a><a href="#support">Supported apps</a><a href="#install">Install</a><a href="https://app.glasstunnel.io">Web app</a></div>
+        <div><strong>Project</strong><a href="https://github.com/datawithfurkan/glasstunnel">GitHub</a><a href="https://github.com/datawithfurkan/glasstunnel/releases">Releases</a><a href="https://github.com/datawithfurkan/glasstunnel/blob/main/CONTRIBUTING.md">Contributing</a><a href="https://github.com/datawithfurkan/glasstunnel/blob/main/LICENSE">License</a></div>
+        <div><strong>Trust</strong><a href="https://github.com/datawithfurkan/glasstunnel/blob/main/docs/security.md">Security model</a><a href="https://github.com/datawithfurkan/glasstunnel/blob/main/docs/known-limitations.md">Known limitations</a><a href="mailto:security@glasstunnel.io">Report a vulnerability</a></div>
       </div>
+      <div class="footer-bottom"><span>Apache 2.0 · Public beta</span><span>Built for macOS 14+</span></div>
     </footer>
+
+    <script type="module" src="/main.ts"></script>
   </body>
 </html>

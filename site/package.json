@@ -11,6 +11,10 @@
     "preview": "vite preview --port 5175",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "lucide": "^0.468.0",
+    "motion": "^12.23.12"
+  },
   "devDependencies": {
     "typescript": "^5.5.4",
     "vite": "^6.4.3"
