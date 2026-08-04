@@ -66,3 +66,8 @@ docs/release-evidence/**/*.webm
 docs/release-evidence/**/*.trace
 docs/release-evidence/**/*.zip
 gitleaks-report.*
+# Agent-factory runtime state must stay outside the public checkout. These rules
+# are a final guard if an operator accidentally points the tools at the repo.
+.gc/
+.beads/
+.factory-state/

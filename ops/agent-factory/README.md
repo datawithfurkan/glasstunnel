@@ -1,0 +1,38 @@
+# Glasstunnel Agent Factory
+
+This directory contains the portable, reviewable definition of Glasstunnel's
+agent factory. Mutable Gas City, Beads, Dolt, worktree, lease, notification, and
+artifact state belongs outside the repository. The default private state root
+is `~/Library/Application Support/GlasstunnelFactory`; override it with
+`GT_FACTORY_HOME` only when the replacement is also outside the checkout.
+
+## Foundation Authority
+
+Phase 1 may inspect the repository, create an external mirror, run deterministic
+local canaries, create isolated `codex/` worktrees, and record private Beads
+evidence. It may not push, merge, sign, notarize, deploy, reset TCC, modify the
+Keychain, use personal test accounts, or activate continuous mutation.
+
+Gas City registers an external mirror clone as the Glasstunnel rig. The primary
+human checkout is never a rig and never receives `.gc/` or `.beads/` state.
+
+## Operator Sequence
+
+```bash
+pnpm factory:doctor
+pnpm factory:bootstrap
+pnpm factory:status
+pnpm factory:canary
+pnpm factory:backup-verify
+pnpm factory:down
+```
+
+The doctor is read-only. Bootstrap is idempotent and stays under the private
+state root. `down` stops the city but preserves its ledger and backups.
+
+## Recovery
+
+Do not recover a factory by deleting the source checkout or resetting Git. Stop
+the city, inspect `pnpm factory:status`, recover only expired leases, and restore
+the Dolt-native backup into a disposable external directory before changing the
+live ledger. Human-gated resources always require explicit approval.
