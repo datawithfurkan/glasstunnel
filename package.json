@@ -35,6 +35,8 @@
     "lab:reset": "node scripts/lab/cli.mjs reset",
     "lab:down": "node scripts/lab/cli.mjs down",
     "lab:mac": "node scripts/lab/cli.mjs mac",
+    "factory:doctor": "node scripts/agent-factory/cli.mjs doctor",
+    "factory:test": "node --test scripts/agent-factory/*.test.mjs",
     "lab:test": "pnpm lab:test:unit && pnpm worker:typecheck && pnpm worker:test",
     "lab:test:unit": "node --test scripts/lab/*.test.mjs",
     "lab:e2e": "node scripts/lab/e2e.mjs chromium",

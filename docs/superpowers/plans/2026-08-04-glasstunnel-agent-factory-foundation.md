@@ -6,7 +6,7 @@
 
 **Architecture:** Reviewable Pack V2 definitions and factory policy live under `ops/agent-factory/`; all mutable Gas City, Dolt, lease, worktree, and artifact state lives under a configurable external state root. A small Node CLI owns safe bootstrap, doctor, lease, canary, backup, and teardown operations while delegating scheduling and durable work to Gas City and Beads.
 
-**Tech Stack:** Gas City 1.4.0, Beads 1.0.4, Dolt 2.1.0 or newer, Codex provider, Node.js 22 ESM, Gas City Formula v2, Git worktrees, GitHub protected branches, existing Glasstunnel local test lab, Telegram blocker script.
+**Tech Stack:** Gas City 1.4.0, Beads 1.0.4, Dolt 2.1.0 or newer, Codex provider, Node.js 22 or newer ESM, Gas City Formula v2, Git worktrees, GitHub protected branches, existing Glasstunnel local test lab, Telegram blocker script.
 
 ## Global Constraints
 
@@ -117,7 +117,7 @@ GC_VERSION=1.4.0
 GC_RELEASE_COMMIT=a7297c511d637a3609947386f3389d76ddb2f23b
 BD_VERSION=1.0.4
 DOLT_MIN_VERSION=2.1.0
-NODE_MAJOR=22
+NODE_MIN_MAJOR=22
 FACTORY_SCHEMA_VERSION=1
 ```
 
@@ -135,7 +135,7 @@ command through a shell.
 
 - [ ] **Step 5: Implement `runDoctor`**
 
-Check `gc`, `bd`, `dolt`, `tmux`, `git`, `jq`, `flock`, `gh`, `codex`, Node 22,
+Check `gc`, `bd`, `dolt`, `tmux`, `git`, `jq`, `flock`, `gh`, `codex`, Node 22 or newer,
 the external-state invariant, GitHub authentication, a clean current worktree,
 and available disk space of at least 20 GiB. Use exact version equality for Gas
 City and Beads and semver-at-least for Dolt.
