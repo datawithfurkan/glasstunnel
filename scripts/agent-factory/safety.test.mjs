@@ -8,6 +8,8 @@ test('git ignores accidental Gas City and Beads runtime roots', async () => {
   assert.match(gitignore, /^\.gc\/$/m);
   assert.match(gitignore, /^\.beads\/$/m);
   assert.match(gitignore, /^\.factory-state\/$/m);
+  assert.match(gitignore, /^\.codex\/skills\/core\.gc-\*$/m);
+  assert.match(gitignore, /^\.codex\/skills\/\.gc-skill-ownership\.json$/m);
 });
 
 test('factory state defaults to a private external path without whitespace', () => {
