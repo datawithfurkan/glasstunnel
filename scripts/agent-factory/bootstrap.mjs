@@ -348,12 +348,15 @@ export async function bootstrapFactory({
     { ...options, cwd: mirror },
     'setting explicit factory routing',
   );
+  const persistedConfigEnv = { ...processEnv };
+  delete persistedConfigEnv.BD_ROUTING_MODE;
+  delete persistedConfigEnv.BEADS_ROUTING_MODE;
   const routingMode = (
     await checked(
       runner,
       'bd',
       ['config', 'get', 'routing.mode'],
-      { ...options, cwd: mirror },
+      { ...options, cwd: mirror, env: persistedConfigEnv },
       'verifying explicit factory routing',
     )
   ).stdout.trim();

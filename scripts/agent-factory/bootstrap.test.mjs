@@ -129,7 +129,8 @@ test('bootstrap initializes an external city and suspended mirror rig once', asy
       (entry) =>
         entry.command === 'bd' &&
         entry.args.join(' ') === 'config get routing.mode' &&
-        entry.options.env.BD_ROUTING_MODE === 'off',
+        entry.options.env.BD_ROUTING_MODE === undefined &&
+        entry.options.env.BEADS_ROUTING_MODE === undefined,
     ),
   );
   assert.ok(
