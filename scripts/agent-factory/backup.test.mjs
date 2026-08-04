@@ -35,7 +35,10 @@ test('backup verification uses Dolt-native backup and a disposable external rest
   ];
   const calls = [];
   const runner = async (command, args, options = {}) => {
-    calls.push({ command, args, cwd: options.cwd });
+    calls.push({ command, args, cwd: options.cwd, env: options.env });
+    if (command === 'bd' && args.join(' ') === 'dolt status --json') {
+      return { code: 0, stdout: JSON.stringify({ running: false }), stderr: '' };
+    }
     if (command === 'bd' && args[0] === 'list') {
       return { code: 0, stdout: JSON.stringify(issues), stderr: '' };
     }
@@ -76,9 +79,79 @@ test('backup verification uses Dolt-native backup and a disposable external rest
       ),
     );
     assert.ok(calls.some((call) => call.command === 'bd' && call.args.join(' ') === 'dolt stop'));
+    assert.ok(
+      calls.some(
+        (call) =>
+          call.command === 'bd' &&
+          call.cwd === join(paths.rigs, 'glasstunnel') &&
+          call.args.join(' ') === 'dolt start --json',
+      ),
+    );
+    assert.ok(
+      calls.some(
+        (call) =>
+          call.command === 'bd' &&
+          call.cwd === join(paths.rigs, 'glasstunnel') &&
+          call.args.join(' ') === 'dolt stop',
+      ),
+    );
+    assert.ok(
+      calls
+        .filter((call) => call.command === 'bd')
+        .every((call) => call.env.BD_ROUTING_MODE === 'off'),
+    );
     assert.equal(calls.some((call) => call.args.includes('export')), false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
+test('backup verification preserves a source Dolt server that was already running', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'glasstunnel-factory-backup-running-'));
+  const repoRoot = join(root, 'source');
+  const paths = resolveFactoryPaths({
+    repoRoot,
+    env: { GT_FACTORY_HOME: join(root, 'state') },
+  });
+  const sourcePath = join(paths.rigs, 'glasstunnel');
+  await mkdir(repoRoot, { recursive: true });
+  await mkdir(sourcePath, { recursive: true });
+  const calls = [];
+  const runner = async (command, args, options = {}) => {
+    calls.push({ command, args, cwd: options.cwd });
+    if (command === 'bd' && args.join(' ') === 'dolt status --json') {
+      return { code: 0, stdout: JSON.stringify({ running: true }), stderr: '' };
+    }
+    if (command === 'bd' && args[0] === 'list') {
+      return { code: 0, stdout: '[]', stderr: '' };
+    }
+    return { code: 0, stdout: '{}', stderr: '' };
+  };
+
+  try {
+    await verifyBackupRestore({
+      paths,
+      runner,
+      now: new Date('2026-08-04T13:00:00.000Z'),
+      portAllocator: async () => 43818,
+    });
+
+    assert.equal(
+      calls.some(
+        (call) => call.cwd === sourcePath && call.args.join(' ') === 'dolt start --json',
+      ),
+      false,
+    );
+    assert.equal(
+      calls.some((call) => call.cwd === sourcePath && call.args.join(' ') === 'dolt stop'),
+      false,
+    );
+    assert.ok(
+      calls.some(
+        (call) => call.cwd !== sourcePath && call.args.join(' ') === 'dolt stop',
+      ),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

@@ -1,7 +1,7 @@
 import { createServer } from 'node:net';
 import { mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { isPathInside } from './config.mjs';
+import { factoryEnvironment, isPathInside } from './config.mjs';
 import { runProcess } from './process.mjs';
 
 async function checked(runner, command, args, options, label) {
@@ -23,6 +23,16 @@ function parseArray(stdout, label) {
     // The error below includes the operation name without echoing ledger content.
   }
   throw new Error(`${label} did not return a JSON array`);
+}
+
+function parseObject(stdout, label) {
+  try {
+    const value = JSON.parse(stdout);
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  } catch {
+    // The error below avoids echoing process output.
+  }
+  throw new Error(`${label} did not return a JSON object`);
 }
 
 function relevantCanaryMetadata(metadata = {}) {
@@ -76,6 +86,7 @@ export async function allocateLoopbackPort() {
 
 export async function verifyBackupRestore({
   paths,
+  env = process.env,
   runner = runProcess,
   now = new Date(),
   portAllocator = allocateLoopbackPort,
@@ -92,9 +103,11 @@ export async function verifyBackupRestore({
   await mkdir(paths.artifacts, { recursive: true, mode: 0o700 });
   await mkdir(restorePath, { recursive: false, mode: 0o700 });
 
-  const sourceOptions = { cwd: sourcePath, timeoutMs: 120_000 };
+  const processEnv = factoryEnvironment(paths, env);
+  const sourceOptions = { cwd: sourcePath, env: processEnv, timeoutMs: 120_000 };
   const restorePort = await portAllocator();
-  const restoreOptions = { cwd: restorePath, timeoutMs: 120_000 };
+  const restoreOptions = { cwd: restorePath, env: processEnv, timeoutMs: 120_000 };
+  let sourceDoltStarted = false;
   let restoreInitialized = false;
   let evidence;
   let operationError;
@@ -111,6 +124,28 @@ export async function verifyBackupRestore({
   ];
 
   try {
+    const sourceStatus = parseObject(
+      (
+        await checked(
+          runner,
+          'bd',
+          ['dolt', 'status', '--json'],
+          sourceOptions,
+          'checking source Dolt server',
+        )
+      ).stdout,
+      'source Dolt status',
+    );
+    if (sourceStatus.running !== true) {
+      await checked(
+        runner,
+        'bd',
+        ['dolt', 'start', '--json'],
+        sourceOptions,
+        'starting source Dolt server',
+      );
+      sourceDoltStarted = true;
+    }
     await checked(
       runner,
       'bd',
@@ -182,19 +217,31 @@ export async function verifyBackupRestore({
     operationError = error;
   }
 
-  let stopError;
+  const cleanupErrors = [];
   if (restoreInitialized) {
     const stopped = await runner('bd', ['dolt', 'stop'], restoreOptions);
     if (stopped.code !== 0) {
-      stopError = new Error(
-        `stopping disposable Dolt server: ${stopped.stderr.trim() || stopped.stdout.trim()}`,
+      cleanupErrors.push(
+        new Error(
+          `stopping disposable Dolt server: ${stopped.stderr.trim() || stopped.stdout.trim()}`,
+        ),
       );
     }
   }
   await rm(restorePath, { recursive: true, force: true });
+  if (sourceDoltStarted) {
+    const stopped = await runner('bd', ['dolt', 'stop'], sourceOptions);
+    if (stopped.code !== 0) {
+      cleanupErrors.push(
+        new Error(`stopping source Dolt server: ${stopped.stderr.trim() || stopped.stdout.trim()}`),
+      );
+    }
+  }
 
-  if (operationError && stopError) throw new AggregateError([operationError, stopError]);
+  if (operationError && cleanupErrors.length > 0) {
+    throw new AggregateError([operationError, ...cleanupErrors]);
+  }
   if (operationError) throw operationError;
-  if (stopError) throw stopError;
+  if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors);
   return evidence;
 }
