@@ -66,6 +66,25 @@ export async function runDoctor({ repoRoot, env = process.env, runner = runProce
     checks.push(await commandVersion({ id, command, args, expected, minimum, runner }));
   }
 
+  const [doltName, doltEmail] = await Promise.all([
+    runner('dolt', ['config', '--global', '--get', 'user.name'], { timeoutMs: 15_000 }),
+    runner('dolt', ['config', '--global', '--get', 'user.email'], { timeoutMs: 15_000 }),
+  ]);
+  const doltIdentityConfigured =
+    doltName.code === 0 &&
+    doltName.stdout.trim() !== '' &&
+    doltEmail.code === 0 &&
+    doltEmail.stdout.trim() !== '';
+  checks.push(
+    check(
+      'dolt-identity',
+      doltIdentityConfigured ? 'pass' : 'fail',
+      doltIdentityConfigured
+        ? 'configured'
+        : 'configure global Dolt user.name and user.email before bootstrap',
+    ),
+  );
+
   const nodeMajor = Number(process.versions.node.split('.')[0]);
   checks.push(
     check(

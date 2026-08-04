@@ -22,6 +22,9 @@ function fakeRunner(overrides = {}) {
   return async (command, args = []) => {
     const key = `${command} ${args.join(' ')}`;
     if (overrides[key]) return overrides[key];
+    if (command === 'dolt' && args[0] === 'config') {
+      return { code: 0, stdout: 'configured\n', stderr: '' };
+    }
     if (command === 'git' && args[0] === 'status') return { code: 0, stdout: '', stderr: '' };
     if (command === 'gh' && args[0] === 'auth') return { code: 0, stdout: '', stderr: '' };
     return { code: 0, stdout: versions[command] ?? '', stderr: '' };
@@ -48,6 +51,18 @@ test('doctor reports an incompatible Beads version', async () => {
   });
   assert.equal(report.ok, false);
   assert.equal(report.checks.find((entry) => entry.id === 'bd-version').status, 'fail');
+});
+
+test('doctor reports a missing Dolt author identity before bootstrap', async () => {
+  const report = await runDoctor({
+    repoRoot: REPO_ROOT,
+    env: { HOME: '/home/test', GT_FACTORY_HOME: '/state/glasstunnel-factory' },
+    runner: fakeRunner({
+      'dolt config --global --get user.email': { code: 1, stdout: '', stderr: '' },
+    }),
+  });
+  assert.equal(report.ok, false);
+  assert.equal(report.checks.find((entry) => entry.id === 'dolt-identity').status, 'fail');
 });
 
 test('doctor passes compatible tools, paths, auth, worktree, and disk', async () => {
