@@ -1,0 +1,59 @@
+{
+  "schema": "glasstunnel.factory.resources.v1",
+  "resources": {
+    "mac-ui": {
+      "humanGate": false,
+      "defaultTtlSeconds": 1800,
+      "heartbeatSeconds": 60,
+      "recoveryCommand": "pnpm factory:status"
+    },
+    "ios-simulator": {
+      "humanGate": false,
+      "defaultTtlSeconds": 1800,
+      "heartbeatSeconds": 60,
+      "recoveryCommand": "pnpm factory:status"
+    },
+    "tcc-screen-recording": {
+      "humanGate": true,
+      "defaultTtlSeconds": 900,
+      "heartbeatSeconds": 60,
+      "recoveryCommand": "pnpm factory:status"
+    },
+    "tcc-accessibility": {
+      "humanGate": true,
+      "defaultTtlSeconds": 900,
+      "heartbeatSeconds": 60,
+      "recoveryCommand": "pnpm factory:status"
+    },
+    "keychain-signing": {
+      "humanGate": true,
+      "defaultTtlSeconds": 900,
+      "heartbeatSeconds": 60,
+      "recoveryCommand": "pnpm factory:status"
+    },
+    "notarization": {
+      "humanGate": true,
+      "defaultTtlSeconds": 3600,
+      "heartbeatSeconds": 120,
+      "recoveryCommand": "pnpm factory:status"
+    },
+    "production-deploy": {
+      "humanGate": true,
+      "defaultTtlSeconds": 1800,
+      "heartbeatSeconds": 60,
+      "recoveryCommand": "pnpm factory:status"
+    },
+    "local-lab": {
+      "humanGate": false,
+      "defaultTtlSeconds": 3600,
+      "heartbeatSeconds": 60,
+      "recoveryCommand": "pnpm lab:down"
+    },
+    "canary-exclusive": {
+      "humanGate": false,
+      "defaultTtlSeconds": 600,
+      "heartbeatSeconds": 30,
+      "recoveryCommand": "pnpm factory:status"
+    }
+  }
+}
