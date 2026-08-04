@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { runDoctor } from './doctor.mjs';
 import { bootstrapFactory, getFactoryStatus, stopFactory } from './bootstrap.mjs';
+import { verifyBackupRestore } from './backup.mjs';
+import { runCanary } from './canary.mjs';
 import { resolveFactoryPaths } from './config.mjs';
 import { createWorkerWorktree, removeWorkerWorktree } from './branch-guard.mjs';
 import {
@@ -25,6 +27,8 @@ function usage() {
   pnpm factory:bootstrap
   pnpm factory:status
   pnpm factory:down
+  pnpm factory:canary
+  pnpm factory:backup-verify
   pnpm factory:notify -- <send|clear> [options]
   pnpm factory:lease -- <acquire|heartbeat|release|status|recover> [options]
   pnpm factory:worktree -- <create|remove> [options]`);
@@ -173,6 +177,14 @@ async function main() {
     return;
   }
   const paths = resolveFactoryPaths({ repoRoot });
+  if (command === 'canary') {
+    console.log(JSON.stringify(await runCanary({ paths }), null, 2));
+    return;
+  }
+  if (command === 'backup-verify') {
+    console.log(JSON.stringify(await verifyBackupRestore({ paths }), null, 2));
+    return;
+  }
   if (command === 'lease') {
     await runLease(commandArgs[0], commandArgs.slice(1), paths);
     return;

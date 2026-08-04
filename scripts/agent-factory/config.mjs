@@ -7,7 +7,15 @@ const MODULE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
 function canonicalPath(path) {
   const absolute = resolve(path);
-  return existsSync(absolute) ? realpathSync(absolute) : absolute;
+  if (existsSync(absolute)) return realpathSync(absolute);
+
+  let ancestor = dirname(absolute);
+  while (!existsSync(ancestor)) {
+    const parent = dirname(ancestor);
+    if (parent === ancestor) return absolute;
+    ancestor = parent;
+  }
+  return resolve(realpathSync(ancestor), relative(ancestor, absolute));
 }
 
 export function isPathInside(parent, candidate) {
