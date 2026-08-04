@@ -1,0 +1,44 @@
+formula = "dependency-update"
+description = "Assess, apply, validate, and independently review one bounded dependency update."
+
+[requires]
+formula_compiler = ">=2.0.0"
+
+[[steps]]
+id = "assess"
+title = "Assess the dependency update"
+description = "Review release notes, compatibility, security impact, lockfile scope, and rollback path."
+metadata = { "gc.run_target" = "{{rig_name}}/{{binding_prefix}}architect" }
+
+[[steps]]
+id = "implement"
+title = "Apply the bounded dependency update"
+description = "Update only the approved dependency and required lockfiles in the assigned external worktree."
+needs = ["assess"]
+metadata = { "gc.run_target" = "{{rig_name}}/{{binding_prefix}}web-engineer" }
+
+[steps.retry]
+max_attempts = 2
+on_exhausted = "hard_fail"
+
+[[steps]]
+id = "validate"
+title = "Validate dependency compatibility"
+description = "Run targeted and repository-selected checks, including generated-code and build checks when applicable."
+needs = ["implement"]
+metadata = { "gc.run_target" = "{{rig_name}}/{{binding_prefix}}qa" }
+
+[[steps]]
+id = "review"
+title = "Review dependency and supply-chain risk"
+description = "Inspect the exact version, source, lockfile diff, advisories, evidence, and rollback plan read-only."
+needs = ["implement"]
+metadata = { "gc.run_target" = "{{rig_name}}/{{binding_prefix}}security-reviewer" }
+
+[[steps]]
+id = "integration-ready"
+title = "Prepare the reviewed dependency handoff"
+description = "Record the validated update and residual risk without pushing or merging."
+needs = ["validate", "review"]
+metadata = { "gc.run_target" = "{{rig_name}}/{{binding_prefix}}integrator" }
+

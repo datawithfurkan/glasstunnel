@@ -1,0 +1,8 @@
+scope = "rig"
+start_command = "gc agent-script --script {{.ConfigDir}}/assets/scripts/canary-reviewer.yaml"
+lifecycle = "one_shot"
+nudge = "Review one deterministic foundation canary bead."
+idle_timeout = "5m"
+min_active_sessions = 0
+max_active_sessions = 1
+

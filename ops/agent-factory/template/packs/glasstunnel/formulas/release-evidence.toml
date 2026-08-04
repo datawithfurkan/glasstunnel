@@ -1,0 +1,36 @@
+formula = "release-evidence"
+description = "Collect and review release evidence, ending at a mandatory human approval gate."
+
+[requires]
+formula_compiler = ">=2.0.0"
+
+[[steps]]
+id = "inventory"
+title = "Inventory release claims and evidence"
+description = "Compare current code, support tiers, known limitations, distribution artifacts, and public documentation."
+metadata = { "gc.run_target" = "{{rig_name}}/{{binding_prefix}}release-operator" }
+
+[[steps]]
+id = "validate"
+title = "Run release-readiness validation"
+description = "Run the approved local release matrix and record exact passing, failing, skipped, and human-only evidence."
+needs = ["inventory"]
+metadata = { "gc.run_target" = "{{rig_name}}/{{binding_prefix}}qa" }
+
+[[steps]]
+id = "security-review"
+title = "Review security and privacy truth"
+description = "Review security, privacy, secrets, permissions, distribution, and public claims read-only."
+needs = ["inventory", "validate"]
+metadata = { "gc.run_target" = "{{rig_name}}/{{binding_prefix}}security-reviewer" }
+
+[[steps]]
+id = "release-approval"
+title = "Await explicit human release approval"
+description = "A human must review the evidence before any release, signing, notarization, deployment, or merge action."
+needs = ["security-review"]
+
+[steps.gate]
+type = "human"
+id = "glasstunnel-release-approval"
+

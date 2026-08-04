@@ -1,0 +1,36 @@
+description: |
+  Deterministic, non-LLM worker for the foundation canary. It never edits Git,
+  pushes, merges, signs, deploys, or reads credentials. Retry attempt one is
+  deliberately classified transient; attempt two passes.
+
+schema_version: v1
+
+turns:
+  - when:
+      hook: has_work
+    do:
+      - bd_claim: "{bead.id}"
+      - shell: >
+          set -eu;
+          BEAD_ID="${GC_SCRIPT_BEAD_ID:-}";
+          ATTEMPT="${GC_SCRIPT_BEAD_METADATA_GC_ATTEMPT:-0}";
+          case "$BEAD_ID" in
+            ""|*[!A-Za-z0-9-]*) echo "unsafe bead id: $BEAD_ID" >&2; exit 1 ;;
+          esac;
+          if [ "$ATTEMPT" = "1" ]; then
+            bd update "$BEAD_ID" --status=closed
+              --set-metadata gc.outcome=fail
+              --set-metadata gc.failure_class=transient
+              --set-metadata gc.failure_reason=foundation_canary_attempt_one;
+          else
+            bd update "$BEAD_ID" --status=closed
+              --set-metadata gc.outcome=pass
+              --set-metadata canary_stage=completed;
+          fi
+      - log: "processed deterministic canary bead {bead.id}"
+      - exit: 0
+  - when:
+      hook: empty
+    do:
+      - exit: 0
+

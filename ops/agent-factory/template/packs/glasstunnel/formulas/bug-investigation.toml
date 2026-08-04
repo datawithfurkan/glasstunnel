@@ -1,0 +1,51 @@
+formula = "bug-investigation"
+description = "Reproduce a Glasstunnel defect, add regression evidence, fix it, and independently review the result."
+
+[requires]
+formula_compiler = ">=2.0.0"
+
+[[steps]]
+id = "reproduce"
+title = "Reproduce and bound the defect"
+description = "Capture deterministic reproduction evidence and identify the affected product surfaces without changing code."
+metadata = { "gc.run_target" = "{{rig_name}}/{{binding_prefix}}qa" }
+
+[[steps]]
+id = "regression-test"
+title = "Add a failing regression test"
+description = "Encode the observed defect in the cheapest deterministic test lane and prove it fails for the right reason."
+needs = ["reproduce"]
+metadata = { "gc.run_target" = "{{rig_name}}/{{binding_prefix}}adapter-engineer" }
+
+[[steps]]
+id = "implement"
+title = "Fix the reproduced defect"
+description = "Implement the smallest root-cause fix inside the assigned external worktree. Preserve unrelated behavior."
+needs = ["regression-test"]
+metadata = { "gc.run_target" = "{{rig_name}}/{{binding_prefix}}adapter-engineer" }
+
+[steps.retry]
+max_attempts = 2
+on_exhausted = "hard_fail"
+
+[[steps]]
+id = "validate"
+title = "Validate the fix and regression coverage"
+description = "Run the regression, touched-surface checks, and required parity checks. Record exact evidence."
+needs = ["implement"]
+metadata = { "gc.run_target" = "{{rig_name}}/{{binding_prefix}}qa" }
+
+[[steps]]
+id = "review"
+title = "Independently review the bug fix"
+description = "Inspect the diff, reproduction, regression test, and residual risk read-only."
+needs = ["implement"]
+metadata = { "gc.run_target" = "{{rig_name}}/{{binding_prefix}}reviewer" }
+
+[[steps]]
+id = "integration-ready"
+title = "Prepare the reviewed bug-fix handoff"
+description = "Record the validated, reviewed handoff without pushing or merging."
+needs = ["validate", "review"]
+metadata = { "gc.run_target" = "{{rig_name}}/{{binding_prefix}}integrator" }
+

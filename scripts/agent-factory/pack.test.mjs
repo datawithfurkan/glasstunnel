@@ -21,6 +21,7 @@ const EXPECTED_ROLES = [
   'security-reviewer',
   'web-engineer',
 ];
+const UTILITY_AGENTS = ['canary-reviewer', 'canary-worker'];
 
 async function toml(path) {
   return parse(await readFile(path, 'utf8'));
@@ -43,10 +44,10 @@ test('city defaults to Codex and imports the Glasstunnel rig pack', async () => 
 
 test('every reviewed role is rig-scoped and dormant by default', async () => {
   const agentsRoot = join(TEMPLATE, 'packs', 'glasstunnel', 'agents');
-  const roles = (await readdir(agentsRoot)).sort();
-  assert.deepEqual(roles, EXPECTED_ROLES);
+  const agents = (await readdir(agentsRoot)).sort();
+  assert.deepEqual(agents, [...EXPECTED_ROLES, ...UTILITY_AGENTS].sort());
 
-  for (const role of roles) {
+  for (const role of EXPECTED_ROLES) {
     const config = await toml(join(agentsRoot, role, 'agent.toml'));
     const prompt = await readFile(join(agentsRoot, role, 'prompt.template.md'), 'utf8');
     assert.equal(config.scope, 'rig', role);
@@ -56,4 +57,24 @@ test('every reviewed role is rig-scoped and dormant by default', async () => {
     assert.match(prompt, /Never push|never push|read-only/, role);
     assert.match(prompt, /evidence/i, role);
   }
+});
+
+test('deterministic canary agents use reviewed local scripts', async () => {
+  const agentsRoot = join(TEMPLATE, 'packs', 'glasstunnel', 'agents');
+  for (const role of UTILITY_AGENTS) {
+    const config = await toml(join(agentsRoot, role, 'agent.toml'));
+    assert.equal(config.scope, 'rig', role);
+    assert.equal(config.lifecycle, 'one_shot', role);
+    assert.equal(config.min_active_sessions, 0, role);
+    assert.equal(config.max_active_sessions, 1, role);
+    assert.match(config.start_command, /^gc agent-script --script /, role);
+  }
+
+  const worker = await readFile(
+    join(TEMPLATE, 'packs', 'glasstunnel', 'assets', 'scripts', 'canary-worker.yaml'),
+    'utf8',
+  );
+  assert.match(worker, /gc\.failure_class=transient/);
+  assert.match(worker, /gc\.outcome=pass/);
+  assert.doesNotMatch(worker, /git (push|merge)|notary|codesign/);
 });

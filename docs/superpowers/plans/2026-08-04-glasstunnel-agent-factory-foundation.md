@@ -33,7 +33,7 @@
 - `ops/agent-factory/template/city.toml`: portable city configuration copied to external state.
 - `ops/agent-factory/template/pack.toml`: root Pack V2 imports pinned to reviewed revisions.
 - `ops/agent-factory/template/packs/glasstunnel/pack.toml`: Glasstunnel role catalog.
-- `ops/agent-factory/template/packs/glasstunnel/agents/*`: role policy and prompts.
+- `ops/agent-factory/template/packs/glasstunnel/agents/*`: reviewed roles plus deterministic non-LLM canary agents.
 - `ops/agent-factory/template/packs/glasstunnel/formulas/*.toml`: reusable workflow graphs.
 - `ops/agent-factory/template/packs/glasstunnel/assets/scripts/*.yaml`: deterministic canary agents.
 - `ops/agent-factory/policies/node-contract.schema.json`: machine-checkable node metadata contract.
@@ -58,6 +58,7 @@
 ### Task 1: Pin The Toolchain And Add A Read-Only Doctor
 
 **Files:**
+
 - Create: `ops/agent-factory/versions.env`
 - Create: `scripts/agent-factory/config.mjs`
 - Create: `scripts/agent-factory/process.mjs`
@@ -67,6 +68,7 @@
 - Modify: `package.json`
 
 **Interfaces:**
+
 - Produces: `loadVersionPolicy(repoRoot) -> VersionPolicy`
 - Produces: `resolveFactoryPaths({ repoRoot, env }) -> FactoryPaths`
 - Produces: `runDoctor({ repoRoot, env, runner }) -> DoctorReport`
@@ -171,11 +173,13 @@ git commit -m "feat: add agent factory preflight"
 ### Task 2: Protect The Repository From Local Control-Plane State
 
 **Files:**
+
 - Modify: `.gitignore`
 - Create: `scripts/agent-factory/safety.test.mjs`
 - Create: `ops/agent-factory/README.md`
 
 **Interfaces:**
+
 - Extends: `runDoctor` safety checks from Task 1.
 - Produces: explicit public/private state boundary documented for operators and agents.
 
@@ -227,6 +231,7 @@ git commit -m "docs: define factory state isolation"
 ### Task 3: Create The Portable Gas City Pack And Role Catalog
 
 **Files:**
+
 - Create: `ops/agent-factory/template/city.toml`
 - Create: `ops/agent-factory/template/pack.toml`
 - Create: `ops/agent-factory/template/packs/glasstunnel/pack.toml`
@@ -235,6 +240,7 @@ git commit -m "docs: define factory state isolation"
 - Create: `scripts/agent-factory/pack.test.mjs`
 
 **Interfaces:**
+
 - Produces Gas City rig agents: `planner`, `architect`, `mac-engineer`,
   `web-engineer`, `adapter-engineer`, `protocol-engineer`, `security-reviewer`,
   `qa`, `reviewer`, `integrator`, and `release-operator`.
@@ -341,11 +347,13 @@ git commit -m "feat: define Glasstunnel factory roles"
 ### Task 4: Define The Node Contract And Exclusive Resources
 
 **Files:**
+
 - Create: `ops/agent-factory/policies/node-contract.schema.json`
 - Create: `ops/agent-factory/policies/resources.json`
 - Create: `scripts/agent-factory/policy.test.mjs`
 
 **Interfaces:**
+
 - Produces JSON Schema `glasstunnel.factory.node.v1`.
 - Produces resource definitions consumed by `lease.mjs` in Task 5.
 
@@ -404,11 +412,13 @@ git commit -m "feat: define factory work and resource policy"
 ### Task 5: Implement Audited Resource Leases
 
 **Files:**
+
 - Create: `scripts/agent-factory/lease.mjs`
 - Create: `scripts/agent-factory/lease.test.mjs`
 - Modify: `scripts/agent-factory/cli.mjs`
 
 **Interfaces:**
+
 - Produces: `acquireLease({ resource, nodeId, holder, ttlSeconds, paths, runner }) -> Lease`
 - Produces: `heartbeatLease({ resource, nodeId, paths }) -> Lease`
 - Produces: `releaseLease({ resource, nodeId, paths, runner }) -> void`
@@ -459,11 +469,13 @@ git commit -m "feat: add audited factory resource leases"
 ### Task 6: Enforce Worktree And Branch Authority
 
 **Files:**
+
 - Create: `scripts/agent-factory/branch-guard.mjs`
 - Create: `scripts/agent-factory/branch-guard.test.mjs`
 - Modify: `scripts/agent-factory/cli.mjs`
 
 **Interfaces:**
+
 - Produces: `assertWorkerCheckout({ repoRoot, cwd, branch, primaryCheckout })`.
 - Produces: `createWorkerWorktree({ nodeId, baseRef, paths, runner }) -> { path, branch }`.
 
@@ -505,6 +517,7 @@ git commit -m "feat: enforce isolated factory worktrees"
 ### Task 7: Add Workflow Formulas And Deterministic Canary Agents
 
 **Files:**
+
 - Create: `ops/agent-factory/template/packs/glasstunnel/formulas/product-change.toml`
 - Create: `ops/agent-factory/template/packs/glasstunnel/formulas/bug-investigation.toml`
 - Create: `ops/agent-factory/template/packs/glasstunnel/formulas/cross-surface-change.toml`
@@ -516,6 +529,7 @@ git commit -m "feat: enforce isolated factory worktrees"
 - Create: `scripts/agent-factory/formula.test.mjs`
 
 **Interfaces:**
+
 - All formulas require `formula_compiler = ">=2.0.0"`.
 - Every implementation step is followed by validation and independent review.
 - Release formula ends at a human gate and cannot execute release commands.
@@ -562,12 +576,14 @@ git commit -m "feat: add factory workflow formulas"
 ### Task 8: Bootstrap And Stop An External City Safely
 
 **Files:**
+
 - Create: `scripts/agent-factory/bootstrap.mjs`
 - Create: `scripts/agent-factory/bootstrap.test.mjs`
 - Modify: `scripts/agent-factory/cli.mjs`
 - Modify: `package.json`
 
 **Interfaces:**
+
 - Produces: `bootstrapFactory({ repoRoot, env, runner }) -> BootstrapReport`.
 - Produces: `stopFactory({ paths, runner }) -> StopReport`.
 
@@ -628,11 +644,13 @@ git commit -m "feat: bootstrap external factory city"
 ### Task 9: Add Deduplicated Human Escalation
 
 **Files:**
+
 - Create: `scripts/agent-factory/notify.mjs`
 - Create: `scripts/agent-factory/notify.test.mjs`
 - Modify: `scripts/agent-factory/cli.mjs`
 
 **Interfaces:**
+
 - Produces: `notifyBlocker({ nodeId, blocker, requestedAction, safety, resume, paths, runner, dryRun })`.
 - Uses existing `scripts/notify-telegram-blocker.sh`; it does not read or print the bot token.
 
@@ -690,6 +708,7 @@ git commit -m "feat: add factory human escalation"
 ### Task 10: Prove Backup, Restore, And Canary Recovery
 
 **Files:**
+
 - Create: `scripts/agent-factory/backup.mjs`
 - Create: `scripts/agent-factory/backup.test.mjs`
 - Create: `scripts/agent-factory/canary.mjs`
@@ -698,6 +717,7 @@ git commit -m "feat: add factory human escalation"
 - Modify: `package.json`
 
 **Interfaces:**
+
 - Produces: `verifyBackupRestore({ paths, runner }) -> BackupEvidence`.
 - Produces: `runCanary({ paths, runner }) -> CanaryEvidence`.
 
@@ -750,10 +770,12 @@ git commit -m "feat: verify factory recovery lifecycle"
 ### Task 11: Install And Validate The Real Local Control Plane
 
 **Files:**
+
 - Modify only if live output reveals a reproducible defect in the files above.
 - Record sanitized results in `ops/agent-factory/README.md`.
 
 **Interfaces:**
+
 - Consumes all previous tasks.
 - Produces a running but mutation-disabled Glasstunnel city and sanitized foundation evidence.
 
@@ -842,11 +864,13 @@ git commit -m "test: verify agent factory foundation"
 ### Task 12: Validate, Open One Pull Request, And Preserve The CI Budget
 
 **Files:**
+
 - Modify: `docs/agentic-workflows.md`
 - Modify: `docs/current-loop-state.md`
 - Modify: `AGENTS.md`
 
 **Interfaces:**
+
 - Makes Beads/Gas City the canonical factory workflow while retaining existing
   task packets for ordinary single-agent work.
 - Does not activate continuous mutation or automatic merge.

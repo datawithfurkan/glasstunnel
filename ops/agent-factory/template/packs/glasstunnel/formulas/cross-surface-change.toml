@@ -1,0 +1,55 @@
+formula = "cross-surface-change"
+description = "Coordinate a product change that must remain truthful across Mac, web/mobile, protocol, and documentation surfaces."
+
+[requires]
+formula_compiler = ">=2.0.0"
+
+[[steps]]
+id = "contract"
+title = "Define the cross-surface contract"
+description = "Define states, actions, errors, protocol impact, parity expectations, ownership, and acceptance evidence."
+metadata = { "gc.run_target" = "{{rig_name}}/{{binding_prefix}}architect" }
+
+[[steps]]
+id = "mac-implementation"
+title = "Implement the Mac surface"
+description = "Implement only the Mac-owned portion in its assigned external worktree."
+needs = ["contract"]
+metadata = { "gc.run_target" = "{{rig_name}}/{{binding_prefix}}mac-engineer" }
+
+[steps.retry]
+max_attempts = 2
+on_exhausted = "hard_fail"
+
+[[steps]]
+id = "web-implementation"
+title = "Implement the web and mobile surface"
+description = "Implement only the web-owned portion in its assigned external worktree, preserving mobile-first behavior."
+needs = ["contract"]
+metadata = { "gc.run_target" = "{{rig_name}}/{{binding_prefix}}web-engineer" }
+
+[steps.retry]
+max_attempts = 2
+on_exhausted = "hard_fail"
+
+[[steps]]
+id = "validate"
+title = "Validate cross-surface parity"
+description = "Run Mac, web/mobile, protocol, and contract checks and verify user-visible states remain truthful."
+needs = ["mac-implementation", "web-implementation"]
+metadata = { "gc.run_target" = "{{rig_name}}/{{binding_prefix}}qa" }
+
+[[steps]]
+id = "review"
+title = "Independently review cross-surface behavior"
+description = "Review both diffs and evidence read-only, including UI parity and protocol compatibility."
+needs = ["mac-implementation", "web-implementation"]
+metadata = { "gc.run_target" = "{{rig_name}}/{{binding_prefix}}reviewer" }
+
+[[steps]]
+id = "integration-ready"
+title = "Prepare the coordinated integration handoff"
+description = "Confirm all owned surfaces passed validation and review. Do not push or merge."
+needs = ["validate", "review"]
+metadata = { "gc.run_target" = "{{rig_name}}/{{binding_prefix}}integrator" }
+
