@@ -186,14 +186,65 @@ export async function bootstrapFactory({
   ).stdout.trim();
   if (!sourceOrigin) throw new Error('The Glasstunnel source checkout has no origin URL');
 
+  if (!existsSync(paths.sourceRemote)) {
+    await checked(
+      runner,
+      'git',
+      ['init', '--bare', paths.sourceRemote],
+      options,
+      'initializing private source remote',
+    );
+    await checked(
+      runner,
+      'git',
+      ['remote', 'add', 'upstream', sourceOrigin],
+      { ...options, cwd: paths.sourceRemote },
+      'adding public fetch source',
+    );
+  } else {
+    const sourceUpstream = (
+      await checked(
+        runner,
+        'git',
+        ['remote', 'get-url', 'upstream'],
+        { ...options, cwd: paths.sourceRemote },
+        'reading private source upstream',
+      )
+    ).stdout.trim();
+    if (sourceUpstream !== sourceOrigin) {
+      throw new Error('Private source remote upstream does not match source');
+    }
+  }
+  await checked(
+    runner,
+    'git',
+    ['remote', 'set-url', '--push', 'upstream', 'DISABLED'],
+    { ...options, cwd: paths.sourceRemote },
+    'disabling public source pushes',
+  );
+  await checked(
+    runner,
+    'git',
+    ['fetch', '--no-tags', 'upstream', 'refs/heads/main:refs/heads/main'],
+    { ...options, cwd: paths.sourceRemote },
+    'refreshing private source main',
+  );
+
   let mirrorCreated = false;
   if (!existsSync(mirror)) {
     await checked(
       runner,
       'git',
-      ['clone', '--no-tags', '--branch', 'main', sourceOrigin, mirror],
+      ['clone', '--no-tags', '--branch', 'main', paths.sourceRemote, mirror],
       options,
       'cloning external rig mirror',
+    );
+    await checked(
+      runner,
+      'git',
+      ['remote', 'add', 'upstream', sourceOrigin],
+      { ...options, cwd: mirror },
+      'adding public mirror upstream',
     );
     mirrorCreated = true;
   } else {
@@ -206,8 +257,19 @@ export async function bootstrapFactory({
         'reading mirror origin',
       )
     ).stdout.trim();
-    if (mirrorOrigin !== sourceOrigin)
-      throw new Error('External rig mirror origin does not match source');
+    if (mirrorOrigin !== paths.sourceRemote)
+      throw new Error('External rig mirror origin is not the private source remote');
+    const mirrorUpstream = (
+      await checked(
+        runner,
+        'git',
+        ['remote', 'get-url', 'upstream'],
+        { ...options, cwd: mirror },
+        'reading mirror upstream',
+      )
+    ).stdout.trim();
+    if (mirrorUpstream !== sourceOrigin)
+      throw new Error('External rig mirror upstream does not match source');
     const status = await checked(
       runner,
       'git',
@@ -224,6 +286,13 @@ export async function bootstrapFactory({
       'fetching mirror main',
     );
   }
+  await checked(
+    runner,
+    'git',
+    ['remote', 'set-url', '--push', 'upstream', 'DISABLED'],
+    { ...options, cwd: mirror },
+    'disabling public mirror pushes',
+  );
 
   const rigList = await checked(
     runner,

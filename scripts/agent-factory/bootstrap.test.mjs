@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { bootstrapFactory, getFactoryStatus, stopFactory } from './bootstrap.mjs';
 
@@ -23,8 +23,24 @@ test('bootstrap initializes an external city and suspended mirror rig once', asy
   let rigRegistered = false;
   const runner = async (command, args, options) => {
     calls.push({ command, args, options });
+    if (
+      command === 'git' &&
+      args.slice(0, 2).join(' ') === 'remote get-url' &&
+      args.at(-1) === 'origin' &&
+      options?.cwd?.endsWith('/rigs/glasstunnel')
+    ) {
+      return {
+        code: 0,
+        stdout: `${resolve(options.cwd, '..', '..', 'source.git')}\n`,
+        stderr: '',
+      };
+    }
     if (command === 'git' && args[0] === 'remote') {
       return { code: 0, stdout: 'https://github.com/datawithfurkan/glasstunnel.git\n', stderr: '' };
+    }
+    if (command === 'git' && args.slice(0, 2).join(' ') === 'init --bare') {
+      await mkdir(args.at(-1), { recursive: true });
+      return { code: 0, stdout: '', stderr: '' };
     }
     if (command === 'git' && args[0] === 'clone') {
       await mkdir(args.at(-1), { recursive: true });
@@ -81,6 +97,30 @@ test('bootstrap initializes an external city and suspended mirror rig once', asy
     calls.filter((entry) => entry.command === 'git' && entry.args[0] === 'clone').length,
     1,
   );
+  assert.ok(
+    calls.some(
+      (entry) =>
+        entry.command === 'git' &&
+        entry.args.slice(0, 2).join(' ') === 'init --bare' &&
+        entry.args.at(-1).endsWith('/source.git'),
+    ),
+  );
+  assert.ok(
+    calls.some(
+      (entry) =>
+        entry.command === 'git' &&
+        entry.args[0] === 'clone' &&
+        entry.args.some((arg) => arg.endsWith('/source.git')),
+    ),
+  );
+  assert.ok(
+    calls.some(
+      (entry) =>
+        entry.command === 'git' &&
+        entry.args.join(' ') ===
+          'remote set-url --push upstream DISABLED',
+    ),
+  );
   assert.equal(
     calls.filter(
       (entry) =>
@@ -136,6 +176,18 @@ test('bootstrap commits only canonical Gas City topology changes in the external
   let topologyCommitted = false;
   const runner = async (command, args, options) => {
     calls.push({ command, args, options });
+    if (
+      command === 'git' &&
+      args.slice(0, 2).join(' ') === 'remote get-url' &&
+      args.at(-1) === 'origin' &&
+      options?.cwd?.endsWith('/rigs/glasstunnel')
+    ) {
+      return {
+        code: 0,
+        stdout: `${resolve(options.cwd, '..', '..', 'source.git')}\n`,
+        stderr: '',
+      };
+    }
     if (command === 'git' && args[0] === 'remote') {
       return { code: 0, stdout: 'https://github.com/datawithfurkan/glasstunnel.git\n', stderr: '' };
     }
@@ -281,6 +333,18 @@ test('bootstrap recovers canonical topology changes from an interrupted existing
   const calls = [];
   const runner = async (command, args, options) => {
     calls.push({ command, args, options });
+    if (
+      command === 'git' &&
+      args.slice(0, 2).join(' ') === 'remote get-url' &&
+      args.at(-1) === 'origin' &&
+      options?.cwd?.endsWith('/rigs/glasstunnel')
+    ) {
+      return {
+        code: 0,
+        stdout: `${resolve(options.cwd, '..', '..', 'source.git')}\n`,
+        stderr: '',
+      };
+    }
     if (command === 'git' && args[0] === 'remote') {
       return { code: 0, stdout: 'https://github.com/datawithfurkan/glasstunnel.git\n', stderr: '' };
     }

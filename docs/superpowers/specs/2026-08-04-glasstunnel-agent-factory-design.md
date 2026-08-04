@@ -75,12 +75,14 @@ temporary worktrees, local artifacts, and secrets. A private, restorable backup
 target will protect the Beads/Dolt ledger. Sanitized operational summaries may
 be committed when they improve public project understanding.
 
-An external mirror clone of the Glasstunnel GitHub repository is registered as
-the Gas City rig. Gas City and rig-scoped Beads metadata therefore remain under
-the private factory state root instead of adding `.beads/` to the human's source
+An external mirror clone is registered as the Gas City rig. Its `origin` is a
+private bare repository under the factory state root, refreshed from the public
+GitHub repository through a fetch-only `upstream`. Public pushes are disabled
+inside the factory mirror, so Gas City and rig-scoped Beads/Dolt refs remain
+private instead of reaching GitHub or adding `.beads/` to the human's source
 checkout. Every code worker receives an isolated Git worktree from that mirror
-and a `codex/`-prefixed task branch. Workers may not edit or register the primary
-checkout.
+and a `codex/`-prefixed task branch based on refreshed `origin/main`. Workers may
+not edit or register the primary checkout.
 
 ## Agent Roles
 

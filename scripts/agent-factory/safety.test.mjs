@@ -16,6 +16,7 @@ test('factory state defaults to a private external path without whitespace', () 
     env: { HOME: '/home/test' },
   });
   assert.equal(paths.root.endsWith('/home/test/.local/share/glasstunnel-factory'), true);
+  assert.equal(paths.sourceRemote.endsWith('/home/test/.local/share/glasstunnel-factory/source.git'), true);
   assert.equal(/\s/.test(paths.root), false);
 });
 

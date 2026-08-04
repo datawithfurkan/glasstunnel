@@ -14,8 +14,12 @@ local canaries, create isolated `codex/` worktrees, and record private Beads
 evidence. It may not push, merge, sign, notarize, deploy, reset TCC, modify the
 Keychain, use personal test accounts, or activate continuous mutation.
 
-Gas City registers an external mirror clone as the Glasstunnel rig. The primary
-human checkout is never a rig and never receives `.gc/` or `.beads/` state.
+Gas City registers an external mirror clone as the Glasstunnel rig. Its
+`origin` is a private bare repository under the factory state root; the public
+GitHub repository is a fetch-only `upstream` with pushes disabled. This keeps
+Beads/Dolt refs private while still refreshing `origin/main` for worker
+branches. The primary human checkout is never a rig and never receives `.gc/`
+or `.beads/` state.
 
 ## Operator Sequence
 

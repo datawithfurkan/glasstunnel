@@ -611,11 +611,15 @@ DO_NOT_TRACK=1
 GC_DISABLE_USAGE_METRICS=1
 ```
 
-Copy the repository template to a fresh external city root. Clone the public
-origin into `FactoryPaths.rigs/glasstunnel` with `--no-tags`, verify its origin
-URL and clean state, then run `gc init --from` for the city and `gc rig add` for
-that external mirror. Never register the human's primary checkout. Do not run
-`bd setup codex` or any command that edits `AGENTS.md`.
+Copy the repository template to a fresh external city root. Create a private
+bare source repository beneath the factory root, refresh only its `main` branch
+from the public GitHub URL through a fetch-only `upstream`, and clone
+`FactoryPaths.rigs/glasstunnel` from that private origin with `--no-tags`. Keep
+GitHub as fetch-only `upstream` in the rig and disable its push URL so Beads/Dolt
+refs cannot reach the public repository. Verify remotes and clean state, then
+run `gc init --from` for the city and `gc rig add` for that external mirror.
+Never register the human's primary checkout. Do not run `bd setup codex` or any
+command that edits `AGENTS.md`.
 
 - [ ] **Step 4: Implement safe stop and status**
 

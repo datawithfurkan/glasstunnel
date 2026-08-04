@@ -62,6 +62,7 @@ export function resolveFactoryPaths({ repoRoot = MODULE_ROOT, env = process.env 
   return {
     source,
     root,
+    sourceRemote: join(root, 'source.git'),
     city: join(root, 'city'),
     gcHome: join(root, 'gc-home'),
     backups: join(root, 'backups'),
