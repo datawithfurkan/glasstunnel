@@ -37,6 +37,8 @@
     "lab:mac": "node scripts/lab/cli.mjs mac",
     "factory:doctor": "node scripts/agent-factory/cli.mjs doctor",
     "factory:test": "node --test scripts/agent-factory/*.test.mjs",
+    "factory:lease": "node scripts/agent-factory/cli.mjs lease",
+    "factory:worktree": "node scripts/agent-factory/cli.mjs worktree",
     "lab:test": "pnpm lab:test:unit && pnpm worker:typecheck && pnpm worker:test",
     "lab:test:unit": "node --test scripts/lab/*.test.mjs",
     "lab:e2e": "node scripts/lab/e2e.mjs chromium",
