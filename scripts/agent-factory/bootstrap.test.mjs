@@ -73,6 +73,31 @@ test('bootstrap initializes an external city and suspended mirror rig once', asy
       };
     }
     if (command === 'gc' && args.slice(0, 2).join(' ') === 'rig add') rigRegistered = true;
+    if (command === 'gc' && args[0] === 'doctor') {
+      return {
+        code: 1,
+        stdout: JSON.stringify({
+          results: [
+            {
+              name: 'order-firing-current',
+              status: 'error',
+              message: 'scheduled orders are stale',
+            },
+          ],
+        }),
+        stderr: '',
+      };
+    }
+    if (command === 'gc' && args[0] === 'status') {
+      return {
+        code: 0,
+        stdout: JSON.stringify({
+          running: false,
+          rigs: [{ name: 'glasstunnel', suspended: true }],
+        }),
+        stderr: '',
+      };
+    }
     if (command === 'gc' && args.slice(0, 2).join(' ') === 'formula list') {
       return {
         code: 0,

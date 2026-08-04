@@ -61,6 +61,37 @@ function assertRequiredFormulas(stdout) {
   }
 }
 
+async function verifyCityDoctor({ runner, options, city }) {
+  const result = await runner('gc', ['doctor', '--json'], { ...options, cwd: city });
+  if (result.code === 0) return;
+
+  let report;
+  try {
+    report = JSON.parse(result.stdout);
+  } catch {
+    const detail = result.stderr.trim() || result.stdout.trim() || `exit ${result.code}`;
+    throw new Error(`running city doctor: ${detail}`);
+  }
+  const failures = (report.results ?? []).filter((entry) => entry.status === 'error');
+  const onlyDormantOrders =
+    failures.length === 1 && failures[0].name === 'order-firing-current';
+  if (onlyDormantOrders) {
+    const status = await checked(
+      runner,
+      'gc',
+      ['status', city, '--json'],
+      { ...options, cwd: city },
+      'checking dormant city state',
+    );
+    const parsed = JSON.parse(status.stdout);
+    const rig = (parsed.rigs ?? []).find((entry) => entry.name === 'glasstunnel');
+    if (parsed.running === false && rig?.suspended === true) return;
+  }
+
+  const names = failures.map((entry) => entry.name).filter(Boolean);
+  throw new Error(`running city doctor: ${names.join(', ') || 'unknown failure'}`);
+}
+
 function changedPaths(statusOutput) {
   return statusOutput
     .split('\n')
@@ -364,7 +395,7 @@ export async function bootstrapFactory({
     throw new Error('Factory rig routing mode is not explicit');
   }
 
-  await checked(runner, 'gc', ['doctor'], { ...options, cwd: paths.city }, 'running city doctor');
+  await verifyCityDoctor({ runner, options, city: paths.city });
   await checked(
     runner,
     'gc',
