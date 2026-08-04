@@ -686,6 +686,7 @@ Run:
 
 ```bash
 GT_TELEGRAM_DRY_RUN=1 pnpm factory:notify -- \
+  send \
   --node foundation-canary \
   --blocker "Human gate canary" \
   --action "Acknowledge the dry-run message" \

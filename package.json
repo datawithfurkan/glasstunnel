@@ -39,6 +39,7 @@
     "factory:bootstrap": "node scripts/agent-factory/cli.mjs bootstrap",
     "factory:status": "node scripts/agent-factory/cli.mjs status",
     "factory:down": "node scripts/agent-factory/cli.mjs down",
+    "factory:notify": "node scripts/agent-factory/cli.mjs notify",
     "factory:test": "node --test scripts/agent-factory/*.test.mjs",
     "factory:lease": "node scripts/agent-factory/cli.mjs lease",
     "factory:worktree": "node scripts/agent-factory/cli.mjs worktree",

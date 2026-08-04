@@ -10,6 +10,7 @@ import {
   recoverExpiredLease,
   releaseLease,
 } from './lease.mjs';
+import { clearBlockerNotification, notifyBlocker } from './notify.mjs';
 import { runProcess } from './process.mjs';
 
 async function findRepoRoot() {
@@ -24,6 +25,7 @@ function usage() {
   pnpm factory:bootstrap
   pnpm factory:status
   pnpm factory:down
+  pnpm factory:notify -- <send|clear> [options]
   pnpm factory:lease -- <acquire|heartbeat|release|status|recover> [options]
   pnpm factory:worktree -- <create|remove> [options]`);
 }
@@ -34,7 +36,7 @@ function optionsFrom(args) {
     const entry = args[index];
     if (!entry.startsWith('--')) throw new Error(`Unexpected argument: ${entry}`);
     const key = entry.slice(2);
-    if (['expired-only', 'human-approved'].includes(key)) {
+    if (['expired-only', 'human-approved', 'dry-run'].includes(key)) {
       options[key] = true;
       continue;
     }
@@ -121,8 +123,34 @@ async function runWorktree(action, args, paths) {
   throw new Error(`Unknown worktree action: ${action}`);
 }
 
+async function runNotify(action, args, paths) {
+  const options = optionsFrom(args);
+  const nodeId = required(options, 'node');
+  if (action === 'clear') {
+    console.log(JSON.stringify(await clearBlockerNotification({ nodeId, paths }), null, 2));
+    return;
+  }
+  if (action === 'send') {
+    const result = await notifyBlocker({
+      nodeId,
+      blocker: required(options, 'blocker'),
+      requestedAction: required(options, 'action'),
+      diagnostic: options.diagnostic,
+      safety: required(options, 'safety'),
+      resume: required(options, 'resume'),
+      paths,
+      dryRun: options['dry-run'] === true || process.env.GT_TELEGRAM_DRY_RUN === '1',
+    });
+    console.log(result.message ?? JSON.stringify(result, null, 2));
+    return;
+  }
+  throw new Error(`Unknown notify action: ${action}`);
+}
+
 async function main() {
   const command = process.argv[2];
+  const commandArgs = process.argv.slice(3);
+  if (commandArgs[0] === '--') commandArgs.shift();
   const repoRoot = await findRepoRoot();
   if (command === 'doctor') {
     const report = await runDoctor({ repoRoot });
@@ -146,11 +174,15 @@ async function main() {
   }
   const paths = resolveFactoryPaths({ repoRoot });
   if (command === 'lease') {
-    await runLease(process.argv[3], process.argv.slice(4), paths);
+    await runLease(commandArgs[0], commandArgs.slice(1), paths);
     return;
   }
   if (command === 'worktree') {
-    await runWorktree(process.argv[3], process.argv.slice(4), paths);
+    await runWorktree(commandArgs[0], commandArgs.slice(1), paths);
+    return;
+  }
+  if (command === 'notify') {
+    await runNotify(commandArgs[0], commandArgs.slice(1), paths);
     return;
   }
   usage();
