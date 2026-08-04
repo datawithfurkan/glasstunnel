@@ -49,11 +49,14 @@ export function resolveFactoryPaths({ repoRoot = MODULE_ROOT, env = process.env 
   const source = canonicalPath(repoRoot);
   const root = canonicalPath(
     env.GT_FACTORY_HOME ??
-      join(env.HOME ?? homedir(), 'Library', 'Application Support', 'GlasstunnelFactory'),
+      join(env.HOME ?? homedir(), '.local', 'share', 'glasstunnel-factory'),
   );
 
   if (isPathInside(source, root)) {
     throw new Error('GT_FACTORY_HOME must be outside the Glasstunnel source checkout');
+  }
+  if (/\s/.test(root)) {
+    throw new Error('GT_FACTORY_HOME cannot contain whitespace with Gas City 1.4.0');
   }
 
   return {

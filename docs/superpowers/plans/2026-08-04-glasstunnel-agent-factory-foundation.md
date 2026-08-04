@@ -126,10 +126,12 @@ FACTORY_SCHEMA_VERSION=1
 - [ ] **Step 4: Implement config parsing, safe path resolution, and an injectable runner**
 
 `resolveFactoryPaths` must default to
-`$HOME/Library/Application Support/GlasstunnelFactory` and derive `city`,
+`$HOME/.local/share/glasstunnel-factory` and derive `city`,
 `backups`, `leases`, `rigs`, `worktrees`, `artifacts`, and `notifications`
 beneath it.
 It must reject any state root equal to or contained by the Git top-level.
+It must also reject roots containing whitespace because Gas City 1.4.0 does
+not safely quote Pack V2 agent-script paths when launching tmux sessions.
 
 The runner must use `spawn` with an argument array, `shell: false`, captured
 UTF-8 output, and a configurable timeout. It must never interpolate a complete

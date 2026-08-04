@@ -3,8 +3,9 @@
 This directory contains the portable, reviewable definition of Glasstunnel's
 agent factory. Mutable Gas City, Beads, Dolt, worktree, lease, notification, and
 artifact state belongs outside the repository. The default private state root
-is `~/Library/Application Support/GlasstunnelFactory`; override it with
-`GT_FACTORY_HOME` only when the replacement is also outside the checkout.
+is `~/.local/share/glasstunnel-factory`; override it with `GT_FACTORY_HOME`
+only when the replacement is also outside the checkout and contains no
+whitespace. Gas City 1.4.0 does not safely quote Pack V2 agent-script paths.
 
 ## Foundation Authority
 
