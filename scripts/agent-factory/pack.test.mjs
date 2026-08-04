@@ -76,5 +76,6 @@ test('deterministic canary agents use reviewed local scripts', async () => {
   );
   assert.match(worker, /gc\.failure_class=transient/);
   assert.match(worker, /gc\.outcome=pass/);
+  assert.doesNotMatch(worker, /^\s+--set-metadata/m);
   assert.doesNotMatch(worker, /git (push|merge)|notary|codesign/);
 });

@@ -50,13 +50,13 @@ test('canary proves retry, independent review, readiness, and cleanup', async ()
       id: 'gt-review',
       title: 'Independently review the canary evidence',
       status: 'closed',
-      metadata: { canary_reviewed: 'true', 'gc.outcome': 'pass' },
+      metadata: { canary_reviewed: true, 'gc.outcome': 'pass' },
     },
     {
       id: 'gt-ready',
       title: 'Mark the foundation canary integration-ready',
       status: 'closed',
-      metadata: { integration_ready: 'true', 'gc.outcome': 'pass' },
+      metadata: { integration_ready: true, 'gc.outcome': 'pass' },
     },
   ];
   const calls = [];
@@ -139,9 +139,9 @@ test('canary proves retry, independent review, readiness, and cleanup', async ()
     assert.ok(calls.some((call) => call.command === 'gc' && call.args.join(' ') === 'rig suspend glasstunnel --json'));
     assert.ok(calls.some((call) => call.command === 'gc' && call.args[0] === 'stop'));
     assert.ok(
-      calls.findIndex((call) => call.command === 'gc' && call.args[0] === 'stop') <
-        calls.findIndex((call) => call.command === 'bd' && call.args[0] === 'close'),
-      'managed Dolt must stop before the lease audit is closed',
+      calls.findIndex((call) => call.command === 'bd' && call.args[0] === 'close') <
+        calls.findIndex((call) => call.command === 'gc' && call.args[0] === 'stop'),
+      'the lease audit must close before managed Dolt stops',
     );
     assert.ok(
       calls

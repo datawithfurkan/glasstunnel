@@ -37,6 +37,10 @@ function cleanStatus(result, label) {
   if (result.stdout.trim()) throw new Error(`${label} must be clean before and after the canary`);
 }
 
+function metadataTrue(value) {
+  return value === true || value === 'true';
+}
+
 function verifyCanaryNodes(issues) {
   const attempts = issues
     .filter(
@@ -64,12 +68,12 @@ function verifyCanaryNodes(issues) {
 
   const review = issues.find(
     (issue) =>
-      issue.metadata?.canary_reviewed === 'true' && issue.metadata?.['gc.outcome'] === 'pass',
+      metadataTrue(issue.metadata?.canary_reviewed) && issue.metadata?.['gc.outcome'] === 'pass',
   );
   if (!review) throw new Error('Foundation canary independent review was not recorded');
   const integration = issues.find(
     (issue) =>
-      issue.metadata?.integration_ready === 'true' && issue.metadata?.['gc.outcome'] === 'pass',
+      metadataTrue(issue.metadata?.integration_ready) && issue.metadata?.['gc.outcome'] === 'pass',
   );
   if (!integration) throw new Error('Foundation canary integration readiness was not recorded');
 
@@ -254,19 +258,6 @@ export async function runCanary({
       cleanupErrors.push(error);
     }
   }
-  if (startedByCanary) {
-    try {
-      await checked(
-        runner,
-        'gc',
-        ['stop', paths.city, '--timeout', '2m'],
-        { ...cityOptions, timeoutMs: 150_000 },
-        'stopping canary-started city',
-      );
-    } catch (error) {
-      cleanupErrors.push(error);
-    }
-  }
   if (leaseAcquired) {
     try {
       await releaseLease({
@@ -276,6 +267,19 @@ export async function runCanary({
         runner,
         env: processEnv,
       });
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+  }
+  if (startedByCanary) {
+    try {
+      await checked(
+        runner,
+        'gc',
+        ['stop', paths.city, '--timeout', '2m'],
+        { ...cityOptions, timeoutMs: 150_000 },
+        'stopping canary-started city',
+      );
     } catch (error) {
       cleanupErrors.push(error);
     }

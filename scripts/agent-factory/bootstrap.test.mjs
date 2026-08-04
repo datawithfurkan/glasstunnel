@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
@@ -9,8 +9,16 @@ async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'glasstunnel-bootstrap-'));
   const repoRoot = join(root, 'source');
   await mkdir(join(repoRoot, 'ops', 'agent-factory', 'template'), { recursive: true });
+  await mkdir(
+    join(repoRoot, 'ops', 'agent-factory', 'template', 'packs', 'glasstunnel'),
+    { recursive: true },
+  );
   await writeFile(join(repoRoot, 'ops', 'agent-factory', 'template', 'city.toml'), '[workspace]\n');
   await writeFile(join(repoRoot, 'ops', 'agent-factory', 'template', 'pack.toml'), '[pack]\n');
+  await writeFile(
+    join(repoRoot, 'ops', 'agent-factory', 'template', 'packs', 'glasstunnel', 'managed.txt'),
+    'reviewed pack\n',
+  );
   return {
     repoRoot,
     env: { HOME: root, GT_FACTORY_HOME: join(root, 'state') },
@@ -127,6 +135,13 @@ test('bootstrap initializes an external city and suspended mirror rig once', asy
   assert.equal(second.cityCreated, false);
   assert.equal(second.mirrorCreated, false);
   assert.equal(second.rigAdded, false);
+  assert.equal(
+    await readFile(
+      join(env.GT_FACTORY_HOME, 'city', 'packs', 'glasstunnel', 'managed.txt'),
+      'utf8',
+    ),
+    'reviewed pack\n',
+  );
   assert.equal(
     calls.filter((entry) => entry.command === 'gc' && entry.args[0] === 'init').length,
     1,

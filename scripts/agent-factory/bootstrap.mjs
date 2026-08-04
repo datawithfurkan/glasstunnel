@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
+import { cp, mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { factoryEnvironment, resolveFactoryPaths } from './config.mjs';
 import { runDoctor } from './doctor.mjs';
@@ -215,6 +215,12 @@ export async function bootstrapFactory({
     );
     cityCreated = true;
   }
+
+  const managedPack = join(paths.city, 'packs', 'glasstunnel');
+  await rm(managedPack, { recursive: true, force: true });
+  await cp(join(repoRoot, 'ops', 'agent-factory', 'template', 'packs', 'glasstunnel'), managedPack, {
+    recursive: true,
+  });
 
   await checked(
     runner,
