@@ -104,10 +104,11 @@ export async function verifyBackupRestore({
   await mkdir(restorePath, { recursive: false, mode: 0o700 });
 
   const processEnv = factoryEnvironment(paths, env);
+  const cityOptions = { cwd: paths.city, env: processEnv, timeoutMs: 120_000 };
   const sourceOptions = { cwd: sourcePath, env: processEnv, timeoutMs: 120_000 };
   const restorePort = await portAllocator();
   const restoreOptions = { cwd: restorePath, env: processEnv, timeoutMs: 120_000 };
-  let sourceDoltStarted = false;
+  let managedDoltStarted = false;
   let restoreInitialized = false;
   let evidence;
   let operationError;
@@ -124,6 +125,22 @@ export async function verifyBackupRestore({
   ];
 
   try {
+    const cityStatus = parseObject(
+      (
+        await checked(
+          runner,
+          'gc',
+          ['status', paths.city, '--json'],
+          cityOptions,
+          'checking dormant factory state',
+        )
+      ).stdout,
+      'factory city status',
+    );
+    const rig = (cityStatus.rigs ?? []).find((entry) => entry.name === 'glasstunnel');
+    if (cityStatus.running !== false || rig?.suspended !== true) {
+      throw new Error('Backup verification requires a stopped city and suspended rig');
+    }
     const sourceStatus = parseObject(
       (
         await checked(
@@ -139,12 +156,27 @@ export async function verifyBackupRestore({
     if (sourceStatus.running !== true) {
       await checked(
         runner,
-        'bd',
-        ['dolt', 'start', '--json'],
-        sourceOptions,
-        'starting source Dolt server',
+        'gc',
+        ['import', 'install'],
+        cityOptions,
+        'starting the city-managed Dolt provider',
       );
-      sourceDoltStarted = true;
+      managedDoltStarted = true;
+      const startedStatus = parseObject(
+        (
+          await checked(
+            runner,
+            'bd',
+            ['dolt', 'status', '--json'],
+            sourceOptions,
+            'verifying the city-managed Dolt provider',
+          )
+        ).stdout,
+        'started source Dolt status',
+      );
+      if (startedStatus.running !== true) {
+        throw new Error('City-managed Dolt provider did not become reachable');
+      }
     }
     await checked(
       runner,
@@ -229,11 +261,17 @@ export async function verifyBackupRestore({
     }
   }
   await rm(restorePath, { recursive: true, force: true });
-  if (sourceDoltStarted) {
-    const stopped = await runner('bd', ['dolt', 'stop'], sourceOptions);
+  if (managedDoltStarted) {
+    const stopped = await runner(
+      'gc',
+      ['stop', paths.city, '--timeout', '2m'],
+      { ...cityOptions, timeoutMs: 150_000 },
+    );
     if (stopped.code !== 0) {
       cleanupErrors.push(
-        new Error(`stopping source Dolt server: ${stopped.stderr.trim() || stopped.stdout.trim()}`),
+        new Error(
+          `stopping city-managed Dolt provider: ${stopped.stderr.trim() || stopped.stdout.trim()}`,
+        ),
       );
     }
   }

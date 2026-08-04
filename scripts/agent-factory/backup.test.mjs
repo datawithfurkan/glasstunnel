@@ -34,10 +34,29 @@ test('backup verification uses Dolt-native backup and a disposable external rest
     },
   ];
   const calls = [];
+  let managedDoltRunning = false;
   const runner = async (command, args, options = {}) => {
     calls.push({ command, args, cwd: options.cwd, env: options.env });
+    if (command === 'gc' && args[0] === 'status') {
+      return {
+        code: 0,
+        stdout: JSON.stringify({
+          running: false,
+          rigs: [{ name: 'glasstunnel', suspended: true }],
+        }),
+        stderr: '',
+      };
+    }
+    if (command === 'gc' && args.join(' ') === 'import install') {
+      managedDoltRunning = true;
+      return { code: 0, stdout: '{}', stderr: '' };
+    }
     if (command === 'bd' && args.join(' ') === 'dolt status --json') {
-      return { code: 0, stdout: JSON.stringify({ running: false }), stderr: '' };
+      return {
+        code: 0,
+        stdout: JSON.stringify({ running: managedDoltRunning }),
+        stderr: '',
+      };
     }
     if (command === 'bd' && args[0] === 'list') {
       return { code: 0, stdout: JSON.stringify(issues), stderr: '' };
@@ -82,18 +101,26 @@ test('backup verification uses Dolt-native backup and a disposable external rest
     assert.ok(
       calls.some(
         (call) =>
-          call.command === 'bd' &&
-          call.cwd === join(paths.rigs, 'glasstunnel') &&
-          call.args.join(' ') === 'dolt start --json',
+          call.command === 'gc' &&
+          call.cwd === paths.city &&
+          call.args.join(' ') === 'import install',
       ),
     );
     assert.ok(
       calls.some(
         (call) =>
+          call.command === 'gc' &&
+          call.args.join(' ') === `stop ${paths.city} --timeout 2m`,
+      ),
+    );
+    assert.equal(
+      calls.some(
+        (call) =>
           call.command === 'bd' &&
           call.cwd === join(paths.rigs, 'glasstunnel') &&
-          call.args.join(' ') === 'dolt stop',
+          ['dolt start --json', 'dolt stop'].includes(call.args.join(' ')),
       ),
+      false,
     );
     assert.ok(
       calls
@@ -119,6 +146,16 @@ test('backup verification preserves a source Dolt server that was already runnin
   const calls = [];
   const runner = async (command, args, options = {}) => {
     calls.push({ command, args, cwd: options.cwd });
+    if (command === 'gc' && args[0] === 'status') {
+      return {
+        code: 0,
+        stdout: JSON.stringify({
+          running: false,
+          rigs: [{ name: 'glasstunnel', suspended: true }],
+        }),
+        stderr: '',
+      };
+    }
     if (command === 'bd' && args.join(' ') === 'dolt status --json') {
       return { code: 0, stdout: JSON.stringify({ running: true }), stderr: '' };
     }
@@ -138,12 +175,12 @@ test('backup verification preserves a source Dolt server that was already runnin
 
     assert.equal(
       calls.some(
-        (call) => call.cwd === sourcePath && call.args.join(' ') === 'dolt start --json',
+        (call) => call.command === 'gc' && call.args.join(' ') === 'import install',
       ),
       false,
     );
     assert.equal(
-      calls.some((call) => call.cwd === sourcePath && call.args.join(' ') === 'dolt stop'),
+      calls.some((call) => call.command === 'gc' && call.args[0] === 'stop'),
       false,
     );
     assert.ok(
