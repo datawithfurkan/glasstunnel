@@ -14,13 +14,13 @@ turns:
           set -eu;
           BEAD_ID="${GC_SCRIPT_BEAD_ID:-}";
           ATTEMPT="${GC_SCRIPT_BEAD_METADATA_GC_ATTEMPT:-0}";
-          STEP_ID="${GC_SCRIPT_BEAD_METADATA_GC_STEP_ID:-}";
+          STEP_REF="${GC_SCRIPT_BEAD_METADATA_GC_STEP_REF:-}";
           case "$BEAD_ID" in
             ""|*[!A-Za-z0-9-]*) echo "unsafe bead id: $BEAD_ID" >&2; exit 1 ;;
           esac;
           if [ "$ATTEMPT" = "1" ]; then
             bd update "$BEAD_ID" --status=closed --set-metadata gc.outcome=fail --set-metadata gc.failure_class=transient --set-metadata gc.failure_reason=foundation_canary_attempt_one;
-          elif [ "$STEP_ID" = "integration-ready" ]; then
+          elif [ "$STEP_REF" = "foundation-canary.integration-ready" ]; then
             bd update "$BEAD_ID" --status=closed --set-metadata gc.outcome=pass --set-metadata canary_stage=completed --set-metadata integration_ready=true;
           else
             bd update "$BEAD_ID" --status=closed --set-metadata gc.outcome=pass --set-metadata canary_stage=completed;
