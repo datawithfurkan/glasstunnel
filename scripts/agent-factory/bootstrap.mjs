@@ -31,6 +31,93 @@ function rigListContains(stdout, name) {
   return false;
 }
 
+const REQUIRED_FORMULAS = new Set([
+  'bug-investigation',
+  'cross-surface-change',
+  'dependency-update',
+  'foundation-canary',
+  'product-change',
+  'release-evidence',
+]);
+
+const MANAGED_MIRROR_TOPOLOGY_PATHS = [
+  '.beads/identity.toml',
+  '.beads/metadata.json',
+  '.gitignore',
+];
+
+function assertRequiredFormulas(stdout) {
+  let parsed;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    throw new Error('Gas City returned invalid JSON while listing formulas');
+  }
+  const discovered = new Set(
+    Array.isArray(parsed?.formulas) ? parsed.formulas.map((formula) => formula?.name) : [],
+  );
+  const missing = [...REQUIRED_FORMULAS].filter((name) => !discovered.has(name));
+  if (missing.length > 0) {
+    throw new Error(`Factory formulas were not installed: ${missing.join(', ')}`);
+  }
+}
+
+function changedPaths(statusOutput) {
+  return statusOutput
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => line.slice(3));
+}
+
+function assertOnlyManagedMirrorChanges(statusOutput) {
+  const changed = changedPaths(statusOutput);
+  const unexpected = changed.filter(
+    (path) => path.includes(' -> ') || !MANAGED_MIRROR_TOPOLOGY_PATHS.includes(path),
+  );
+  if (unexpected.length > 0) {
+    throw new Error(`Unexpected external mirror changes: ${unexpected.join(', ')}`);
+  }
+  return changed;
+}
+
+async function finalizeMirrorTopology({ runner, options, mirror }) {
+  const status = await checked(
+    runner,
+    'git',
+    ['status', '--porcelain=v1'],
+    { ...options, cwd: mirror },
+    'checking generated rig topology',
+  );
+  const changed = assertOnlyManagedMirrorChanges(status.stdout);
+  if (changed.length === 0) return false;
+
+  await checked(
+    runner,
+    'git',
+    ['add', '--', ...MANAGED_MIRROR_TOPOLOGY_PATHS],
+    { ...options, cwd: mirror },
+    'staging generated rig topology',
+  );
+  await checked(
+    runner,
+    'git',
+    ['commit', '-m', 'gc rig add: finalize external factory metadata'],
+    { ...options, cwd: mirror },
+    'committing generated rig topology',
+  );
+  const finalStatus = await checked(
+    runner,
+    'git',
+    ['status', '--porcelain=v1'],
+    { ...options, cwd: mirror },
+    'verifying external rig mirror state',
+  );
+  if (finalStatus.stdout.trim()) {
+    throw new Error('External rig mirror remained dirty after topology finalization');
+  }
+  return true;
+}
+
 export async function bootstrapFactory({
   repoRoot,
   env = process.env,
@@ -128,20 +215,13 @@ export async function bootstrapFactory({
       { ...options, cwd: mirror },
       'checking mirror state',
     );
-    if (status.stdout.trim()) throw new Error('External rig mirror has uncommitted changes');
+    assertOnlyManagedMirrorChanges(status.stdout);
     await checked(
       runner,
       'git',
       ['fetch', '--no-tags', 'origin', 'main'],
       { ...options, cwd: mirror },
       'fetching mirror main',
-    );
-    await checked(
-      runner,
-      'git',
-      ['merge', '--ff-only', 'origin/main'],
-      { ...options, cwd: mirror },
-      'fast-forwarding mirror main',
     );
   }
 
@@ -181,15 +261,22 @@ export async function bootstrapFactory({
     { ...options, cwd: paths.city },
     'validating city config',
   );
-  await checked(
+  const formulas = await checked(
     runner,
     'gc',
-    ['formula', 'list', '--json'],
+    ['formula', 'list', '--city', paths.city, '--rig', 'glasstunnel', '--json'],
     { ...options, cwd: paths.city },
     'listing formulas',
   );
+  assertRequiredFormulas(formulas.stdout);
 
-  return { paths, cityCreated, mirrorCreated, rigAdded };
+  const mirrorTopologyCommitted = await finalizeMirrorTopology({
+    runner,
+    options,
+    mirror,
+  });
+
+  return { paths, cityCreated, mirrorCreated, rigAdded, mirrorTopologyCommitted };
 }
 
 export async function getFactoryStatus({ repoRoot, env = process.env, runner = runProcess } = {}) {
