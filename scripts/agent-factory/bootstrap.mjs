@@ -79,6 +79,14 @@ export async function bootstrapFactory({
     cityCreated = true;
   }
 
+  await checked(
+    runner,
+    'gc',
+    ['import', 'install'],
+    { ...options, cwd: paths.city },
+    'installing pinned city imports',
+  );
+
   const mirror = join(paths.rigs, 'glasstunnel');
   const sourceOrigin = (
     await checked(

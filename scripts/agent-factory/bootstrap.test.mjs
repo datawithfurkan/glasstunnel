@@ -67,6 +67,13 @@ test('bootstrap initializes an external city and suspended mirror rig once', asy
   );
   assert.equal(
     calls.filter(
+      (entry) =>
+        entry.command === 'gc' && entry.args.slice(0, 2).join(' ') === 'import install',
+    ).length,
+    2,
+  );
+  assert.equal(
+    calls.filter(
       (entry) => entry.command === 'gc' && entry.args.slice(0, 2).join(' ') === 'rig add',
     ).length,
     1,
