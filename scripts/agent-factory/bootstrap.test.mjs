@@ -17,12 +17,25 @@ async function fixture() {
   };
 }
 
+function bdRoutingResult(command, args) {
+  if (command !== 'bd' || args[0] !== 'config') return null;
+  if (args[1] === 'set' && args[2] === 'routing.mode' && args[3] === 'explicit') {
+    return { code: 0, stdout: '', stderr: '' };
+  }
+  if (args[1] === 'get' && args[2] === 'routing.mode') {
+    return { code: 0, stdout: 'explicit\n', stderr: '' };
+  }
+  return { code: 1, stdout: '', stderr: 'unexpected Beads config command' };
+}
+
 test('bootstrap initializes an external city and suspended mirror rig once', async () => {
   const { repoRoot, env } = await fixture();
   const calls = [];
   let rigRegistered = false;
   const runner = async (command, args, options) => {
     calls.push({ command, args, options });
+    const routing = bdRoutingResult(command, args);
+    if (routing) return routing;
     if (
       command === 'git' &&
       args.slice(0, 2).join(' ') === 'remote get-url' &&
@@ -108,6 +121,20 @@ test('bootstrap initializes an external city and suspended mirror rig once', asy
   assert.ok(
     calls.some(
       (entry) =>
+        entry.command === 'bd' && entry.args.join(' ') === 'config set routing.mode explicit',
+    ),
+  );
+  assert.ok(
+    calls.some(
+      (entry) =>
+        entry.command === 'bd' &&
+        entry.args.join(' ') === 'config get routing.mode' &&
+        entry.options.env.BD_ROUTING_MODE === 'off',
+    ),
+  );
+  assert.ok(
+    calls.some(
+      (entry) =>
         entry.command === 'git' &&
         entry.args[0] === 'clone' &&
         entry.args.some((arg) => arg.endsWith('/source.git')),
@@ -177,6 +204,8 @@ test('bootstrap commits only canonical Gas City topology changes in the external
   let identityTracked = false;
   const runner = async (command, args, options) => {
     calls.push({ command, args, options });
+    const routing = bdRoutingResult(command, args);
+    if (routing) return routing;
     if (
       command === 'git' &&
       args.slice(0, 2).join(' ') === 'remote get-url' &&
@@ -279,6 +308,8 @@ test('bootstrap rejects unexpected external mirror changes instead of committing
   const mirror = join(env.GT_FACTORY_HOME, 'rigs', 'glasstunnel');
   let rigRegistered = false;
   const runner = async (command, args) => {
+    const routing = bdRoutingResult(command, args);
+    if (routing) return routing;
     if (command === 'git' && args[0] === 'remote') {
       return { code: 0, stdout: 'https://github.com/datawithfurkan/glasstunnel.git\n', stderr: '' };
     }
@@ -345,6 +376,8 @@ test('bootstrap recovers canonical topology changes from an interrupted existing
   const calls = [];
   const runner = async (command, args, options) => {
     calls.push({ command, args, options });
+    const routing = bdRoutingResult(command, args);
+    if (routing) return routing;
     if (
       command === 'git' &&
       args.slice(0, 2).join(' ') === 'remote get-url' &&

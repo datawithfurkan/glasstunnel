@@ -40,6 +40,7 @@ export async function acquireLease({
   paths,
   runner = runProcess,
   now = new Date(),
+  env,
 }) {
   if (!/^[A-Za-z0-9-]+$/.test(nodeId)) throw new Error('Node ID must be alphanumeric with dashes');
   if (!holder?.trim()) throw new Error('Lease holder is required');
@@ -96,7 +97,7 @@ export async function acquireLease({
       metadata,
       '--json',
     ],
-    { cwd: join(paths.rigs, 'glasstunnel'), timeoutMs: 30_000 },
+    { cwd: join(paths.rigs, 'glasstunnel'), timeoutMs: 30_000, env },
   );
 
   if (result.code !== 0) {
@@ -127,7 +128,7 @@ export async function heartbeatLease({ resource, nodeId, paths, now = new Date()
   return lease;
 }
 
-export async function releaseLease({ resource, nodeId, paths, runner = runProcess }) {
+export async function releaseLease({ resource, nodeId, paths, runner = runProcess, env }) {
   const lease = await readLease(paths, resource);
   assertOwner(lease, nodeId);
   const result = await runner(
@@ -139,7 +140,7 @@ export async function releaseLease({ resource, nodeId, paths, runner = runProces
       `Resource ${resource} released by ${nodeId}`,
       '--json',
     ],
-    { cwd: join(paths.rigs, 'glasstunnel'), timeoutMs: 30_000 },
+    { cwd: join(paths.rigs, 'glasstunnel'), timeoutMs: 30_000, env },
   );
   if (result.code !== 0)
     throw new Error(`Could not close Beads lease audit: ${result.stderr.trim()}`);
@@ -152,6 +153,7 @@ export async function recoverExpiredLease({
   runner = runProcess,
   now = new Date(),
   humanApproved = false,
+  env,
 }) {
   const resources = await loadResources(paths);
   const definition = resources[resource];
@@ -172,7 +174,7 @@ export async function recoverExpiredLease({
       `Expired resource lease recovered at ${now.toISOString()}`,
       '--json',
     ],
-    { cwd: join(paths.rigs, 'glasstunnel'), timeoutMs: 30_000 },
+    { cwd: join(paths.rigs, 'glasstunnel'), timeoutMs: 30_000, env },
   );
   if (result.code !== 0)
     throw new Error(`Could not close expired Beads lease audit: ${result.stderr.trim()}`);

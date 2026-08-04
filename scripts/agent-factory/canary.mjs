@@ -116,6 +116,12 @@ export async function runCanary({
   );
   const rig = (initialStatus.rigs ?? []).find((entry) => entry.name === 'glasstunnel');
   if (!rig) throw new Error('Glasstunnel rig is not registered');
+  if (initialStatus.running) {
+    throw new Error('Foundation canary requires the city to be stopped');
+  }
+  if (!rig.suspended) {
+    throw new Error('Foundation canary requires the rig to be suspended');
+  }
 
   cleanStatus(await runner('git', ['status', '--porcelain'], sourceOptions), 'Primary checkout');
   cleanStatus(await runner('git', ['status', '--porcelain'], mirrorOptions), 'Factory mirror');
@@ -134,6 +140,7 @@ export async function runCanary({
       holder: 'deterministic-foundation-canary',
       paths,
       runner,
+      env: processEnv,
     });
     leaseAcquired = true;
 
@@ -247,18 +254,6 @@ export async function runCanary({
       cleanupErrors.push(error);
     }
   }
-  if (leaseAcquired) {
-    try {
-      await releaseLease({
-        resource: 'canary-exclusive',
-        nodeId: CANARY_NODE_ID,
-        paths,
-        runner,
-      });
-    } catch (error) {
-      cleanupErrors.push(error);
-    }
-  }
   if (startedByCanary) {
     try {
       await checked(
@@ -268,6 +263,19 @@ export async function runCanary({
         { ...cityOptions, timeoutMs: 150_000 },
         'stopping canary-started city',
       );
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+  }
+  if (leaseAcquired) {
+    try {
+      await releaseLease({
+        resource: 'canary-exclusive',
+        nodeId: CANARY_NODE_ID,
+        paths,
+        runner,
+        env: processEnv,
+      });
     } catch (error) {
       cleanupErrors.push(error);
     }

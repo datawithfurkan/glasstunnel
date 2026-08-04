@@ -62,7 +62,7 @@ test('canary proves retry, independent review, readiness, and cleanup', async ()
   const calls = [];
   let graphReads = 0;
   const runner = async (command, args, options = {}) => {
-    calls.push({ command, args, cwd: options.cwd });
+    calls.push({ command, args, cwd: options.cwd, options });
     if (command === 'git') return { code: 0, stdout: '', stderr: '' };
     if (command === 'bd' && args[0] === 'create') {
       return { code: 0, stdout: JSON.stringify({ id: 'gt-lease' }), stderr: '' };
@@ -138,6 +138,17 @@ test('canary proves retry, independent review, readiness, and cleanup', async ()
     assert.ok(calls.some((call) => call.command === 'gc' && call.args.join(' ') === 'rig resume glasstunnel --json'));
     assert.ok(calls.some((call) => call.command === 'gc' && call.args.join(' ') === 'rig suspend glasstunnel --json'));
     assert.ok(calls.some((call) => call.command === 'gc' && call.args[0] === 'stop'));
+    assert.ok(
+      calls.findIndex((call) => call.command === 'gc' && call.args[0] === 'stop') <
+        calls.findIndex((call) => call.command === 'bd' && call.args[0] === 'close'),
+      'managed Dolt must stop before the lease audit is closed',
+    );
+    assert.ok(
+      calls
+        .filter((call) => call.command === 'bd')
+        .every((call) => call.options.env.BD_ROUTING_MODE === 'off'),
+      'every direct Beads call must disable contributor routing',
+    );
 
     const flattened = calls.map((call) => `${call.command} ${call.args.join(' ')}`).join('\n');
     for (const forbidden of [
@@ -155,3 +166,36 @@ test('canary proves retry, independent review, readiness, and cleanup', async ()
   }
 });
 
+test('canary rejects an active city before acquiring a lease', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'glasstunnel-factory-canary-active-'));
+  const repoRoot = join(root, 'source');
+  const paths = resolveFactoryPaths({
+    repoRoot,
+    env: { GT_FACTORY_HOME: join(root, 'state') },
+  });
+  await mkdir(repoRoot, { recursive: true });
+  await mkdir(join(paths.rigs, 'glasstunnel'), { recursive: true });
+  await mkdir(paths.leases, { recursive: true });
+  const calls = [];
+  const runner = async (command, args) => {
+    calls.push({ command, args });
+    if (command === 'gc' && args[0] === 'status') {
+      return {
+        code: 0,
+        stdout: JSON.stringify({
+          running: true,
+          rigs: [{ name: 'glasstunnel', suspended: true }],
+        }),
+        stderr: '',
+      };
+    }
+    return { code: 0, stdout: '', stderr: '' };
+  };
+
+  try {
+    await assert.rejects(() => runCanary({ paths, runner }), /requires the city to be stopped/i);
+    assert.equal(calls.some((call) => call.command === 'bd' && call.args[0] === 'create'), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

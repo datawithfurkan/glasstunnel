@@ -3,7 +3,7 @@ import { runDoctor } from './doctor.mjs';
 import { bootstrapFactory, getFactoryStatus, stopFactory } from './bootstrap.mjs';
 import { verifyBackupRestore } from './backup.mjs';
 import { runCanary } from './canary.mjs';
-import { resolveFactoryPaths } from './config.mjs';
+import { factoryEnvironment, resolveFactoryPaths } from './config.mjs';
 import { createWorkerWorktree, removeWorkerWorktree } from './branch-guard.mjs';
 import {
   acquireLease,
@@ -14,6 +14,7 @@ import {
 } from './lease.mjs';
 import { clearBlockerNotification, notifyBlocker } from './notify.mjs';
 import { runProcess } from './process.mjs';
+import { formatError } from './error-format.mjs';
 
 async function findRepoRoot() {
   const result = await runProcess('git', ['rev-parse', '--show-toplevel']);
@@ -57,7 +58,7 @@ function required(options, name) {
   return options[name];
 }
 
-async function runLease(action, args, paths) {
+async function runLease(action, args, paths, env) {
   const options = optionsFrom(args);
   if (action === 'status') {
     console.log(JSON.stringify(await listLeases(paths), null, 2));
@@ -71,6 +72,7 @@ async function runLease(action, args, paths) {
       holder: required(options, 'holder'),
       ttlSeconds: options.ttl ? Number(options.ttl) : undefined,
       paths,
+      env,
     });
     console.log(JSON.stringify(lease, null, 2));
     return;
@@ -86,7 +88,7 @@ async function runLease(action, args, paths) {
     return;
   }
   if (action === 'release') {
-    await releaseLease({ resource, nodeId: required(options, 'node'), paths });
+    await releaseLease({ resource, nodeId: required(options, 'node'), paths, env });
     console.log(`Released ${resource}`);
     return;
   }
@@ -96,6 +98,7 @@ async function runLease(action, args, paths) {
       resource,
       paths,
       humanApproved: options['human-approved'] === true,
+      env,
     });
     console.log(JSON.stringify(result, null, 2));
     return;
@@ -177,6 +180,7 @@ async function main() {
     return;
   }
   const paths = resolveFactoryPaths({ repoRoot });
+  const processEnv = factoryEnvironment(paths);
   if (command === 'canary') {
     console.log(JSON.stringify(await runCanary({ paths }), null, 2));
     return;
@@ -186,7 +190,7 @@ async function main() {
     return;
   }
   if (command === 'lease') {
-    await runLease(commandArgs[0], commandArgs.slice(1), paths);
+    await runLease(commandArgs[0], commandArgs.slice(1), paths, processEnv);
     return;
   }
   if (command === 'worktree') {
@@ -202,6 +206,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(error.message);
+  console.error(formatError(error));
   process.exitCode = 1;
 });

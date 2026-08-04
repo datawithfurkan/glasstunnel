@@ -66,6 +66,28 @@ export async function runDoctor({ repoRoot, env = process.env, runner = runProce
     checks.push(await commandVersion({ id, command, args, expected, minimum, runner }));
   }
 
+  const launchServices = await runner('launchctl', ['list'], { timeoutMs: 15_000 });
+  const supervisorLabels = [
+    ...new Set(
+      (launchServices.stdout.match(/com\.gascity\.supervisor\.[^\s]+/g) ?? []).map((label) =>
+        label.trim(),
+      ),
+    ),
+  ];
+  checks.push(
+    check(
+      'gas-city-supervisor',
+      launchServices.code === 0 && supervisorLabels.length <= 1 ? 'pass' : 'fail',
+      launchServices.code !== 0
+        ? 'could not inspect Gas City supervisor services'
+        : supervisorLabels.length > 1
+          ? `multiple Gas City supervisor services are installed (${supervisorLabels.length})`
+          : supervisorLabels.length === 1
+            ? 'one supervisor service is installed'
+            : 'no supervisor service is installed',
+    ),
+  );
+
   const [doltName, doltEmail] = await Promise.all([
     runner('dolt', ['config', '--global', '--get', 'user.name'], { timeoutMs: 15_000 }),
     runner('dolt', ['config', '--global', '--get', 'user.email'], { timeoutMs: 15_000 }),

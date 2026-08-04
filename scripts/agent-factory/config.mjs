@@ -80,5 +80,12 @@ export function factoryEnvironment(paths, env = process.env) {
     GC_HOME: paths.gcHome,
     DO_NOT_TRACK: '1',
     GC_DISABLE_USAGE_METRICS: '1',
+    BD_ROUTING_MODE: 'off',
+    BEADS_ROUTING_MODE: 'off',
+    BD_BACKUP_ENABLED: 'false',
+    BEADS_BACKUP_ENABLED: 'false',
+    BD_DOLT_SYNC_CLI_REMOTES: 'false',
+    BEADS_DOLT_SYNC_CLI_REMOTES: 'false',
+    BD_EXPORT_AUTO: 'false',
   };
 }

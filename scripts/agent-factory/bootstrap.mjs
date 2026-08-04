@@ -341,6 +341,26 @@ export async function bootstrapFactory({
     rigAdded = true;
   }
 
+  await checked(
+    runner,
+    'bd',
+    ['config', 'set', 'routing.mode', 'explicit'],
+    { ...options, cwd: mirror },
+    'setting explicit factory routing',
+  );
+  const routingMode = (
+    await checked(
+      runner,
+      'bd',
+      ['config', 'get', 'routing.mode'],
+      { ...options, cwd: mirror },
+      'verifying explicit factory routing',
+    )
+  ).stdout.trim();
+  if (routingMode !== 'explicit') {
+    throw new Error('Factory rig routing mode is not explicit');
+  }
+
   await checked(runner, 'gc', ['doctor'], { ...options, cwd: paths.city }, 'running city doctor');
   await checked(
     runner,

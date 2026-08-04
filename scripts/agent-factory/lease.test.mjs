@@ -88,9 +88,26 @@ test('release closes the audit bead before deleting the claim', async () => {
     nodeId: 'node-a',
     paths: factoryPaths,
     runner,
+    env: { BD_ROUTING_MODE: 'off' },
   });
   assert.equal(calls.at(-1).args[0], 'close');
+  assert.equal(calls.at(-1).options.env.BD_ROUTING_MODE, 'off');
   assert.equal((await listLeases(factoryPaths)).length, 0);
+});
+
+test('acquire sends the isolated factory environment to Beads', async () => {
+  const factoryPaths = await paths();
+  const calls = [];
+  await acquireLease({
+    resource: 'canary-exclusive',
+    nodeId: 'node-a',
+    holder: 'worker-a',
+    paths: factoryPaths,
+    runner: fakeRunner(calls),
+    env: { BD_ROUTING_MODE: 'off' },
+  });
+
+  assert.equal(calls[0].options.env.BD_ROUTING_MODE, 'off');
 });
 
 test('expired recovery is blocked until expiry and closes its audit bead', async () => {

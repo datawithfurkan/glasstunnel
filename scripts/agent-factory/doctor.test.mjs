@@ -73,3 +73,24 @@ test('doctor passes compatible tools, paths, auth, worktree, and disk', async ()
   });
   assert.equal(report.ok, true, JSON.stringify(report.checks, null, 2));
 });
+
+test('doctor rejects duplicate Gas City supervisor services', async () => {
+  const report = await runDoctor({
+    repoRoot: REPO_ROOT,
+    env: { HOME: '/home/test', GT_FACTORY_HOME: '/state/glasstunnel-factory' },
+    runner: fakeRunner({
+      'launchctl list': {
+        code: 0,
+        stdout:
+          '101\t0\tcom.gascity.supervisor.gc-home-current\n102\t0\tcom.gascity.supervisor.gc-home-stale\n',
+        stderr: '',
+      },
+    }),
+  });
+
+  assert.equal(report.ok, false);
+  assert.match(
+    report.checks.find((entry) => entry.id === 'gas-city-supervisor').detail,
+    /multiple.*supervisor/i,
+  );
+});
