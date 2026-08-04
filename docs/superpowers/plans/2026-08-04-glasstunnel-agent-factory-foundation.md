@@ -591,7 +591,7 @@ git commit -m "feat: add factory workflow formulas"
 
 Use a fake runner to assert the sequence: doctor, create external directories,
 clone or fast-forward the external rig mirror, `gc init --from`, `gc rig add`,
-`gc doctor`, `gc config validate`, and `gc formula list`. Assert idempotent
+`gc doctor`, `gc config show --validate`, and `gc formula list`. Assert idempotent
 reruns do not create a second city, mirror, or rig.
 
 - [ ] **Step 2: Run tests and confirm failure**

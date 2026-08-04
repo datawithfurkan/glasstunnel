@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { runDoctor } from './doctor.mjs';
+import { bootstrapFactory, getFactoryStatus, stopFactory } from './bootstrap.mjs';
 import { resolveFactoryPaths } from './config.mjs';
 import { createWorkerWorktree, removeWorkerWorktree } from './branch-guard.mjs';
 import {
@@ -20,6 +21,9 @@ async function findRepoRoot() {
 function usage() {
   console.error(`Usage:
   pnpm factory:doctor
+  pnpm factory:bootstrap
+  pnpm factory:status
+  pnpm factory:down
   pnpm factory:lease -- <acquire|heartbeat|release|status|recover> [options]
   pnpm factory:worktree -- <create|remove> [options]`);
 }
@@ -126,6 +130,18 @@ async function main() {
       console.log(`${entry.status === 'pass' ? 'PASS' : 'FAIL'} ${entry.id}: ${entry.detail}`);
     }
     if (!report.ok) process.exitCode = 1;
+    return;
+  }
+  if (command === 'bootstrap') {
+    console.log(JSON.stringify(await bootstrapFactory({ repoRoot }), null, 2));
+    return;
+  }
+  if (command === 'status') {
+    console.log(JSON.stringify(await getFactoryStatus({ repoRoot }), null, 2));
+    return;
+  }
+  if (command === 'down') {
+    console.log(JSON.stringify(await stopFactory({ repoRoot }), null, 2));
     return;
   }
   const paths = resolveFactoryPaths({ repoRoot });
