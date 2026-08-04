@@ -1,6 +1,6 @@
 # Glasstunnel Agent Factory Design
 
-**Status:** Approved architecture, pending implementation-plan review  
+**Status:** Approved for foundation implementation
 **Date:** 2026-08-04  
 **Scope:** Long-term engineering control plane for autonomous, multi-agent Glasstunnel development
 
@@ -75,9 +75,12 @@ temporary worktrees, local artifacts, and secrets. A private, restorable backup
 target will protect the Beads/Dolt ledger. Sanitized operational summaries may
 be committed when they improve public project understanding.
 
-The Glasstunnel source checkout is registered as a Gas City rig. Every code
-worker receives an isolated Git worktree and a `codex/`-prefixed task branch.
-Workers may not edit the primary checkout.
+An external mirror clone of the Glasstunnel GitHub repository is registered as
+the Gas City rig. Gas City and rig-scoped Beads metadata therefore remain under
+the private factory state root instead of adding `.beads/` to the human's source
+checkout. Every code worker receives an isolated Git worktree from that mirror
+and a `codex/`-prefixed task branch. Workers may not edit or register the primary
+checkout.
 
 ## Agent Roles
 
@@ -327,8 +330,8 @@ The first implementation phase is complete when:
 - compatible Gas City, Beads, Dolt, tmux, Git, jq, and GitHub CLI versions are
   installed and recorded;
 - a recoverable Glasstunnel city starts cleanly and passes its doctor checks;
-- the repository is registered as a rig without rewriting existing agent
-  instructions;
+- an external mirror clone is registered as the rig without rewriting the
+  primary checkout or existing agent instructions;
 - the checked-in Glasstunnel pack validates and loads;
 - one canary graph exercises dependencies, a resource lease, a failed attempt,
   replanning, successful local validation, independent review, and integration
@@ -349,4 +352,3 @@ signing, notarization, or production deployment.
 - Gas City migration model: <https://github.com/gastownhall/gascity/blob/main/docs/getting-started/coming-from-gastown.md>
 - Beads: <https://github.com/gastownhall/beads>
 - Midscene: <https://www.midscenejs.com/introduction>
-
