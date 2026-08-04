@@ -236,8 +236,8 @@ git commit -m "docs: define factory state isolation"
 
 **Interfaces:**
 - Produces Gas City rig agents: `planner`, `architect`, `mac-engineer`,
-  `web-engineer`, `adapter-engineer`, `protocol-engineer`, `qa`, `reviewer`, and
-  `integrator`.
+  `web-engineer`, `adapter-engineer`, `protocol-engineer`, `security-reviewer`,
+  `qa`, `reviewer`, `integrator`, and `release-operator`.
 - All implementation roles default to zero running sessions and at most one
   active session; the aggregate implementation ceiling is enforced by city
   convergence config.

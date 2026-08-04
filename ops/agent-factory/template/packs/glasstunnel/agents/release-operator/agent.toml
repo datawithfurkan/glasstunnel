@@ -1,0 +1,6 @@
+scope = "rig"
+provider = "codex"
+lifecycle = "one_shot"
+idle_timeout = "10m"
+min_active_sessions = 0
+max_active_sessions = 1
