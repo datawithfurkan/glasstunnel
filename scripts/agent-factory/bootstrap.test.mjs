@@ -174,6 +174,7 @@ test('bootstrap commits only canonical Gas City topology changes in the external
   const calls = [];
   let rigRegistered = false;
   let topologyCommitted = false;
+  let identityTracked = false;
   const runner = async (command, args, options) => {
     calls.push({ command, args, options });
     if (
@@ -198,12 +199,16 @@ test('bootstrap commits only canonical Gas City topology changes in the external
     if (command === 'git' && args[0] === 'status') {
       return {
         code: 0,
-        stdout:
-          rigRegistered && !topologyCommitted
-            ? ' M .beads/metadata.json\n M .gitignore\n?? .beads/identity.toml\n'
-            : '',
+        stdout: rigRegistered && !topologyCommitted ? ' M .gitignore\n' : '',
         stderr: '',
       };
+    }
+    if (command === 'git' && args[0] === 'ls-files') {
+      return { code: identityTracked ? 0 : 1, stdout: '', stderr: '' };
+    }
+    if (command === 'git' && args.join(' ') === 'add -f -- .beads/identity.toml') {
+      identityTracked = true;
+      return { code: 0, stdout: '', stderr: '' };
     }
     if (command === 'git' && args[0] === 'commit') {
       topologyCommitted = true;
@@ -248,8 +253,14 @@ test('bootstrap commits only canonical Gas City topology changes in the external
     calls.some(
       (entry) =>
         entry.command === 'git' &&
-        entry.args.join(' ') ===
-          'add -- .beads/identity.toml .beads/metadata.json .gitignore',
+        entry.args.join(' ') === 'add -- .gitignore',
+    ),
+  );
+  assert.ok(
+    calls.some(
+      (entry) =>
+        entry.command === 'git' &&
+        entry.args.join(' ') === 'add -f -- .beads/identity.toml',
     ),
   );
   assert.ok(
@@ -330,6 +341,7 @@ test('bootstrap recovers canonical topology changes from an interrupted existing
   await mkdir(mirror, { recursive: true });
   await writeFile(join(city, 'city.toml'), '[workspace]\n');
   let topologyCommitted = false;
+  let identityTracked = false;
   const calls = [];
   const runner = async (command, args, options) => {
     calls.push({ command, args, options });
@@ -351,9 +363,16 @@ test('bootstrap recovers canonical topology changes from an interrupted existing
     if (command === 'git' && args[0] === 'status') {
       return {
         code: 0,
-        stdout: topologyCommitted ? '' : ' M .beads/metadata.json\n M .gitignore\n?? .beads/identity.toml\n',
+        stdout: topologyCommitted ? '' : ' M .gitignore\n',
         stderr: '',
       };
+    }
+    if (command === 'git' && args[0] === 'ls-files') {
+      return { code: identityTracked ? 0 : 1, stdout: '', stderr: '' };
+    }
+    if (command === 'git' && args.join(' ') === 'add -f -- .beads/identity.toml') {
+      identityTracked = true;
+      return { code: 0, stdout: '', stderr: '' };
     }
     if (command === 'git' && args[0] === 'commit') {
       topologyCommitted = true;

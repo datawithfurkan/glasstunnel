@@ -42,7 +42,6 @@ const REQUIRED_FORMULAS = new Set([
 
 const MANAGED_MIRROR_TOPOLOGY_PATHS = [
   '.beads/identity.toml',
-  '.beads/metadata.json',
   '.gitignore',
 ];
 
@@ -89,15 +88,35 @@ async function finalizeMirrorTopology({ runner, options, mirror }) {
     'checking generated rig topology',
   );
   const changed = assertOnlyManagedMirrorChanges(status.stdout);
-  if (changed.length === 0) return false;
-
-  await checked(
-    runner,
+  const identity = await runner(
     'git',
-    ['add', '--', ...MANAGED_MIRROR_TOPOLOGY_PATHS],
+    ['ls-files', '--error-unmatch', '.beads/identity.toml'],
     { ...options, cwd: mirror },
-    'staging generated rig topology',
   );
+  if (identity.code !== 0 && identity.code !== 1) {
+    throw new Error('Could not inspect external rig identity tracking');
+  }
+  const identityTracked = identity.code === 0;
+  if (changed.length === 0 && identityTracked) return false;
+
+  if (changed.includes('.gitignore')) {
+    await checked(
+      runner,
+      'git',
+      ['add', '--', '.gitignore'],
+      { ...options, cwd: mirror },
+      'staging generated rig ignore policy',
+    );
+  }
+  if (!identityTracked) {
+    await checked(
+      runner,
+      'git',
+      ['add', '-f', '--', '.beads/identity.toml'],
+      { ...options, cwd: mirror },
+      'staging canonical rig identity',
+    );
+  }
   await checked(
     runner,
     'git',
