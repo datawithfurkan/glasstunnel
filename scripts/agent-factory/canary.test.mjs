@@ -16,13 +16,9 @@ test('canary proves retry, independent review, readiness, and cleanup', async ()
   await mkdir(join(paths.rigs, 'glasstunnel'), { recursive: true });
   await mkdir(paths.leases, { recursive: true });
 
-  const graphNodes = [
-    { id: 'gt-root', status: 'closed' },
-    { id: 'gt-retry-1', status: 'closed' },
-    { id: 'gt-retry-2', status: 'closed' },
-    { id: 'gt-review', status: 'closed' },
-    { id: 'gt-ready', status: 'closed' },
-  ];
+  // Gas City 1.4 reports the workflow root here; workflow descendants remain
+  // queryable through their gc.root_bead_id metadata in Beads.
+  const graphNodes = [{ id: 'gt-root', status: 'closed' }];
   const beadDetails = [
     { id: 'gt-root', title: 'Foundation canary', status: 'closed', metadata: {} },
     {
@@ -70,7 +66,7 @@ test('canary proves retry, independent review, readiness, and cleanup', async ()
     if (command === 'bd' && args[0] === 'close') {
       return { code: 0, stdout: JSON.stringify({ id: 'gt-lease' }), stderr: '' };
     }
-    if (command === 'bd' && args[0] === 'show') {
+    if (command === 'bd' && args[0] === 'list') {
       return { code: 0, stdout: JSON.stringify(beadDetails), stderr: '' };
     }
     if (command === 'gc' && args[0] === 'status') {
@@ -134,6 +130,15 @@ test('canary proves retry, independent review, readiness, and cleanup', async ()
     assert.equal(evidence.reviewed, true);
     assert.equal(evidence.integrationReady, true);
     assert.deepEqual(await listLeases(paths), []);
+    assert.ok(
+      calls.some(
+        (call) =>
+          call.command === 'bd' &&
+          call.args.join(' ') ===
+            'list --all --metadata-field gc.root_bead_id=gt-root --limit 0 --json',
+      ),
+      'canary evidence must be queried by workflow root metadata',
+    );
     assert.ok(calls.some((call) => call.command === 'gc' && call.args[0] === 'start'));
     assert.ok(calls.some((call) => call.command === 'gc' && call.args.join(' ') === 'rig resume glasstunnel --json'));
     assert.ok(calls.some((call) => call.command === 'gc' && call.args.join(' ') === 'rig suspend glasstunnel --json'));

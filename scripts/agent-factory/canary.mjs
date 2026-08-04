@@ -212,14 +212,23 @@ export async function runCanary({
       throw new Error(`Foundation canary exceeded its ${timeoutMs}ms time limit`);
     }
 
-    const nodeIds = (graph.nodes ?? []).map((node) => node.id).filter(Boolean);
-    if (nodeIds.length === 0) throw new Error('Foundation canary graph returned no nodes');
+    if (!(graph.nodes ?? []).some((node) => node.id === workflowId)) {
+      throw new Error('Foundation canary graph did not return its workflow root');
+    }
     const issues = parseIssueArray(
       (
         await checked(
           runner,
           'bd',
-          ['show', ...nodeIds, '--json'],
+          [
+            'list',
+            '--all',
+            '--metadata-field',
+            `gc.root_bead_id=${workflowId}`,
+            '--limit',
+            '0',
+            '--json',
+          ],
           mirrorOptions,
           'reading foundation canary evidence',
         )
