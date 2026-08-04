@@ -47,8 +47,12 @@ test('backup verification uses Dolt-native backup and a disposable external rest
         stderr: '',
       };
     }
-    if (command === 'gc' && args.join(' ') === 'import install') {
+    if (command === 'gc' && args[0] === 'start') {
       managedDoltRunning = true;
+      return { code: 0, stdout: '{}', stderr: '' };
+    }
+    if (command === 'gc' && args[0] === 'stop') {
+      managedDoltRunning = false;
       return { code: 0, stdout: '{}', stderr: '' };
     }
     if (command === 'bd' && args.join(' ') === 'dolt status --json') {
@@ -102,8 +106,7 @@ test('backup verification uses Dolt-native backup and a disposable external rest
       calls.some(
         (call) =>
           call.command === 'gc' &&
-          call.cwd === paths.city &&
-          call.args.join(' ') === 'import install',
+          call.args.join(' ') === `start ${paths.city}`,
       ),
     );
     assert.ok(
@@ -175,7 +178,7 @@ test('backup verification preserves a source Dolt server that was already runnin
 
     assert.equal(
       calls.some(
-        (call) => call.command === 'gc' && call.args.join(' ') === 'import install',
+        (call) => call.command === 'gc' && call.args[0] === 'start',
       ),
       false,
     );
@@ -187,6 +190,60 @@ test('backup verification preserves a source Dolt server that was already runnin
       calls.some(
         (call) => call.cwd !== sourcePath && call.args.join(' ') === 'dolt stop',
       ),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('backup verification fails when factory shutdown leaves managed Dolt running', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'glasstunnel-factory-backup-leak-'));
+  const repoRoot = join(root, 'source');
+  const paths = resolveFactoryPaths({
+    repoRoot,
+    env: { GT_FACTORY_HOME: join(root, 'state') },
+  });
+  await mkdir(repoRoot, { recursive: true });
+  await mkdir(join(paths.rigs, 'glasstunnel'), { recursive: true });
+  let managedDoltRunning = false;
+  const runner = async (command, args) => {
+    if (command === 'gc' && args[0] === 'status') {
+      return {
+        code: 0,
+        stdout: JSON.stringify({
+          running: false,
+          rigs: [{ name: 'glasstunnel', suspended: true }],
+        }),
+        stderr: '',
+      };
+    }
+    if (command === 'gc' && args[0] === 'start') managedDoltRunning = true;
+    if (command === 'bd' && args.join(' ') === 'dolt status --json') {
+      return {
+        code: 0,
+        stdout: JSON.stringify({ running: managedDoltRunning }),
+        stderr: '',
+      };
+    }
+    if (command === 'bd' && args[0] === 'list') {
+      return { code: 0, stdout: '[]', stderr: '' };
+    }
+    return { code: 0, stdout: '{}', stderr: '' };
+  };
+
+  try {
+    await assert.rejects(
+      verifyBackupRestore({
+        paths,
+        runner,
+        now: new Date('2026-08-04T13:30:00.000Z'),
+        portAllocator: async () => 43819,
+      }),
+      (error) =>
+        error instanceof AggregateError &&
+        error.errors.some((entry) =>
+          entry.message.includes('City-managed Dolt provider remained running'),
+        ),
     );
   } finally {
     await rm(root, { recursive: true, force: true });

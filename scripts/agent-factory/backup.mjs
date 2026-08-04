@@ -108,7 +108,7 @@ export async function verifyBackupRestore({
   const sourceOptions = { cwd: sourcePath, env: processEnv, timeoutMs: 120_000 };
   const restorePort = await portAllocator();
   const restoreOptions = { cwd: restorePath, env: processEnv, timeoutMs: 120_000 };
-  let managedDoltStarted = false;
+  let cityStarted = false;
   let restoreInitialized = false;
   let evidence;
   let operationError;
@@ -157,11 +157,11 @@ export async function verifyBackupRestore({
       await checked(
         runner,
         'gc',
-        ['import', 'install'],
+        ['start', paths.city],
         cityOptions,
-        'starting the city-managed Dolt provider',
+        'starting the dormant factory city for backup verification',
       );
-      managedDoltStarted = true;
+      cityStarted = true;
       const startedStatus = parseObject(
         (
           await checked(
@@ -261,7 +261,7 @@ export async function verifyBackupRestore({
     }
   }
   await rm(restorePath, { recursive: true, force: true });
-  if (managedDoltStarted) {
+  if (cityStarted) {
     const stopped = await runner(
       'gc',
       ['stop', paths.city, '--timeout', '2m'],
@@ -273,6 +273,30 @@ export async function verifyBackupRestore({
           `stopping city-managed Dolt provider: ${stopped.stderr.trim() || stopped.stdout.trim()}`,
         ),
       );
+    } else {
+      const stoppedStatus = await runner(
+        'bd',
+        ['dolt', 'status', '--json'],
+        sourceOptions,
+      );
+      if (stoppedStatus.code !== 0) {
+        cleanupErrors.push(
+          new Error(
+            `verifying city-managed Dolt shutdown: ${stoppedStatus.stderr.trim() || stoppedStatus.stdout.trim()}`,
+          ),
+        );
+      } else {
+        try {
+          const status = parseObject(stoppedStatus.stdout, 'stopped source Dolt status');
+          if (status.running !== false) {
+            cleanupErrors.push(
+              new Error('City-managed Dolt provider remained running after factory shutdown'),
+            );
+          }
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+      }
     }
   }
 
