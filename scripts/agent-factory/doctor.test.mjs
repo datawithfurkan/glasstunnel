@@ -9,7 +9,7 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 function fakeRunner(overrides = {}) {
   const versions = {
     gc: 'gc version 1.4.0\n',
-    bd: 'bd version 1.0.4\n',
+    bd: 'bd version 1.1.2\n',
     dolt: 'dolt version 2.1.0\n',
     tmux: 'tmux 3.5\n',
     git: 'git version 2.50.0\n',

@@ -6,7 +6,7 @@
 
 **Architecture:** Reviewable Pack V2 definitions and factory policy live under `ops/agent-factory/`; all mutable Gas City, Dolt, lease, worktree, and artifact state lives under a configurable external state root. A small Node CLI owns safe bootstrap, doctor, lease, canary, backup, and teardown operations while delegating scheduling and durable work to Gas City and Beads.
 
-**Tech Stack:** Gas City 1.4.0, Beads 1.0.4, Dolt 2.1.0 or newer, Codex provider, Node.js 22 or newer ESM, Gas City Formula v2, Git worktrees, GitHub protected branches, existing Glasstunnel local test lab, Telegram blocker script.
+**Tech Stack:** Gas City 1.4.0, Beads 1.1.2, Dolt 2.1.0 or newer, Codex provider, Node.js 22 or newer ESM, Gas City Formula v2, Git worktrees, GitHub protected branches, existing Glasstunnel local test lab, Telegram blocker script.
 
 ## Global Constraints
 
@@ -117,7 +117,7 @@ Expected: FAIL because `doctor.mjs` does not exist.
 ```dotenv
 GC_VERSION=1.4.0
 GC_RELEASE_COMMIT=a7297c511d637a3609947386f3389d76ddb2f23b
-BD_VERSION=1.0.4
+BD_VERSION=1.1.2
 DOLT_MIN_VERSION=2.1.0
 NODE_MIN_MAJOR=22
 FACTORY_SCHEMA_VERSION=1
@@ -792,7 +792,7 @@ dolt version
 tmux -V
 ```
 
-Expected: Gas City 1.4.0, Beads 1.0.4, Dolt at least 2.1.0, and tmux present.
+Expected: Gas City 1.4.0, Beads 1.1.2, Dolt at least 2.1.0, and tmux present.
 If Homebrew resolves a newer Gas City or Beads release, stop and review its
 release notes before changing `versions.env`.
 
