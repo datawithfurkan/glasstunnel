@@ -7,6 +7,10 @@ is `~/.local/share/glasstunnel-factory`; override it with `GT_FACTORY_HOME`
 only when the replacement is also outside the checkout and contains no
 whitespace. Gas City 1.4.0 does not safely quote Pack V2 agent-script paths.
 
+The durable architecture and its completed foundation record are documented in
+`docs/architecture/agent-factory-design.md` and
+`docs/architecture/agent-factory-foundation-plan.md`.
+
 ## Foundation Authority
 
 Phase 1 may inspect the repository, create an external mirror, run deterministic
