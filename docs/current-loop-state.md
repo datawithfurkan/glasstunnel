@@ -1,6 +1,6 @@
 # Current loop state
 
-Last updated: 2026-08-01.
+Last updated: 2026-08-05.
 
 ## Baseline
 
@@ -12,6 +12,9 @@ Last updated: 2026-08-01.
 - Default validation order: unit/static, Playwright fixtures, local account E2E,
   signed Mac app, then Simulator or hosted canaries only when earlier lanes cannot
   prove the behavior.
+- Durable agent-factory foundation: locally verified and dormant by default.
+  Activate it only for explicitly requested multi-session or multi-agent work;
+  ordinary product tasks remain single-driver work.
 
 ## Current focus
 

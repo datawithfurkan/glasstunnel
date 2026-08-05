@@ -8,6 +8,14 @@
 
 **Tech Stack:** Gas City 1.4.0, Beads 1.1.2, Dolt 2.1.0 or newer, Codex provider, Node.js 22 or newer ESM, Gas City Formula v2, Git worktrees, GitHub protected branches, existing Glasstunnel local test lab, Telegram blocker script.
 
+## Status
+
+Implemented and locally verified on `codex/agent-factory-foundation` on
+2026-08-05. The unchecked steps below are retained as the original execution
+and test-driven-development record; they are not an active todo list. The
+single pull request and its one bounded CI inspection remain pending until the
+final local review is complete.
+
 ## Global Constraints
 
 - Never initialize `.gc/` or `.beads/` in the Glasstunnel source checkout.

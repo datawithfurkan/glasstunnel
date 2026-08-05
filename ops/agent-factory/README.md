@@ -33,11 +33,62 @@ pnpm factory:down
 ```
 
 The doctor is read-only. Bootstrap is idempotent and stays under the private
-state root. `down` stops the city but preserves its ledger and backups.
+state root. `down` stops the city but preserves its ledger and backups. A normal
+dormant state is: city stopped, rig suspended, no active leases, no worker
+worktrees, and no factory-owned Dolt or tmux process.
+
+## Roles And Workflows
+
+The factory defines planner, architect, Mac, web, adapter, and protocol
+engineers, security and QA reviewers, an integrator, and a release operator.
+Their authority is intentionally narrower than their names: no role gains
+production access merely by receiving work.
+
+Six bounded Formula V2 workflows cover the current foundation:
+
+- `product-change`
+- `bug-investigation`
+- `cross-surface-change`
+- `dependency-update`
+- `release-evidence`
+- `foundation-canary`
+
+Production paths require declared validation and independent review before
+integration. The canary is deterministic: its first implementation attempt
+fails with a classified transient result, the second passes, review passes,
+and integration records completion. This proves bounded retry and dependency
+ordering without changing product code.
+
+## Resource And Cost Controls
+
+Exclusive local resources use atomic audited leases. Sensitive leases include
+Mac UI, Simulator, TCC, Keychain, notarization, and production deployment.
+Expired leases may be recovered only through the audited recovery path.
+
+Workers run local validation in isolated external worktrees and never push.
+One completed batch may produce one consolidated branch or pull request and one
+bounded CI inspection. Telegram alerts are redacted and deduplicated; they are
+reserved for genuine human-only blockers, not routine progress.
+
+## Verified Foundation Evidence
+
+The foundation was verified locally with Gas City 1.4.0, Beads 1.1.2, and Dolt
+2.2.3. The live canary completed the controlled retry, review, and integration
+path in about four minutes. The backup verifier restored a disposable Dolt
+database and matched 40 source issues, including canary metadata, before
+cleaning up the provider it started. A provider that was already running is
+preserved.
+
+The rig uses a private external `origin`; the public GitHub remote is fetch-only
+with pushes disabled. After verification, the city was stopped, the rig was
+suspended, leases and worker worktrees were absent, and factory-owned Dolt and
+tmux processes were not running.
 
 ## Recovery
 
 Do not recover a factory by deleting the source checkout or resetting Git. Stop
 the city, inspect `pnpm factory:status`, recover only expired leases, and restore
 the Dolt-native backup into a disposable external directory before changing the
-live ledger. Human-gated resources always require explicit approval.
+live ledger. Human-gated resources always require explicit approval. The backup
+verifier stops only a provider it caused to start and verifies the exact managed
+watchdog and child commands before signaling either process.
