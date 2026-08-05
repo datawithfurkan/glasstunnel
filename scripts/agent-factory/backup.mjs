@@ -1,5 +1,5 @@
 import { createServer } from 'node:net';
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { factoryEnvironment, isPathInside } from './config.mjs';
 import { runProcess } from './process.mjs';
@@ -50,6 +50,122 @@ function relevantCanaryMetadata(metadata = {}) {
   return selected;
 }
 
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function processCommand(runner, pid, options) {
+  const result = await runner('ps', ['-o', 'command=', '-p', String(pid)], options);
+  if (result.code !== 0) return null;
+  return result.stdout.trim();
+}
+
+async function processExists(runner, pid, options) {
+  const result = await runner('kill', ['-0', String(pid)], options);
+  return result.code === 0;
+}
+
+export async function isFactoryManagedDoltRunning({
+  paths,
+  env = process.env,
+  runner = runProcess,
+} = {}) {
+  const stateFile = join(
+    paths.city,
+    '.gc',
+    'runtime',
+    'packs',
+    'dolt',
+    'dolt-provider-state.json',
+  );
+  let state;
+  try {
+    state = parseObject(await readFile(stateFile, 'utf8'), 'managed Dolt provider state');
+  } catch (error) {
+    if (error?.code === 'ENOENT') return false;
+    throw error;
+  }
+  const pid = Number(state.pid);
+  if (state.running !== true || !Number.isSafeInteger(pid) || pid <= 1) return false;
+  return processExists(runner, pid, { env, timeoutMs: 5_000 });
+}
+
+export async function stopFactoryManagedDoltWatchdog({
+  paths,
+  env = process.env,
+  runner = runProcess,
+  sleep = delay,
+} = {}) {
+  const runtime = join(paths.city, '.gc', 'runtime', 'packs', 'dolt');
+  const stateFile = join(runtime, 'dolt-provider-state.json');
+  const configFile = join(runtime, 'dolt-config.yaml');
+  const logFile = join(runtime, 'dolt.log');
+  const bridge = join(paths.city, '.gc', 'scripts', 'gc-beads-bd.sh');
+  const options = {
+    cwd: paths.city,
+    env: { ...env, GC_CITY_PATH: paths.city, GC_BIN: env.GC_BIN ?? 'gc' },
+    timeoutMs: 10_000,
+  };
+  const state = parseObject(await readFile(stateFile, 'utf8'), 'managed Dolt provider state');
+  if (state.running !== true) return { stopped: false, reason: 'not-running' };
+
+  const childPid = Number(state.pid);
+  if (!Number.isSafeInteger(childPid) || childPid <= 1) {
+    throw new Error('Managed Dolt provider state has an invalid process ID');
+  }
+  const parent = await runner('ps', ['-o', 'ppid=', '-p', String(childPid)], options);
+  const watchdogPid = Number(parent.stdout.trim());
+  if (parent.code !== 0 || !Number.isSafeInteger(watchdogPid) || watchdogPid <= 1) {
+    throw new Error('Could not identify the managed Dolt watchdog process');
+  }
+
+  const childCommand = await processCommand(runner, childPid, options);
+  const watchdogCommand = await processCommand(runner, watchdogPid, options);
+  const childVerified =
+    childCommand?.includes('dolt sql-server') && childCommand.includes(configFile);
+  const watchdogVerified =
+    watchdogCommand?.includes('__gc-managed-dolt-scope-watchdog') &&
+    watchdogCommand.includes(configFile) &&
+    watchdogCommand.includes(logFile) &&
+    watchdogCommand.includes(paths.city);
+  if (!childVerified || !watchdogVerified) {
+    throw new Error('Managed Dolt cleanup is refusing to signal an unverified process');
+  }
+
+  const signaled = await runner('kill', ['-TERM', String(watchdogPid)], options);
+  if (signaled.code !== 0) {
+    throw new Error(
+      `Stopping managed Dolt watchdog failed: ${signaled.stderr.trim() || signaled.stdout.trim()}`,
+    );
+  }
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const [watchdogRunning, childRunning] = await Promise.all([
+      processExists(runner, watchdogPid, options),
+      processExists(runner, childPid, options),
+    ]);
+    if (!watchdogRunning && !childRunning) break;
+    if (attempt === 39) {
+      throw new Error('Managed Dolt watchdog did not terminate within 10 seconds');
+    }
+    await sleep(250);
+  }
+
+  const normalized = await runner(bridge, ['stop'], options);
+  if (![0, 2].includes(normalized.code)) {
+    throw new Error(
+      `Normalizing managed Dolt state failed: ${normalized.stderr.trim() || normalized.stdout.trim()}`,
+    );
+  }
+  const stoppedState = parseObject(
+    await readFile(stateFile, 'utf8'),
+    'stopped managed Dolt provider state',
+  );
+  if (stoppedState.running !== false) {
+    throw new Error('Managed Dolt provider state remained active after watchdog shutdown');
+  }
+  return { stopped: true };
+}
+
 export function summarizeLedger(issues) {
   const counts = { open: 0, closed: 0, other: 0, total: issues.length };
   const canary = [];
@@ -90,6 +206,8 @@ export async function verifyBackupRestore({
   runner = runProcess,
   now = new Date(),
   portAllocator = allocateLoopbackPort,
+  providerStopper = stopFactoryManagedDoltWatchdog,
+  providerProbe = isFactoryManagedDoltRunning,
 } = {}) {
   const timestamp = now.toISOString().replace(/[:.]/g, '-');
   const backupPath = join(paths.backups, `ledger-${timestamp}`);
@@ -112,6 +230,11 @@ export async function verifyBackupRestore({
   let restoreInitialized = false;
   let evidence;
   let operationError;
+  const managedProviderWasRunning = await providerProbe({
+    paths,
+    env: processEnv,
+    runner,
+  });
   const listArgs = [
     'list',
     '--all',
@@ -273,30 +396,13 @@ export async function verifyBackupRestore({
           `stopping city-managed Dolt provider: ${stopped.stderr.trim() || stopped.stdout.trim()}`,
         ),
       );
-    } else {
-      const stoppedStatus = await runner(
-        'bd',
-        ['dolt', 'status', '--json'],
-        sourceOptions,
-      );
-      if (stoppedStatus.code !== 0) {
-        cleanupErrors.push(
-          new Error(
-            `verifying city-managed Dolt shutdown: ${stoppedStatus.stderr.trim() || stoppedStatus.stdout.trim()}`,
-          ),
-        );
-      } else {
-        try {
-          const status = parseObject(stoppedStatus.stdout, 'stopped source Dolt status');
-          if (status.running !== false) {
-            cleanupErrors.push(
-              new Error('City-managed Dolt provider remained running after factory shutdown'),
-            );
-          }
-        } catch (error) {
-          cleanupErrors.push(error);
-        }
-      }
+    }
+  }
+  if (!managedProviderWasRunning) {
+    try {
+      await providerStopper({ paths, env: processEnv, runner });
+    } catch (error) {
+      cleanupErrors.push(error);
     }
   }
 
