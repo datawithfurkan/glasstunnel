@@ -70,14 +70,11 @@ export async function isFactoryManagedDoltRunning({
   env = process.env,
   runner = runProcess,
 } = {}) {
-  const stateFile = join(
-    paths.city,
-    '.gc',
-    'runtime',
-    'packs',
-    'dolt',
-    'dolt-provider-state.json',
-  );
+  const runtime = join(paths.city, '.gc', 'runtime', 'packs', 'dolt');
+  const stateFile = join(runtime, 'dolt-provider-state.json');
+  const configFile = join(runtime, 'dolt-config.yaml');
+  const logFile = join(runtime, 'dolt.log');
+  const options = { env, timeoutMs: 5_000 };
   let state;
   try {
     state = parseObject(await readFile(stateFile, 'utf8'), 'managed Dolt provider state');
@@ -87,7 +84,30 @@ export async function isFactoryManagedDoltRunning({
   }
   const pid = Number(state.pid);
   if (state.running !== true || !Number.isSafeInteger(pid) || pid <= 1) return false;
-  return processExists(runner, pid, { env, timeoutMs: 5_000 });
+  if (!(await processExists(runner, pid, options))) return false;
+
+  const parent = await runner('ps', ['-o', 'ppid=', '-p', String(pid)], options);
+  const watchdogPid = Number(parent.stdout.trim());
+  if (
+    parent.code !== 0 ||
+    !Number.isSafeInteger(watchdogPid) ||
+    watchdogPid <= 1 ||
+    !(await processExists(runner, watchdogPid, options))
+  ) {
+    return false;
+  }
+  const [childCommand, watchdogCommand] = await Promise.all([
+    processCommand(runner, pid, options),
+    processCommand(runner, watchdogPid, options),
+  ]);
+  return Boolean(
+    childCommand?.includes('dolt sql-server') &&
+    childCommand.includes(configFile) &&
+    watchdogCommand?.includes('__gc-managed-dolt-scope-watchdog') &&
+    watchdogCommand.includes(configFile) &&
+    watchdogCommand.includes(logFile) &&
+    watchdogCommand.includes(paths.city),
+  );
 }
 
 export async function stopFactoryManagedDoltWatchdog({
@@ -106,7 +126,13 @@ export async function stopFactoryManagedDoltWatchdog({
     env: { ...env, GC_CITY_PATH: paths.city, GC_BIN: env.GC_BIN ?? 'gc' },
     timeoutMs: 10_000,
   };
-  const state = parseObject(await readFile(stateFile, 'utf8'), 'managed Dolt provider state');
+  let state;
+  try {
+    state = parseObject(await readFile(stateFile, 'utf8'), 'managed Dolt provider state');
+  } catch (error) {
+    if (error?.code === 'ENOENT') return { stopped: false, reason: 'not-running' };
+    throw error;
+  }
   if (state.running !== true) return { stopped: false, reason: 'not-running' };
 
   const childPid = Number(state.pid);
@@ -308,37 +334,16 @@ export async function verifyBackupRestore({
       sourceOptions,
       'initializing Dolt-native backup',
     );
-    await checked(
-      runner,
-      'bd',
-      ['backup', 'sync'],
-      sourceOptions,
-      'syncing Dolt-native backup',
-    );
+    await checked(runner, 'bd', ['backup', 'sync'], sourceOptions, 'syncing Dolt-native backup');
     const sourceIssues = parseArray(
-      (
-        await checked(
-          runner,
-          'bd',
-          listArgs,
-          sourceOptions,
-          'reading source ledger',
-        )
-      ).stdout,
+      (await checked(runner, 'bd', listArgs, sourceOptions, 'reading source ledger')).stdout,
       'source ledger',
     );
 
     await checked(
       runner,
       'bd',
-      [
-        'init',
-        '--server',
-        '--server-host',
-        '127.0.0.1',
-        '--server-port',
-        String(restorePort),
-      ],
+      ['init', '--server', '--server-host', '127.0.0.1', '--server-port', String(restorePort)],
       restoreOptions,
       'initializing disposable restore ledger',
     );
@@ -351,15 +356,7 @@ export async function verifyBackupRestore({
       'restoring Dolt-native backup',
     );
     const restoredIssues = parseArray(
-      (
-        await checked(
-          runner,
-          'bd',
-          listArgs,
-          restoreOptions,
-          'reading restored ledger',
-        )
-      ).stdout,
+      (await checked(runner, 'bd', listArgs, restoreOptions, 'reading restored ledger')).stdout,
       'restored ledger',
     );
     const source = summarizeLedger(sourceIssues);
@@ -385,11 +382,10 @@ export async function verifyBackupRestore({
   }
   await rm(restorePath, { recursive: true, force: true });
   if (cityStarted) {
-    const stopped = await runner(
-      'gc',
-      ['stop', paths.city, '--timeout', '2m'],
-      { ...cityOptions, timeoutMs: 150_000 },
-    );
+    const stopped = await runner('gc', ['stop', paths.city, '--timeout', '2m'], {
+      ...cityOptions,
+      timeoutMs: 150_000,
+    });
     if (stopped.code !== 0) {
       cleanupErrors.push(
         new Error(

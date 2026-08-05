@@ -9,10 +9,9 @@ async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'glasstunnel-bootstrap-'));
   const repoRoot = join(root, 'source');
   await mkdir(join(repoRoot, 'ops', 'agent-factory', 'template'), { recursive: true });
-  await mkdir(
-    join(repoRoot, 'ops', 'agent-factory', 'template', 'packs', 'glasstunnel'),
-    { recursive: true },
-  );
+  await mkdir(join(repoRoot, 'ops', 'agent-factory', 'template', 'packs', 'glasstunnel'), {
+    recursive: true,
+  });
   await writeFile(join(repoRoot, 'ops', 'agent-factory', 'template', 'city.toml'), '[workspace]\n');
   await writeFile(join(repoRoot, 'ops', 'agent-factory', 'template', 'pack.toml'), '[pack]\n');
   await writeFile(
@@ -125,9 +124,32 @@ test('bootstrap initializes an external city and suspended mirror rig once', asy
     return { code: 0, stdout: '', stderr: '' };
   };
   const doctor = async () => ({ ok: true, checks: [] });
+  let providerProbeCalls = 0;
+  let providerCleanupCalls = 0;
+  const providerProbe = async () => {
+    providerProbeCalls += 1;
+    return providerProbeCalls % 2 === 0;
+  };
+  const providerStopper = async () => {
+    providerCleanupCalls += 1;
+  };
 
-  const first = await bootstrapFactory({ repoRoot, env, runner, doctor });
-  const second = await bootstrapFactory({ repoRoot, env, runner, doctor });
+  const first = await bootstrapFactory({
+    repoRoot,
+    env,
+    runner,
+    doctor,
+    providerProbe,
+    providerStopper,
+  });
+  const second = await bootstrapFactory({
+    repoRoot,
+    env,
+    runner,
+    doctor,
+    providerProbe,
+    providerStopper,
+  });
 
   assert.equal(first.cityCreated, true);
   assert.equal(first.mirrorCreated, true);
@@ -135,6 +157,7 @@ test('bootstrap initializes an external city and suspended mirror rig once', asy
   assert.equal(second.cityCreated, false);
   assert.equal(second.mirrorCreated, false);
   assert.equal(second.rigAdded, false);
+  assert.equal(providerCleanupCalls, 2);
   assert.equal(
     await readFile(
       join(env.GT_FACTORY_HOME, 'city', 'packs', 'glasstunnel', 'managed.txt'),
@@ -185,14 +208,12 @@ test('bootstrap initializes an external city and suspended mirror rig once', asy
     calls.some(
       (entry) =>
         entry.command === 'git' &&
-        entry.args.join(' ') ===
-          'remote set-url --push upstream DISABLED',
+        entry.args.join(' ') === 'remote set-url --push upstream DISABLED',
     ),
   );
   assert.equal(
     calls.filter(
-      (entry) =>
-        entry.command === 'gc' && entry.args.slice(0, 2).join(' ') === 'import install',
+      (entry) => entry.command === 'gc' && entry.args.slice(0, 2).join(' ') === 'import install',
     ).length,
     2,
   );
@@ -205,8 +226,7 @@ test('bootstrap initializes an external city and suspended mirror rig once', asy
   assert.ok(
     calls.some(
       (entry) =>
-        entry.command === 'gc' &&
-        entry.args.slice(0, 3).join(' ') === 'config show --validate',
+        entry.command === 'gc' && entry.args.slice(0, 3).join(' ') === 'config show --validate',
     ),
   );
   assert.ok(
@@ -290,7 +310,11 @@ test('bootstrap commits only canonical Gas City topology changes in the external
       return { code: 0, stdout: '', stderr: '' };
     }
     if (command === 'gc' && args.slice(0, 2).join(' ') === 'rig list') {
-      return { code: 0, stdout: JSON.stringify(rigRegistered ? [{ name: 'glasstunnel' }] : []), stderr: '' };
+      return {
+        code: 0,
+        stdout: JSON.stringify(rigRegistered ? [{ name: 'glasstunnel' }] : []),
+        stderr: '',
+      };
     }
     if (command === 'gc' && args.slice(0, 2).join(' ') === 'rig add') rigRegistered = true;
     if (command === 'gc' && args.slice(0, 2).join(' ') === 'formula list') {
@@ -320,17 +344,12 @@ test('bootstrap commits only canonical Gas City topology changes in the external
   });
 
   assert.ok(
-    calls.some(
-      (entry) =>
-        entry.command === 'git' &&
-        entry.args.join(' ') === 'add -- .gitignore',
-    ),
+    calls.some((entry) => entry.command === 'git' && entry.args.join(' ') === 'add -- .gitignore'),
   );
   assert.ok(
     calls.some(
       (entry) =>
-        entry.command === 'git' &&
-        entry.args.join(' ') === 'add -f -- .beads/identity.toml',
+        entry.command === 'git' && entry.args.join(' ') === 'add -f -- .beads/identity.toml',
     ),
   );
   assert.ok(
@@ -371,7 +390,11 @@ test('bootstrap rejects unexpected external mirror changes instead of committing
       return { code: 0, stdout: '', stderr: '' };
     }
     if (command === 'gc' && args.slice(0, 2).join(' ') === 'rig list') {
-      return { code: 0, stdout: JSON.stringify(rigRegistered ? [{ name: 'glasstunnel' }] : []), stderr: '' };
+      return {
+        code: 0,
+        stdout: JSON.stringify(rigRegistered ? [{ name: 'glasstunnel' }] : []),
+        stderr: '',
+      };
     }
     if (command === 'gc' && args.slice(0, 2).join(' ') === 'rig add') rigRegistered = true;
     if (command === 'gc' && args.slice(0, 2).join(' ') === 'formula list') {
@@ -504,7 +527,7 @@ test('bootstrap fails closed when doctor or mirror origin is wrong', async () =>
   );
 });
 
-test('status is read-only and down stops only the external city', async () => {
+test('status and down restore a dormant factory provider state', async () => {
   const { repoRoot, env } = await fixture();
   await mkdir(join(env.GT_FACTORY_HOME, 'city'), { recursive: true });
   const calls = [];
@@ -515,11 +538,34 @@ test('status is read-only and down stops only the external city', async () => {
     return { code: 0, stdout: '{}\n', stderr: '' };
   };
 
-  const status = await getFactoryStatus({ repoRoot, env, runner });
-  const stopped = await stopFactory({ repoRoot, env, runner });
+  let statusProbeCalls = 0;
+  let statusCleanupCalls = 0;
+  let downCleanupCalls = 0;
+  const status = await getFactoryStatus({
+    repoRoot,
+    env,
+    runner,
+    providerProbe: async () => {
+      statusProbeCalls += 1;
+      return statusProbeCalls > 1;
+    },
+    providerStopper: async () => {
+      statusCleanupCalls += 1;
+    },
+  });
+  const stopped = await stopFactory({
+    repoRoot,
+    env,
+    runner,
+    providerStopper: async () => {
+      downCleanupCalls += 1;
+    },
+  });
 
   assert.equal(status.primaryRepoClean, true);
   assert.equal(stopped.stopped, true);
+  assert.equal(statusCleanupCalls, 1);
+  assert.equal(downCleanupCalls, 1);
   assert.ok(
     calls.some(
       (entry) =>
@@ -530,4 +576,27 @@ test('status is read-only and down stops only the external city', async () => {
     calls.some((entry) => entry.args.includes('--force')),
     false,
   );
+});
+
+test('status preserves a provider that was already running', async () => {
+  const { repoRoot, env } = await fixture();
+  await mkdir(join(env.GT_FACTORY_HOME, 'city'), { recursive: true });
+  let cleanupCalls = 0;
+  const runner = async (command) => {
+    if (command === 'git') return { code: 0, stdout: '', stderr: '' };
+    if (command === 'du') return { code: 0, stdout: '12\tstate\n', stderr: '' };
+    return { code: 0, stdout: '{}\n', stderr: '' };
+  };
+
+  await getFactoryStatus({
+    repoRoot,
+    env,
+    runner,
+    providerProbe: async () => true,
+    providerStopper: async () => {
+      cleanupCalls += 1;
+    },
+  });
+
+  assert.equal(cleanupCalls, 0);
 });

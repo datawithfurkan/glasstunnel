@@ -37,9 +37,11 @@ pnpm factory:down
 ```
 
 The doctor is read-only. Bootstrap is idempotent and stays under the private
-state root. `down` stops the city but preserves its ledger and backups. A normal
-dormant state is: city stopped, rig suspended, no active leases, no worker
-worktrees, and no factory-owned Dolt or tmux process.
+state root. Gas City may briefly start its managed Dolt provider while reading
+status; the wrapper restores the provider state it found. `down` stops the city
+and any verified factory-owned Dolt watchdog while preserving the ledger and
+backups. A normal dormant state is: city stopped, rig suspended, no active
+leases, no worker worktrees, and no factory-owned Dolt or tmux process.
 
 ## Roles And Workflows
 

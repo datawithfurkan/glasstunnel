@@ -4,7 +4,11 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { stopFactoryManagedDoltWatchdog, verifyBackupRestore } from './backup.mjs';
+import {
+  isFactoryManagedDoltRunning,
+  stopFactoryManagedDoltWatchdog,
+  verifyBackupRestore,
+} from './backup.mjs';
 import { resolveFactoryPaths } from './config.mjs';
 
 test('backup verification uses Dolt-native backup and a disposable external restore', async () => {
@@ -92,10 +96,14 @@ test('backup verification uses Dolt-native backup and a disposable external rest
       (call) => call.command === 'bd' && call.args[0] === 'backup' && call.args[1] === 'init',
     );
     assert.ok(backupInit.args[2].startsWith(paths.backups));
-    assert.deepEqual(
-      calls.find((call) => call.command === 'bd' && call.args[0] === 'init').args,
-      ['init', '--server', '--server-host', '127.0.0.1', '--server-port', '43817'],
-    );
+    assert.deepEqual(calls.find((call) => call.command === 'bd' && call.args[0] === 'init').args, [
+      'init',
+      '--server',
+      '--server-host',
+      '127.0.0.1',
+      '--server-port',
+      '43817',
+    ]);
     assert.ok(
       calls.some(
         (call) =>
@@ -109,17 +117,12 @@ test('backup verification uses Dolt-native backup and a disposable external rest
     assert.equal(providerStopped, true);
     assert.ok(calls.some((call) => call.command === 'bd' && call.args.join(' ') === 'dolt stop'));
     assert.ok(
-      calls.some(
-        (call) =>
-          call.command === 'gc' &&
-          call.args.join(' ') === `start ${paths.city}`,
-      ),
+      calls.some((call) => call.command === 'gc' && call.args.join(' ') === `start ${paths.city}`),
     );
     assert.ok(
       calls.some(
         (call) =>
-          call.command === 'gc' &&
-          call.args.join(' ') === `stop ${paths.city} --timeout 2m`,
+          call.command === 'gc' && call.args.join(' ') === `stop ${paths.city} --timeout 2m`,
       ),
     );
     assert.equal(
@@ -136,7 +139,10 @@ test('backup verification uses Dolt-native backup and a disposable external rest
         .filter((call) => call.command === 'bd')
         .every((call) => call.env.BD_ROUTING_MODE === 'off'),
     );
-    assert.equal(calls.some((call) => call.args.includes('export')), false);
+    assert.equal(
+      calls.some((call) => call.args.includes('export')),
+      false,
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -184,20 +190,14 @@ test('backup verification preserves a source Dolt server that was already runnin
     });
 
     assert.equal(
-      calls.some(
-        (call) => call.command === 'gc' && call.args[0] === 'start',
-      ),
+      calls.some((call) => call.command === 'gc' && call.args[0] === 'start'),
       false,
     );
     assert.equal(
       calls.some((call) => call.command === 'gc' && call.args[0] === 'stop'),
       false,
     );
-    assert.ok(
-      calls.some(
-        (call) => call.cwd !== sourcePath && call.args.join(' ') === 'dolt stop',
-      ),
-    );
+    assert.ok(calls.some((call) => call.cwd !== sourcePath && call.args.join(' ') === 'dolt stop'));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -329,11 +329,7 @@ test('managed provider cleanup targets only the verified factory watchdog', asyn
       sleep: async () => {},
     });
     assert.equal(result.stopped, true);
-    assert.ok(
-      calls.some(
-        (call) => call.command === 'kill' && call.args.join(' ') === '-TERM 654',
-      ),
-    );
+    assert.ok(calls.some((call) => call.command === 'kill' && call.args.join(' ') === '-TERM 654'));
     assert.equal(JSON.parse(await readFile(stateFile, 'utf8')).running, false);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -370,7 +366,57 @@ test('managed provider cleanup refuses an unrelated parent process', async () =>
       stopFactoryManagedDoltWatchdog({ paths, runner, sleep: async () => {} }),
       /refusing to signal an unverified process/,
     );
-    assert.equal(calls.some((call) => call.command === 'kill'), false);
+    assert.equal(
+      calls.some((call) => call.command === 'kill'),
+      false,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('managed provider probe does not preserve an unrelated reused process ID', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'glasstunnel-factory-provider-probe-'));
+  const paths = resolveFactoryPaths({
+    repoRoot: join(root, 'source'),
+    env: { GT_FACTORY_HOME: join(root, 'state') },
+  });
+  const runtime = join(paths.city, '.gc', 'runtime', 'packs', 'dolt');
+  await mkdir(runtime, { recursive: true });
+  await writeFile(
+    join(runtime, 'dolt-provider-state.json'),
+    JSON.stringify({ running: true, pid: 321, port: 12048, data_dir: 'private' }),
+  );
+  const runner = async (command, args) => {
+    if (command === 'kill' && args[0] === '-0') {
+      return { code: 0, stdout: '', stderr: '' };
+    }
+    if (command === 'ps' && args.includes('ppid=')) {
+      return { code: 0, stdout: '654\n', stderr: '' };
+    }
+    if (command === 'ps' && args.includes('command=')) {
+      return { code: 0, stdout: '/usr/bin/unrelated-service\n', stderr: '' };
+    }
+    return { code: 1, stdout: '', stderr: '' };
+  };
+
+  try {
+    assert.equal(await isFactoryManagedDoltRunning({ paths, runner }), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('managed provider cleanup treats missing state as already stopped', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'glasstunnel-factory-provider-missing-'));
+  const paths = resolveFactoryPaths({
+    repoRoot: join(root, 'source'),
+    env: { GT_FACTORY_HOME: join(root, 'state') },
+  });
+
+  try {
+    const result = await stopFactoryManagedDoltWatchdog({ paths });
+    assert.deepEqual(result, { stopped: false, reason: 'not-running' });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
