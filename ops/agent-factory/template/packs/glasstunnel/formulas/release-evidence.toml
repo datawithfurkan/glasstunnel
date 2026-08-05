@@ -33,4 +33,3 @@ needs = ["security-review"]
 [steps.gate]
 type = "human"
 id = "glasstunnel-release-approval"
-

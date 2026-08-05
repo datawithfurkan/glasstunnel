@@ -34,4 +34,3 @@ title = "Mark the foundation canary integration-ready"
 description = "Record completion after the retry and independent review both pass."
 needs = ["controlled-retry", "review"]
 metadata = { "gc.run_target" = "{{rig_name}}/{{binding_prefix}}canary-worker" }
-

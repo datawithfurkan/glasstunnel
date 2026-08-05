@@ -41,4 +41,3 @@ title = "Prepare the reviewed dependency handoff"
 description = "Record the validated update and residual risk without pushing or merging."
 needs = ["validate", "review"]
 metadata = { "gc.run_target" = "{{rig_name}}/{{binding_prefix}}integrator" }
-

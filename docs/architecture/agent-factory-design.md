@@ -1,7 +1,7 @@
 # Glasstunnel Agent Factory Design
 
 **Status:** Approved for foundation implementation
-**Date:** 2026-08-04  
+**Date:** 2026-08-04
 **Scope:** Long-term engineering control plane for autonomous, multi-agent Glasstunnel development
 
 ## Purpose

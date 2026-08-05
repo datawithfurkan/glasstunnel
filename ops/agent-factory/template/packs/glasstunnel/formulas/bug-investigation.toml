@@ -48,4 +48,3 @@ title = "Prepare the reviewed bug-fix handoff"
 description = "Record the validated, reviewed handoff without pushing or merging."
 needs = ["validate", "review"]
 metadata = { "gc.run_target" = "{{rig_name}}/{{binding_prefix}}integrator" }
-

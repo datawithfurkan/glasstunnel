@@ -117,7 +117,7 @@ test('doctor reports an incompatible Beads version', async () => {
 
 - [ ] **Step 2: Run the tests and confirm the imports fail**
 
-Run: `node --test scripts/agent-factory/doctor.test.mjs`  
+Run: `node --test scripts/agent-factory/doctor.test.mjs`
 Expected: FAIL because `doctor.mjs` does not exist.
 
 - [ ] **Step 3: Add the reviewed version contract**
@@ -170,7 +170,7 @@ exit 2.
 
 - [ ] **Step 8: Run focused tests**
 
-Run: `pnpm factory:test`  
+Run: `pnpm factory:test`
 Expected: PASS without installing or starting Gas City.
 
 - [ ] **Step 9: Commit the doctor foundation**
@@ -206,7 +206,7 @@ test('git ignores accidental Gas City and Beads runtime roots', async () => {
 
 - [ ] **Step 2: Run the test and confirm it fails**
 
-Run: `node --test scripts/agent-factory/safety.test.mjs`  
+Run: `node --test scripts/agent-factory/safety.test.mjs`
 Expected: FAIL because the runtime entries are absent.
 
 - [ ] **Step 3: Add defensive ignore rules**
@@ -228,7 +228,7 @@ and `down` as the operator sequence.
 
 - [ ] **Step 5: Run safety tests and whitespace validation**
 
-Run: `pnpm factory:test && git diff --check`  
+Run: `pnpm factory:test && git diff --check`
 Expected: PASS.
 
 - [ ] **Step 6: Commit state isolation**
@@ -267,7 +267,7 @@ Codex, and assert every role is rig-scoped with `max_active_sessions = 1`.
 
 - [ ] **Step 2: Install the TOML parser and confirm the test fails**
 
-Run: `pnpm add -D -w smol-toml && node --test scripts/agent-factory/pack.test.mjs`  
+Run: `pnpm add -D -w smol-toml && node --test scripts/agent-factory/pack.test.mjs`
 Expected: FAIL because the template does not exist.
 
 - [ ] **Step 3: Create the root city configuration**
@@ -344,7 +344,7 @@ integrator prompt may prepare an integration branch but must not push or merge.
 
 - [ ] **Step 6: Run static pack tests**
 
-Run: `pnpm factory:test`  
+Run: `pnpm factory:test`
 Expected: PASS.
 
 - [ ] **Step 7: Commit the portable role catalog**
@@ -392,7 +392,7 @@ const validNode = {
 
 - [ ] **Step 2: Install Ajv and verify failure**
 
-Run: `pnpm add -D -w ajv && node --test scripts/agent-factory/policy.test.mjs`  
+Run: `pnpm add -D -w ajv && node --test scripts/agent-factory/policy.test.mjs`
 Expected: FAIL because the schema is absent.
 
 - [ ] **Step 3: Implement the node schema**
@@ -411,7 +411,7 @@ non-destructive `recoveryCommand`. Sensitive resources set `humanGate: true`.
 
 - [ ] **Step 5: Run policy tests and commit**
 
-Run: `pnpm factory:test && git diff --check`  
+Run: `pnpm factory:test && git diff --check`
 Expected: PASS.
 
 ```bash
@@ -442,7 +442,7 @@ recovered, and recovery closes the audit bead only after expiry.
 
 - [ ] **Step 2: Run the tests and confirm failure**
 
-Run: `node --test scripts/agent-factory/lease.test.mjs`  
+Run: `node --test scripts/agent-factory/lease.test.mjs`
 Expected: FAIL because `lease.mjs` is absent.
 
 - [ ] **Step 3: Implement atomic local ownership**
@@ -468,7 +468,7 @@ require `--human-approved`.
 
 - [ ] **Step 6: Run lease tests and commit**
 
-Run: `pnpm factory:test`  
+Run: `pnpm factory:test`
 Expected: PASS.
 
 ```bash
@@ -497,7 +497,7 @@ the node ID, and a worktree path outside the configured worktree root.
 
 - [ ] **Step 2: Run tests and confirm failure**
 
-Run: `node --test scripts/agent-factory/branch-guard.test.mjs`  
+Run: `node --test scripts/agent-factory/branch-guard.test.mjs`
 Expected: FAIL because the guard is absent.
 
 - [ ] **Step 3: Implement creation and validation**
@@ -516,7 +516,7 @@ primary checkout.
 
 - [ ] **Step 5: Run tests and commit**
 
-Run: `pnpm factory:test`  
+Run: `pnpm factory:test`
 Expected: PASS.
 
 ```bash
@@ -552,7 +552,7 @@ and presence of validation and review dependencies.
 
 - [ ] **Step 2: Run tests and confirm missing formulas**
 
-Run: `node --test scripts/agent-factory/formula.test.mjs`  
+Run: `node --test scripts/agent-factory/formula.test.mjs`
 Expected: FAIL.
 
 - [ ] **Step 3: Implement the five production formulas**
@@ -575,7 +575,7 @@ It writes artifacts only below the external factory artifact root.
 
 - [ ] **Step 5: Run static formula tests and commit**
 
-Run: `pnpm factory:test`  
+Run: `pnpm factory:test`
 Expected: PASS.
 
 ```bash
@@ -606,7 +606,7 @@ reruns do not create a second city, mirror, or rig.
 
 - [ ] **Step 2: Run tests and confirm failure**
 
-Run: `node --test scripts/agent-factory/bootstrap.test.mjs`  
+Run: `node --test scripts/agent-factory/bootstrap.test.mjs`
 Expected: FAIL.
 
 - [ ] **Step 3: Implement bootstrap with explicit environment**
@@ -647,7 +647,7 @@ leases, disk usage, and whether the primary repo is clean.
 
 - [ ] **Step 6: Run tests and commit**
 
-Run: `pnpm factory:test`  
+Run: `pnpm factory:test`
 Expected: PASS.
 
 ```bash
@@ -676,7 +676,7 @@ fingerprint, and dry-run never invokes the network path.
 
 - [ ] **Step 2: Run tests and confirm failure**
 
-Run: `node --test scripts/agent-factory/notify.test.mjs`  
+Run: `node --test scripts/agent-factory/notify.test.mjs`
 Expected: FAIL.
 
 - [ ] **Step 3: Implement the adapter**
@@ -712,7 +712,7 @@ Expected: one formatted local message and no Telegram API call.
 
 - [ ] **Step 5: Run tests and commit**
 
-Run: `pnpm factory:test`  
+Run: `pnpm factory:test`
 Expected: PASS.
 
 ```bash
@@ -746,7 +746,7 @@ release, with no `git push`, GitHub workflow, signing, or deploy command.
 
 - [ ] **Step 2: Run tests and confirm failure**
 
-Run: `node --test scripts/agent-factory/backup.test.mjs scripts/agent-factory/canary.test.mjs`  
+Run: `node --test scripts/agent-factory/backup.test.mjs scripts/agent-factory/canary.test.mjs`
 Expected: FAIL.
 
 - [ ] **Step 3: Implement backup verification**
@@ -772,7 +772,7 @@ open `canary-exclusive` lease remains.
 }
 ```
 
-Run: `pnpm factory:test`  
+Run: `pnpm factory:test`
 Expected: PASS.
 
 - [ ] **Step 6: Commit recovery automation**
@@ -812,13 +812,13 @@ release notes before changing `versions.env`.
 
 - [ ] **Step 2: Run the real doctor**
 
-Run: `pnpm factory:doctor`  
+Run: `pnpm factory:doctor`
 Expected: PASS. The command may identify Git state from the feature branch but
 must report the external-state and disk checks green.
 
 - [ ] **Step 3: Bootstrap the external city**
 
-Run: `pnpm factory:bootstrap`  
+Run: `pnpm factory:bootstrap`
 Expected: one registered `glasstunnel-factory` city, one external `glasstunnel`
 rig mirror, no changes to `AGENTS.md`, and no `.gc/` or `.beads/` under the
 source checkout.

@@ -41,4 +41,3 @@ title = "Prepare the reviewed integration handoff"
 description = "Confirm validation and review passed, then record a human-reviewable handoff. Do not push or merge."
 needs = ["validate", "review"]
 metadata = { "gc.run_target" = "{{rig_name}}/{{binding_prefix}}integrator" }
-
