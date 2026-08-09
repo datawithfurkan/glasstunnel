@@ -42,6 +42,28 @@ Use Superpowers multi-agent orchestration only when the task explicitly calls fo
 
 The detailed rules and prompt templates live in `docs/agentic-workflows.md`.
 
+## Durable Agent Factory
+
+Use the Gas City and Beads factory only when the user explicitly requests
+long-running, delegated, multi-session, or multi-agent execution. Ordinary
+tasks remain single-driver work, and in-session parallel work continues to use
+the Superpowers workflow above.
+
+- The factory is opt-in and dormant by default. Never enable continuous
+  mutation or unattended production operation.
+- Run `pnpm factory:doctor` before activation and follow
+  `ops/agent-factory/README.md` for bootstrap, status, recovery, and shutdown.
+- All mutable factory state, ledgers, artifacts, and worker worktrees stay
+  outside the primary checkout.
+- Workers use isolated `codex/` branches and external worktrees. They never
+  push or merge `main` directly.
+- Production deploys, signing, notarization, Keychain access, TCC changes, and
+  personal accounts remain human-gated even when the factory is active.
+- Keep retries bounded, acquire the declared resource leases, use Telegram for
+  genuine human blockers, and rotate or replan after repeated failure.
+- Finish local validation before one consolidated push and one bounded CI
+  inspection. GitHub Actions are confirmation, not the inner test loop.
+
 ## Attachments
 
 Always inspect user-provided attachments carefully before answering or acting on them.

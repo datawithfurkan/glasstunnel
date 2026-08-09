@@ -1,0 +1,11 @@
+[pack]
+name = "glasstunnel-factory"
+schema = 2
+
+[imports.core]
+source = "https://github.com/gastownhall/gascity.git//internal/bootstrap/packs/core"
+version = "sha:a7297c511d637a3609947386f3389d76ddb2f23b"
+
+[imports.bd]
+source = "https://github.com/gastownhall/gascity.git//examples/bd"
+version = "sha:a7297c511d637a3609947386f3389d76ddb2f23b"

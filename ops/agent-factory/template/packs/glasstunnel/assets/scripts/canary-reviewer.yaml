@@ -1,0 +1,23 @@
+description: |
+  Deterministic, read-only reviewer for the foundation canary. It records only
+  non-secret review metadata and never edits Git or performs external actions.
+
+schema_version: v1
+
+turns:
+  - when:
+      hook: has_work
+    do:
+      - bd_claim: "{bead.id}"
+      - bd_update:
+          id: "{bead.id}"
+          status: closed
+          notes: "foundation canary reviewed independently"
+          metadata:
+            gc.outcome: pass
+            canary_reviewed: "true"
+      - exit: 0
+  - when:
+      hook: empty
+    do:
+      - exit: 0

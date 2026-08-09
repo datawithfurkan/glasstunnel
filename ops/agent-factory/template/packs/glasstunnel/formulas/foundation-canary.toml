@@ -1,0 +1,36 @@
+formula = "foundation-canary"
+description = "Prove deterministic retry, independent review, and integration-ready state without changing product code."
+
+[requires]
+formula_compiler = ">=2.0.0"
+
+[[steps]]
+id = "prepare"
+title = "Prepare the isolated foundation canary"
+description = "Record a harmless canary marker in Beads. Do not edit the source checkout or push."
+metadata = { "gc.run_target" = "{{rig_name}}/{{binding_prefix}}canary-worker" }
+
+[[steps]]
+id = "controlled-retry"
+title = "Prove bounded transient retry"
+description = "Fail attempt one as transient and pass attempt two with deterministic metadata."
+needs = ["prepare"]
+metadata = { "gc.run_target" = "{{rig_name}}/{{binding_prefix}}canary-worker" }
+
+[steps.retry]
+max_attempts = 2
+on_exhausted = "hard_fail"
+
+[[steps]]
+id = "review"
+title = "Independently review the canary evidence"
+description = "Verify the retry evidence read-only and mark the canary reviewed."
+needs = ["controlled-retry"]
+metadata = { "gc.run_target" = "{{rig_name}}/{{binding_prefix}}canary-reviewer" }
+
+[[steps]]
+id = "integration-ready"
+title = "Mark the foundation canary integration-ready"
+description = "Record completion after the retry and independent review both pass."
+needs = ["controlled-retry", "review"]
+metadata = { "gc.run_target" = "{{rig_name}}/{{binding_prefix}}canary-worker" }

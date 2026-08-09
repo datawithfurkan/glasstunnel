@@ -33,6 +33,53 @@ Do not spawn sub-agents for:
 - UI testing that depends on the user's active desktop unless explicitly requested.
 - Any task where the driver is immediately blocked on the delegated answer.
 
+## Durable Agent Factory
+
+Glasstunnel has three deliberately separate execution modes:
+
+1. **Single driver** is the default for ordinary product work.
+2. **Superpowers orchestration** is for explicitly requested parallel work that
+   can finish inside one active task.
+3. **Gas City plus Beads** is for explicitly requested durable work that must
+   survive task boundaries, coordinate isolated workers, or preserve a graph of
+   evidence and review state across sessions.
+
+Do not activate the durable factory merely because a task is large. Use it only
+when durable delegation is part of the request and the work can be split into
+independently reviewable nodes. The factory remains dormant between runs and
+must never operate as an unbounded background mutation loop.
+
+The portable definition lives in `ops/agent-factory/`; mutable city, ledger,
+lease, artifact, mirror, and worktree state lives outside the repository. Start
+with:
+
+```bash
+pnpm factory:doctor
+pnpm factory:bootstrap
+pnpm factory:status
+```
+
+Every factory node must declare its objective, allowed files or surface,
+acceptance criteria, validation, dependencies, resource leases, retry budget,
+review requirement, and evidence. A worker owns one isolated external worktree
+on a `codex/` branch. The planner may replan, but a failed node receives at most
+two implementation attempts before it is blocked or rotated. Independent
+review is required before integration.
+
+Mac UI, Simulator, TCC, Keychain, notarization, production deploy, and other
+exclusive or sensitive resources require their named lease. Signing,
+notarization, deployment, permission changes, personal-account access, and
+other human-only steps also require explicit human approval; use the Telegram
+workflow instead of inventing a workaround. A lease is not production
+authority.
+
+Use the local test lab and deterministic checks as the inner loop. Workers do
+not push. The integrator may prepare one reviewed branch or pull request only
+after local evidence is green. Allow at most one resulting GitHub Actions run
+for the completed batch unless a human explicitly authorizes more. Shut the
+factory down with `pnpm factory:down`, preserving its ledger and backups for the
+next session.
+
 ## Task Packet
 
 Before implementing a non-trivial task, form this packet in your notes or handoff:
@@ -179,6 +226,18 @@ GitHub runs:
 Known remaining risks:
 Next concrete step:
 Do not revert:
+```
+
+For durable factory work, also record:
+
+```text
+Workflow and node IDs:
+Dependencies satisfied:
+Leases acquired/released:
+Attempts and failure class:
+Review and integration evidence:
+Human decisions still required:
+Factory dormant-state check:
 ```
 
 ## Review Checklist

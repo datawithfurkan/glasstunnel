@@ -1,0 +1,43 @@
+formula = "product-change"
+description = "Plan, implement, validate, and independently review one bounded Glasstunnel product change."
+
+[requires]
+formula_compiler = ">=2.0.0"
+
+[[steps]]
+id = "specify"
+title = "Specify the bounded product change"
+description = "Produce the node contract, non-goals, file ownership, risk, validation, and evidence requirements before implementation."
+metadata = { "gc.run_target" = "{{rig_name}}/{{binding_prefix}}planner" }
+
+[[steps]]
+id = "implement"
+title = "Implement the approved product change"
+description = "Work only inside the assigned external worktree and file ownership boundary. Never push, merge, deploy, sign, or mutate credentials."
+needs = ["specify"]
+metadata = { "gc.run_target" = "{{rig_name}}/{{binding_prefix}}web-engineer" }
+
+[steps.retry]
+max_attempts = 2
+on_exhausted = "hard_fail"
+
+[[steps]]
+id = "validate"
+title = "Validate the implementation"
+description = "Run the node contract's deterministic validation matrix and record exact evidence."
+needs = ["implement"]
+metadata = { "gc.run_target" = "{{rig_name}}/{{binding_prefix}}qa" }
+
+[[steps]]
+id = "review"
+title = "Independently review the implementation"
+description = "Review the actual diff and evidence read-only. Reject false completion or missing product/UI parity."
+needs = ["implement"]
+metadata = { "gc.run_target" = "{{rig_name}}/{{binding_prefix}}reviewer" }
+
+[[steps]]
+id = "integration-ready"
+title = "Prepare the reviewed integration handoff"
+description = "Confirm validation and review passed, then record a human-reviewable handoff. Do not push or merge."
+needs = ["validate", "review"]
+metadata = { "gc.run_target" = "{{rig_name}}/{{binding_prefix}}integrator" }

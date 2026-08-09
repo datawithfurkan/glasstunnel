@@ -1,0 +1,27 @@
+[workspace]
+name = "glasstunnel-factory"
+provider = "codex"
+
+[providers.codex]
+base = "builtin:codex"
+
+[defaults.rig.imports.glasstunnel]
+source = "packs/glasstunnel"
+
+[beads]
+provider = "bd"
+backend = "dolt"
+bd_compatibility = "bd-1.0.4"
+conditional_writes = "auto"
+guarded_release = "auto"
+
+[convergence]
+max_per_agent = 1
+max_total = 2
+
+[daemon]
+formula_v2 = true
+patrol_interval = "30s"
+max_restarts = 3
+restart_window = "1h"
+session_circuit_breaker = true
