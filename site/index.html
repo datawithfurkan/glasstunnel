@@ -11,7 +11,7 @@
     <meta name="robots" content="index, follow" />
     <link rel="canonical" href="https://glasstunnel.io/" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="preload" href="./brand/glasstunnel-mark-light.png" as="image" />
+    <link rel="preload" href="./brand/glasstunnel-mark.svg" as="image" type="image/svg+xml" />
 
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Glasstunnel" />
@@ -24,7 +24,7 @@
     <meta property="og:image" content="https://glasstunnel.io/og-image.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="A phone sending a prompt to a coding agent running on a Mac through Glasstunnel" />
+    <meta property="og:image:alt" content="Glasstunnel — control your coding agents from your phone" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Glasstunnel — Control your coding agents from your phone" />
     <meta
@@ -35,13 +35,14 @@
 
     <title>Glasstunnel — Control your coding agents from your phone</title>
     <link rel="stylesheet" href="/style.css" />
+    <link rel="stylesheet" href="/hero-v2.css" />
   </head>
   <body>
     <a class="skip-link" href="#main-content">Skip to content</a>
 
     <header class="site-header" data-header>
       <a class="brand" href="#top" aria-label="Glasstunnel home">
-        <img src="./brand/glasstunnel-mark-light.png" width="38" height="38" alt="" />
+        <img src="./brand/glasstunnel-mark.svg" width="38" height="38" alt="" />
         <span>Glasstunnel</span>
       </a>
 
@@ -67,125 +68,263 @@
     </header>
 
     <main id="main-content">
-      <section id="top" class="hero" aria-labelledby="hero-title">
-        <div class="hero-grid" aria-hidden="true"></div>
-        <div class="hero-copy">
-          <div class="eyebrow"><span class="live-dot"></span> Open source · Public beta</div>
-          <h1 id="hero-title">Control your coding agents from your phone.</h1>
-          <p>
-            Check progress, send prompts, and keep your coding agents moving from anywhere.
-          </p>
-          <div class="hero-actions">
-            <a class="button button-light" href="https://github.com/datawithfurkan/glasstunnel/releases/download/v0.1.5/Glasstunnel-0.1.5.dmg">
-              <i data-lucide="download" aria-hidden="true"></i>
-              Download for Mac
-            </a>
-            <a class="button button-dark" href="https://github.com/datawithfurkan/glasstunnel" target="_blank" rel="noopener noreferrer">
-              <i data-lucide="github" aria-hidden="true"></i>
-              View on GitHub
-            </a>
-            <a class="text-link" href="https://app.glasstunnel.io" target="_blank" rel="noopener noreferrer">
-              Open web app <i data-lucide="arrow-up-right" aria-hidden="true"></i>
-            </a>
-          </div>
-          <p class="release-note">macOS 14 or later · Signed and notarized · v0.1.5</p>
-        </div>
+      <section id="top" class="hero2" aria-labelledby="hero-title">
+  <div class="hero2-ambient" aria-hidden="true"></div>
 
-        <div class="hero-product" data-hero-scene>
-          <p class="sr-only">
-            An animated product demonstration. A prompt is written on a phone, delivered to Codex on a Mac, completed locally, and returned to the phone.
-          </p>
+  <div class="hero2-inner">
+    <div class="hero2-copy">
+      <div class="hero2-eyebrow"><span class="live-dot"></span> Open source · Public beta</div>
+      <h1 id="hero-title">Control your coding agents from your phone.</h1>
+      <p class="hero2-sub">
+        Prompt Codex, run terminal commands, and take over your Mac's screen —
+        approvals included — from anywhere.
+      </p>
 
-          <div class="mac-window" aria-hidden="true">
-            <div class="window-titlebar">
-              <div class="traffic-lights"><span></span><span></span><span></span></div>
-              <div class="window-brand">
-                <img src="./brand/glasstunnel-mark-light.png" width="30" height="30" alt="" />
-                <div><strong>Glasstunnel</strong><small>Demo Mac</small></div>
-              </div>
-              <div class="online-state"><span></span> Online</div>
+      <div class="hero2-actions">
+        <a class="btn2 btn2-primary" href="https://github.com/datawithfurkan/glasstunnel/releases/download/v0.1.5/Glasstunnel-0.1.5.dmg">
+          <i data-lucide="download" aria-hidden="true"></i> Download for Mac
+        </a>
+        <a class="btn2 btn2-ghost" href="https://github.com/datawithfurkan/glasstunnel" target="_blank" rel="noopener noreferrer">
+          <i data-lucide="github" aria-hidden="true"></i> View source
+        </a>
+      </div>
+
+      <p class="hero2-meta">macOS 14+ · Signed &amp; notarized · v0.1.5 · Apache 2.0</p>
+    </div>
+
+    <div class="stage2" data-stage data-scene="codex">
+      <p class="sr-only">
+        A demonstration of one session: a prompt is sent to Codex from the phone and appears on the
+        Mac; a terminal command is run; a prompt is sent to Claude Code; then the Mac's screen is
+        shared to the phone, where a permission request is approved with one tap.
+      </p>
+
+      <!-- ======================== MACBOOK ======================== -->
+      <div class="mb" aria-hidden="true">
+        <div class="mb-lid">
+          <div class="mb-cam"></div>
+          <div class="mb-screen">
+
+            <!-- macOS menu bar -->
+            <div class="os-bar">
+              <span class="os-logo"></span>
+              <b data-os-app>Codex</b>
+              <span>File</span><span>Edit</span><span>View</span>
+              <span class="os-right"><i class="os-i"></i><i class="os-i"></i><em>9:41</em></span>
             </div>
-            <div class="mac-layout">
-              <aside class="mac-sidebar">
-                <small>MANAGE THIS MAC</small>
-                <div class="mac-nav-item is-active"><i data-lucide="panels-top-left"></i>Workspace</div>
-                <div class="mac-nav-item"><i data-lucide="key-round"></i>Access</div>
-                <div class="mac-nav-item"><i data-lucide="sliders-horizontal"></i>Settings</div>
-              </aside>
-              <div class="workspace-view">
-                <div class="workspace-heading">
-                  <div><h2>Workspace</h2><p>Apps available from your browser.</p></div>
-                  <span class="state-pill" data-mac-status>READY</span>
-                </div>
-                <div class="app-list">
-                  <div class="app-row is-active">
-                    <span class="app-icon app-icon-codex"><i data-lucide="square-terminal"></i></span>
-                    <div><strong>Codex</strong><small>Northstar · Command palette</small></div>
-                    <span class="app-state"><b></b><span data-agent-state>Ready</span></span>
+
+            <div class="os-desk">
+              <!-- ---------- CODEX ---------- -->
+              <div class="win is-on" data-mac-scene="codex">
+                <div class="win-bar"><span class="tl tl-r"></span><span class="tl tl-y"></span><span class="tl tl-g"></span><em>Codex</em></div>
+                <div class="win-body cdx">
+                  <aside class="cdx-side">
+                    <div class="cdx-new">+ New thread</div>
+                    <div class="cdx-th is-on">nav accessibility</div>
+                    <div class="cdx-th">router cleanup</div>
+                    <div class="cdx-th">test coverage</div>
+                  </aside>
+                  <div class="cdx-main">
+                    <div class="cdx-msg cdx-you"><b>You</b><p data-codex-prompt></p></div>
+                    <div class="cdx-msg cdx-ai" data-codex-reply-wrap><b>Codex</b><p data-codex-reply>Reading <code>src/Nav.tsx</code>…</p></div>
+                    <div class="cdx-diff" data-codex-diff>
+                      <span class="add">+  onKeyDown={handleArrowKeys}</span>
+                      <span class="add">+  role="menubar"</span>
+                    </div>
+                    <div class="cdx-foot"><span class="cdx-bar"><i data-mac-progress></i></span><small data-codex-status>Thinking…</small></div>
                   </div>
-                  <div class="app-row">
-                    <span class="app-icon app-icon-cursor"><i data-lucide="mouse-pointer-2"></i></span>
-                    <div><strong>Cursor</strong><small>Ready from web</small></div>
-                    <span class="app-state is-muted"><b></b>Ready</span>
-                  </div>
-                  <div class="app-row">
-                    <span class="app-icon app-icon-terminal"><i data-lucide="terminal"></i></span>
-                    <div><strong>Terminal</strong><small>Ready from web</small></div>
-                    <span class="app-state is-muted"><b></b>Ready</span>
-                  </div>
-                </div>
-                <div class="agent-panel" data-agent-panel>
-                  <div class="agent-panel-meta"><span>CODEX · NORTHSTAR</span><b data-agent-panel-state>WAITING</b></div>
-                  <p>› Add keyboard navigation and run the tests.</p>
-                  <small data-agent-detail>Waiting for your next prompt</small>
-                  <div class="progress-track"><span data-agent-progress></span></div>
-                  <div class="test-result" data-test-result><i data-lucide="check"></i>18 tests passed</div>
                 </div>
               </div>
+
+              <!-- ---------- TERMINAL.APP ---------- -->
+              <div class="win" data-mac-scene="terminal">
+                <div class="win-bar"><span class="tl tl-r"></span><span class="tl tl-y"></span><span class="tl tl-g"></span><em>project — zsh — 80×24</em></div>
+                <div class="win-body term">
+                  <div><span class="p">➜</span> <span class="d">project</span> <span data-term-cmd></span><i class="m-caret"></i></div>
+                  <div class="term-o" data-term-out>
+                    <div>PASS  src/nav.test.ts</div>
+                    <div>PASS  src/router.test.ts</div>
+                    <div>&nbsp;</div>
+                    <div class="ok">Tests:  18 passed, 18 total</div>
+                    <div class="dim">Time:   2.41 s</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ---------- CLAUDE CODE (CLI) ---------- -->
+              <div class="win" data-mac-scene="claude">
+                <div class="win-bar"><span class="tl tl-r"></span><span class="tl tl-y"></span><span class="tl tl-g"></span><em>project — claude — 80×24</em></div>
+                <div class="win-body cc">
+                  <div class="cc-box">
+                    <div class="cc-head"><span class="cc-star">✻</span> Claude Code <em>v2.0</em></div>
+                    <div class="cc-line">&gt; <span data-claude-prompt></span><i class="m-caret"></i></div>
+                  </div>
+                  <div class="cc-out" data-claude-out>
+                    <div><span class="cc-star">✻</span> Creating <b>src/nav.test.ts</b></div>
+                    <div class="cc-tool">⏺ Write(src/nav.test.ts)</div>
+                    <div class="ok">✓ 4 tests added</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ---------- SCREEN SHARE + PERMISSION ---------- -->
+              <div class="win win-plain" data-mac-scene="screen">
+                <div class="win-bar"><span class="tl tl-r"></span><span class="tl tl-y"></span><span class="tl tl-g"></span><em>Codex</em></div>
+                <div class="win-body cdx cdx-dim">
+                  <aside class="cdx-side">
+                    <div class="cdx-new">+ New thread</div>
+                    <div class="cdx-th is-on">nav accessibility</div>
+                    <div class="cdx-th">router cleanup</div>
+                  </aside>
+                  <div class="cdx-main">
+                    <div class="cdx-msg cdx-ai"><b>Codex</b><p>Needs permission to continue.</p></div>
+                  </div>
+                </div>
+
+                <!-- macOS-style permission sheet -->
+                <div class="sheet" data-mac-perm>
+                  <div class="sheet-ico"><i data-lucide="folder"></i></div>
+                  <strong>“Codex” would like to access<br />files in your project folder.</strong>
+                  <p>Glasstunnel is sharing this screen with your iPhone.</p>
+                  <div class="sheet-btns">
+                    <span class="sheet-b">Don't Allow</span>
+                    <span class="sheet-b sheet-ok" data-mac-allow>Allow</span>
+                  </div>
+                </div>
+                <div class="sheet-done" data-mac-perm-done><i data-lucide="check"></i> Access granted — Codex continued</div>
+              </div>
             </div>
           </div>
+        </div>
 
-          <svg class="tunnel-path" viewBox="0 0 1200 700" preserveAspectRatio="none" aria-hidden="true">
-            <path d="M 1035 600 C 980 480, 920 355, 740 330 C 650 318, 610 320, 540 322" />
-          </svg>
-          <div class="transit-prompt" data-transit-prompt>ADD KEYBOARD NAVIGATION…</div>
-          <div class="transit-result" data-transit-result><i data-lucide="check"></i>18 TESTS PASSED</div>
+        <div class="mb-hinge"></div>
+        <div class="mb-base"><span class="mb-notch"></span></div>
 
-          <div class="phone" aria-hidden="true">
-            <div class="phone-speaker"></div>
-            <div class="phone-header">
-              <img src="./brand/glasstunnel-mark-light.png" width="34" height="34" alt="" />
-              <div><strong>Demo Mac</strong><small><span></span> Connected</small></div>
-              <i data-lucide="menu"></i>
+        <div class="remote-cursor" data-cursor>
+          <svg viewBox="0 0 12 18" width="12" height="18"><path d="M1 1l9.5 8.2-4.2.5 2.4 5.1-2 .9-2.4-5.2-3.3 2.6z"/></svg>
+          <span class="remote-cursor-tag">iPhone</span>
+        </div>
+      </div>
+
+      <!-- ========================= IPHONE ========================= -->
+      <div class="ph3-wrap">
+        <div class="ph3" aria-hidden="true">
+          <div class="ph3-island"></div>
+          <div class="ph3-screen">
+            <div class="g-top">
+              <span class="g-mark"></span>
+              <div class="g-top-t"><strong>MacBook Pro</strong><small><i></i> Connected</small></div>
+              <span class="g-menu"><b></b><b></b><b></b></span>
             </div>
-            <div class="phone-body">
-              <div class="phone-context">
-                <div><strong>Northstar</strong><small>Codex · command-palette</small></div>
-                <span class="state-pill" data-phone-status>READY</span>
+
+            <div class="g-strip">
+              <div class="g-strip-track">
+                <span class="g-chip" data-chip="screen">Screen</span>
+                <span class="g-chip is-on" data-chip="codex">Codex</span>
+                <span class="g-chip" data-chip="terminal">Terminal</span>
+                <span class="g-chip" data-chip="claude">Claude</span>
               </div>
-              <div class="phone-prompt" data-phone-prompt>Add keyboard navigation and run the tests.</div>
-              <div class="phone-result" data-phone-result>
-                <b>CODEX · DONE</b>
-                <p>Keyboard navigation is live. 18 tests passed.</p>
+            </div>
+
+            <div class="g-stack">
+              <div class="g-scene is-on" data-ph-scene="codex">
+                <div class="g-bubbles">
+                  <div class="g-b g-b-user" data-ph-user><span></span></div>
+                  <div class="g-b g-b-ai" data-ph-ai>Reading src/Nav.tsx…</div>
+                </div>
               </div>
-              <div class="phone-composer" data-phone-composer>
-                <span data-composer-text>Send a prompt…</span>
-                <button type="button" tabindex="-1" aria-hidden="true"><i data-lucide="arrow-up"></i></button>
+
+              <div class="g-scene" data-ph-scene="terminal">
+                <div class="g-term">
+                  <div class="g-term-h"><b></b><b></b><b></b><em>zsh</em></div>
+                  <div class="g-term-b">
+                    <div class="g-term-line"><span class="gp">➜</span> <span data-ph-term></span><i class="g-caret" data-ph-term-caret></i></div>
+                    <div class="g-term-out" data-ph-term-out>
+                      <div>PASS src/nav.test.ts</div>
+                      <div>PASS src/router.test.ts</div>
+                      <div class="ok">18 passed · 2.41s</div>
+                    </div>
+                  </div>
+                </div>
               </div>
+
+              <div class="g-scene" data-ph-scene="claude">
+                <div class="g-bubbles">
+                  <div class="g-b g-b-user" data-ph-user2><span></span></div>
+                  <div class="g-b g-b-ai">Creating nav.test.ts…</div>
+                </div>
+              </div>
+
+              <div class="g-scene" data-ph-scene="screen">
+                <!-- a real miniature of what is on the Mac right now -->
+                <div class="g-mirror" data-ph-mirror>
+                  <div class="g-mirror-bar"><span class="g-rec"></span> Live · MacBook Pro</div>
+                  <div class="gm">
+                    <div class="gm-os"><span class="gm-logo"></span><b>Codex</b><em>9:41</em></div>
+                    <div class="gm-win">
+                      <div class="gm-win-bar"><i class="r"></i><i class="y"></i><i class="g"></i></div>
+                      <div class="gm-body">
+                        <div class="gm-side"><s></s><s class="on"></s><s></s></div>
+                        <div class="gm-main"><s class="w80"></s><s class="w55"></s><s class="w70"></s></div>
+                      </div>
+                      <div class="gm-sheet" data-gm-sheet>
+                        <div class="gm-sheet-ico"></div>
+                        <s class="w70"></s><s class="w45"></s>
+                        <div class="gm-sheet-btns"><i></i><i class="ok"></i></div>
+                      </div>
+                      <div class="gm-done" data-gm-done>✓ granted</div>
+                    </div>
+                  </div>
+                </div>
+                <div class="g-approve" data-ph-approve>
+                  <div class="g-approve-h">
+                    <div>
+                      <strong>Codex needs a decision</strong>
+                      <small>Choose here and Glasstunnel will continue on your Mac.</small>
+                    </div>
+                    <span class="g-wait">waiting</span>
+                  </div>
+                  <div class="g-approve-q">
+                    <div class="g-approve-l">FILE ACCESS</div>
+                    <p>Allow access to your project folder?</p>
+                    <div class="g-approve-btns">
+                      <span class="g-opt">Deny</span>
+                      <span class="g-opt g-opt-yes" data-ph-allow>Approve</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="g-approved" data-ph-approved><i data-lucide="check"></i> Approved — Codex continued</div>
+              </div>
+            </div>
+
+            <div class="g-composer" data-ph-composer>
+              <span class="g-plus">+</span>
+              <span class="g-input" data-ph-input>Send a prompt…</span>
+              <span class="g-send"><i data-lucide="arrow-up"></i></span>
             </div>
           </div>
-
-          <button class="motion-toggle icon-button" type="button" aria-label="Pause product animation" data-motion-toggle>
-            <i data-lucide="pause" aria-hidden="true"></i>
-          </button>
         </div>
+      </div>
 
-        <div class="hero-proof" aria-label="Product facts">
-          <span><i data-lucide="laptop"></i> Runs on your Mac</span>
-          <span><i data-lucide="shield-check"></i> Encrypted media + input</span>
-          <span><i data-lucide="code-2"></i> Apache 2.0</span>
-        </div>
-      </section>
+      <div class="stage2-legend" aria-hidden="true">
+        <span data-legend="codex" class="is-on">Prompt Codex</span>
+        <span data-legend="terminal">Run a command</span>
+        <span data-legend="claude">Switch agents</span>
+        <span data-legend="screen">Take over the screen</span>
+      </div>
+
+      <button class="motion-toggle2" type="button" data-motion-toggle aria-label="Pause the product animation">
+        <i data-lucide="pause" aria-hidden="true"></i>
+      </button>
+    </div>
+  </div>
+
+  <div class="hero2-proof">
+    <span><i data-lucide="laptop"></i> Runs on your own Mac</span>
+    <span><i data-lucide="lock"></i> Encrypted media &amp; input</span>
+    <span><i data-lucide="git-branch"></i> Apache 2.0</span>
+  </div>
+</section>
 
       <section id="how-it-works" class="workflow section-light" aria-labelledby="workflow-title">
         <div class="section-heading reveal">
@@ -197,60 +336,41 @@
         <div class="workflow-steps reveal">
           <article>
             <span class="step-number">01</span>
-            <i data-lucide="activity"></i>
+            <div class="wf-vig" aria-hidden="true">
+              <div class="wf-row"><span class="wf-ico wf-ico-codex"></span><b>Codex</b><span class="wf-state wf-work">Working</span></div>
+              <div class="wf-row"><span class="wf-ico wf-ico-term"></span><b>Terminal</b><span class="wf-state wf-wait">Waiting</span></div>
+              <div class="wf-row is-dim"><span class="wf-ico"></span><b>Claude Code</b><span class="wf-state">Done</span></div>
+            </div>
             <h3>Check</h3>
             <p>See whether an agent is working, waiting, done, or needs your attention.</p>
           </article>
           <article>
             <span class="step-number">02</span>
-            <i data-lucide="message-square-text"></i>
+            <div class="wf-vig" aria-hidden="true">
+              <div class="wf-bubble wf-bubble-user">Run the tests once more.</div>
+              <div class="wf-bubble wf-bubble-ai">18 passed · 2.41s</div>
+              <div class="wf-composer"><span>Send a prompt…</span><i></i></div>
+            </div>
             <h3>Reply</h3>
             <p>Send the next prompt or approval without rebuilding context somewhere else.</p>
           </article>
           <article>
             <span class="step-number">03</span>
-            <i data-lucide="monitor-smartphone"></i>
+            <div class="wf-vig" aria-hidden="true">
+              <div class="wf-screen">
+                <div class="wf-screen-bar"><i></i><i></i><i></i></div>
+                <div class="wf-screen-body"><span class="wf-line"></span><span class="wf-line w60"></span><span class="wf-line w40"></span></div>
+                <span class="wf-cursor"></span>
+              </div>
+              <div class="wf-chip">Screen shared</div>
+            </div>
             <h3>Control</h3>
             <p>Open Mac Screen or a scoped Terminal session when direct control is the right tool.</p>
           </article>
         </div>
       </section>
 
-      <section class="walkthrough section-dark" aria-labelledby="walkthrough-title">
-        <div class="walkthrough-inner">
-          <div class="walkthrough-copy reveal">
-            <div class="eyebrow">Built for continuity</div>
-            <h2 id="walkthrough-title">The same task follows you.</h2>
-            <p data-walkthrough-copy>
-              Open your phone and see the state your Mac already knows. No duplicate environment and no second copy of the project.
-            </p>
-            <div class="mode-tabs" role="tablist" aria-label="Product walkthrough">
-              <button type="button" role="tab" aria-selected="true" data-mode="check"><i data-lucide="activity"></i>Check</button>
-              <button type="button" role="tab" aria-selected="false" data-mode="reply"><i data-lucide="message-square-text"></i>Reply</button>
-              <button type="button" role="tab" aria-selected="false" data-mode="control"><i data-lucide="monitor-up"></i>Control</button>
-            </div>
-          </div>
-          <div class="continuity-visual reveal" data-walkthrough-visual>
-            <div class="continuity-mac">
-              <div class="mini-titlebar"><span></span><span></span><span></span><b>Northstar</b></div>
-              <div class="mini-editor">
-                <small>CODEX</small>
-                <strong data-walkthrough-title>Working on keyboard navigation</strong>
-                <div class="code-line long"></div><div class="code-line"></div><div class="code-line medium"></div>
-                <span class="mini-status" data-walkthrough-status>WORKING</span>
-              </div>
-            </div>
-            <div class="continuity-line"><span></span></div>
-            <div class="continuity-phone">
-              <div class="mini-phone-header"><span></span>Connected</div>
-              <strong data-walkthrough-phone>Codex is working</strong>
-              <small data-walkthrough-detail>Last update just now</small>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section id="support" class="support section-light" aria-labelledby="support-title">
+      <section id="support" class="support section-dark" aria-labelledby="support-title">
         <div class="section-heading reveal">
           <div class="eyebrow eyebrow-dark">Support without overpromising</div>
           <h2 id="support-title">Use the dependable paths today. Help shape what comes next.</h2>
@@ -260,17 +380,30 @@
         <div class="support-table reveal">
           <div class="support-row support-ready">
             <div class="support-tier"><span></span><strong>Supported</strong><small>Public-beta contract</small></div>
-            <div class="support-apps"><span>Mac Screen</span><span>Scoped Terminal</span></div>
+            <div class="support-apps">
+              <span class="app-tag"><i class="app-dot app-screen"></i>Mac Screen</span>
+              <span class="app-tag"><i class="app-dot app-terminal"></i>Terminal</span>
+            </div>
             <i data-lucide="check-circle-2"></i>
           </div>
           <div class="support-row support-preview">
             <div class="support-tier"><span></span><strong>Preview</strong><small>Useful and actively tested</small></div>
-            <div class="support-apps"><span>Codex desktop</span><span>Codex CLI</span><span>Cursor</span><span>Cursor Agent</span><span>Gemini CLI</span><span>OpenCode</span></div>
+            <div class="support-apps">
+              <span class="app-tag"><i class="app-dot app-codex"></i>Codex</span>
+              <span class="app-tag"><i class="app-dot app-codex"></i>Codex CLI</span>
+              <span class="app-tag"><i class="app-dot app-cursor"></i>Cursor</span>
+              <span class="app-tag"><i class="app-dot app-cursor"></i>Cursor Agent</span>
+              <span class="app-tag"><i class="app-dot app-gemini"></i>Gemini CLI</span>
+              <span class="app-tag"><i class="app-dot app-opencode"></i>OpenCode</span>
+            </div>
             <i data-lucide="flask-conical"></i>
           </div>
           <div class="support-row support-experimental">
             <div class="support-tier"><span></span><strong>Experimental</strong><small>No compatibility promise</small></div>
-            <div class="support-apps"><span>Claude Code</span><span>Generic window mirroring</span></div>
+            <div class="support-apps">
+              <span class="app-tag"><i class="app-dot app-claude"></i>Claude Code</span>
+              <span class="app-tag"><i class="app-dot"></i>Generic window mirroring</span>
+            </div>
             <i data-lucide="beaker"></i>
           </div>
         </div>
@@ -285,10 +418,10 @@
             <div class="eyebrow">Connection model</div>
             <h2 id="connection-title">Your Mac remains the workspace.</h2>
             <p>
-              Projects and developer tools stay where they already run. Captured media and remote input travel over end-to-end encrypted WebRTC between linked devices.
+              Projects and developer tools stay where they already run. Screen video and remote input travel over end-to-end encrypted WebRTC. Prompts, chat, and agent state currently route through the hosted relay, which can read them.
             </p>
             <p class="metadata-note">
-              Hosted services still process the account, routing, device, request, and network metadata needed to operate the connection.
+              Hosted services process account, routing, device, and network metadata, and the relay retains recent agent messages to restore your session. Self-host the control plane if you need neither.
             </p>
             <a class="text-link text-link-light" href="https://github.com/datawithfurkan/glasstunnel/blob/main/docs/security.md" target="_blank" rel="noopener noreferrer">
               Read the security model <i data-lucide="arrow-right"></i>
@@ -298,11 +431,11 @@
             <div class="connection-node">
               <i data-lucide="laptop"></i><strong>Your Mac</strong><small>Project + agent</small>
             </div>
-            <div class="encrypted-line"><span>WebRTC · DTLS-SRTP</span><i data-lucide="lock-keyhole"></i></div>
+            <div class="encrypted-line"><span>Video + input · DTLS-SRTP</span><i data-lucide="lock-keyhole"></i></div>
             <div class="connection-node">
               <i data-lucide="smartphone"></i><strong>Your phone</strong><small>Authenticated browser</small>
             </div>
-            <div class="routing-plane"><i data-lucide="route"></i><span>Hosted account + routing plane</span><small>No captured content storage</small></div>
+            <div class="routing-plane"><i data-lucide="route"></i><span>Hosted account + routing plane</span><small>Relays prompts, chat &amp; agent state</small></div>
           </div>
         </div>
       </section>
@@ -346,7 +479,7 @@
           </div>
           <div class="install-terminal reveal">
             <div class="terminal-bar"><div><span></span><span></span><span></span></div><small>Terminal</small></div>
-            <pre><code id="install-command">brew tap datawithfurkan/glasstunnel https://github.com/datawithfurkan/glasstunnel
+            <pre><code id="install-command">brew tap datawithfurkan/glasstunnel
 brew install --cask datawithfurkan/glasstunnel/glasstunnel</code></pre>
             <button class="copy-button icon-button" type="button" data-copy-command aria-label="Copy Homebrew installation commands">
               <i data-lucide="copy"></i><span>Copy</span>
@@ -404,7 +537,7 @@ brew install --cask datawithfurkan/glasstunnel/glasstunnel</code></pre>
 
       <section class="final-cta section-ink" aria-labelledby="final-title">
         <div class="final-cta-inner reveal">
-          <img src="./brand/glasstunnel-mark-light.png" width="64" height="64" alt="" />
+          <img src="./brand/glasstunnel-mark.svg" width="64" height="64" alt="" />
           <h2 id="final-title">Keep your agents moving.</h2>
           <p>Install the Mac app, open your phone, and pick up where you left off.</p>
           <div class="hero-actions">
@@ -417,7 +550,7 @@ brew install --cask datawithfurkan/glasstunnel/glasstunnel</code></pre>
 
     <footer class="site-footer">
       <div class="footer-brand">
-        <a class="brand" href="#top"><img src="./brand/glasstunnel-mark-light.png" width="34" height="34" alt="" /><span>Glasstunnel</span></a>
+        <a class="brand" href="#top"><img src="./brand/glasstunnel-mark.svg" width="34" height="34" alt="" /><span>Glasstunnel</span></a>
         <p>Open-source remote access for coding agents running on your Mac.</p>
       </div>
       <div class="footer-links">

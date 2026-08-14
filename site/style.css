@@ -1,23 +1,39 @@
 :root {
   color-scheme: dark;
-  --black: #09090a;
-  --ink: #111112;
-  --surface: #171719;
-  --surface-raised: #202023;
-  --border: #343438;
-  --border-soft: #29292c;
-  --white: #f7f7f5;
-  --paper: #f1f1ee;
-  --paper-deep: #e3e3df;
-  --text: #f7f7f8;
-  --muted: #a0a0a6;
-  --dim: #707077;
-  --blue: #0a84ff;
-  --blue-soft: #4cb2ff;
+
+  /* Surfaces — warm, taken from the shipping app (GlasstunnelDesign.swift
+     and the PWA both use #201d1d). Three tiers only: darkest / dark / light. */
+  --black: #161414;          /* darkest: footer + final CTA */
+  --ink: #201d1d;            /* dark: primary dark sections + hero */
+  --surface: #302c2c;        /* raised panel */
+  --surface-raised: #3f3a3a;
+  --border: rgba(253, 252, 252, 0.14);
+  --border-soft: rgba(253, 252, 252, 0.08);
+
+  --white: #fdfcfc;
+  --paper: #f2f1ef;          /* light sections, warmed to match */
+  --paper-deep: #e4e2de;
+
+  --text: #fdfcfc;
+  --muted: #9a9898;
+  --dim: #6f6b6b;
+
+  --blue: #007aff;           /* the app's real accent */
+  --blue-soft: #4aa3ff;
   --green: #30d158;
-  --amber: #ffb340;
-  --red: #ff5f57;
-  --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --amber: #ff9f0a;
+  --red: #ff3b30;
+
+  /* Type scale — 6 steps, matching the hero */
+  --t-display: clamp(38px, 4.9vw, 66px);
+  --t-h2: clamp(28px, 3vw, 44px);
+  --t-h3: 20px;
+  --t-lead: clamp(16px, 1.25vw, 19px);
+  --t-body: 15px;
+  --t-ui: 13px;
+  --t-micro: 12px;           /* hard floor — nothing smaller */
+
+  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
   --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
 }
 
@@ -304,7 +320,7 @@ svg {
   margin-bottom: 18px;
   color: var(--blue-soft);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
 }
@@ -354,7 +370,7 @@ svg {
   margin: 15px 0 0;
   color: var(--dim);
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .hero-product {
@@ -441,7 +457,7 @@ svg {
 .phone-header small {
   margin-top: 3px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .online-state {
@@ -450,7 +466,7 @@ svg {
   align-items: center;
   gap: 6px;
   color: var(--green);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -480,7 +496,7 @@ svg {
   margin: 0 8px 10px;
   color: var(--dim);
   font-family: var(--mono);
-  font-size: 7px;
+  font-size: 12px;
 }
 
 .mac-nav-item {
@@ -491,7 +507,7 @@ svg {
   padding: 0 9px;
   border-radius: 5px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -526,7 +542,7 @@ svg {
 .workspace-heading p {
   margin: 5px 0 0;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .state-pill {
@@ -540,7 +556,7 @@ svg {
   background: rgba(255, 255, 255, 0.04);
   color: var(--muted);
   font-family: var(--mono);
-  font-size: 7px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -587,14 +603,14 @@ svg {
 }
 
 .app-row strong {
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .app-row small {
   margin-top: 2px;
   overflow: hidden;
   color: var(--muted);
-  font-size: 8px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -638,7 +654,7 @@ svg {
   align-items: center;
   gap: 5px;
   color: var(--blue-soft);
-  font-size: 8px;
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -675,7 +691,7 @@ svg {
   display: flex;
   justify-content: space-between;
   color: var(--muted);
-  font-size: 7px;
+  font-size: 12px;
 }
 
 .agent-panel-meta b {
@@ -688,12 +704,12 @@ svg {
 
 .agent-panel p {
   margin: 12px 0 8px;
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .agent-panel > small {
   color: var(--muted);
-  font-size: 7px;
+  font-size: 12px;
 }
 
 .progress-track {
@@ -723,7 +739,7 @@ svg {
   gap: 5px;
   overflow: hidden;
   color: var(--green);
-  font-size: 7px;
+  font-size: 12px;
   opacity: 0;
   transition: height 180ms ease, margin 180ms ease, opacity 180ms ease;
 }
@@ -819,7 +835,7 @@ svg {
 .phone-context small {
   margin-top: 3px;
   color: var(--muted);
-  font-size: 7px;
+  font-size: 12px;
 }
 
 .phone-prompt {
@@ -828,7 +844,7 @@ svg {
   padding: 10px 11px;
   border-radius: 7px;
   background: #263a55;
-  font-size: 8px;
+  font-size: 12px;
   line-height: 1.4;
   opacity: 0;
   transform: translateY(8px);
@@ -859,12 +875,12 @@ svg {
 .phone-result b {
   color: var(--green);
   font-family: var(--mono);
-  font-size: 7px;
+  font-size: 12px;
 }
 
 .phone-result p {
   margin: 7px 0 0;
-  font-size: 8px;
+  font-size: 12px;
   line-height: 1.45;
 }
 
@@ -893,7 +909,7 @@ svg {
   flex: 1;
   overflow: hidden;
   color: var(--dim);
-  font-size: 8px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -949,7 +965,7 @@ svg {
   border-radius: 6px;
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.5);
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -1012,7 +1028,7 @@ svg {
   gap: 24px;
   color: var(--dim);
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: 12px;
   text-transform: uppercase;
 }
 
@@ -1024,7 +1040,7 @@ svg {
 
 .section-light {
   background: var(--paper);
-  color: #171718;
+  color: #1a1717;
 }
 
 .section-dark {
@@ -1033,7 +1049,9 @@ svg {
 }
 
 .section-ink {
-  background: #0c0c0d;
+  /* was #0c0c0d (cool) and visually identical to .section-dark; now the
+     darkest warm tier so it reads as a deliberate step, not a near-dupe */
+  background: var(--black);
   color: var(--text);
 }
 
@@ -1107,7 +1125,7 @@ svg {
   right: 20px;
   color: #8c8c88;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .workflow-steps h3 {
@@ -1221,7 +1239,7 @@ svg {
 
 .mini-titlebar b {
   margin-left: 9px;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .mini-editor {
@@ -1235,7 +1253,7 @@ svg {
   display: block;
   color: var(--blue-soft);
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .mini-editor > strong {
@@ -1272,7 +1290,7 @@ svg {
   background: rgba(10, 132, 255, 0.1);
   color: var(--blue-soft);
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .continuity-line {
@@ -1322,7 +1340,7 @@ svg {
   align-items: center;
   gap: 7px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .mini-phone-header span {
@@ -1343,7 +1361,7 @@ svg {
   display: block;
   margin-top: 10px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .continuity-visual[data-mode="reply"] .mini-status,
@@ -1405,7 +1423,7 @@ svg {
 .support-tier small {
   margin-top: 3px;
   color: #767672;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .support-apps {
@@ -1502,7 +1520,7 @@ svg {
 .connection-node small {
   margin-top: 5px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .encrypted-line {
@@ -1534,7 +1552,7 @@ svg {
   width: 160px;
   color: var(--muted);
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 12px;
   text-align: center;
   transform: translateX(-50%);
 }
@@ -1563,13 +1581,13 @@ svg {
 }
 
 .routing-plane span {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 650;
 }
 
 .routing-plane small {
   color: #a7977d;
-  font-size: 8px;
+  font-size: 12px;
 }
 
 .open-source {
@@ -1626,7 +1644,7 @@ svg {
   border: 1px solid #c7c7c2;
   border-radius: 5px;
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 12px;
 }
 
 .repo-tree {
@@ -1641,7 +1659,7 @@ svg {
   min-height: 46px;
   border-bottom: 1px solid #e0e0dc;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .repo-tree span:last-child {
@@ -1660,7 +1678,7 @@ svg {
   padding: 14px 22px;
   border-top: 1px solid #d6d6d1;
   color: #777773;
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .install {
@@ -1700,7 +1718,7 @@ svg {
   border-radius: 50%;
   color: var(--blue-soft);
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .install-copy li div {
@@ -1714,7 +1732,7 @@ svg {
 .install-copy li small {
   margin-top: 5px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .install-terminal {
@@ -1749,7 +1767,7 @@ svg {
 .terminal-bar small {
   color: var(--muted);
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .install-terminal pre {
@@ -1778,7 +1796,7 @@ svg {
   border-radius: 6px;
   background: #1a1a1c;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .copy-button svg {
@@ -1910,7 +1928,7 @@ svg {
 .footer-links strong {
   margin-bottom: 5px;
   color: var(--text);
-  font-size: 11px;
+  font-size: 12px;
   text-transform: uppercase;
 }
 
@@ -1932,7 +1950,7 @@ svg {
   border-top: 1px solid var(--border-soft);
   color: var(--dim);
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: 12px;
   text-transform: uppercase;
 }
 
@@ -2180,7 +2198,7 @@ svg {
 
   .eyebrow {
     margin-bottom: 14px;
-    font-size: 10px;
+    font-size: 12px;
   }
 
   .hero h1 {
@@ -2208,7 +2226,7 @@ svg {
   }
 
   .release-note {
-    font-size: 9px;
+    font-size: 12px;
   }
 
   .hero-product {
@@ -2404,7 +2422,7 @@ svg {
   .install-terminal pre {
     min-height: 210px;
     padding: 55px 18px 22px;
-    font-size: 10px;
+    font-size: 12px;
     white-space: pre-wrap;
     word-break: break-word;
   }
@@ -2458,4 +2476,127 @@ svg {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+.install pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* =============================================================================
+   Section 2 vignettes — miniature product UI instead of generic line icons,
+   so the section speaks the same visual language as the hero.
+   Dark panels on the light section, using the real app tokens.
+   ========================================================================== */
+.wf-vig {
+  margin: 0 0 22px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--ink);
+  border: 1px solid rgba(0, 0, 0, .12);
+  box-shadow: 0 14px 30px -16px rgba(0, 0, 0, .55);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-height: 132px;
+}
+
+/* 01 — agent status rows */
+.wf-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 9px; border-radius: 6px;
+  background: var(--surface);
+  font-size: var(--t-micro); color: var(--text);
+}
+.wf-row.is-dim { opacity: .45; }
+.wf-row b { flex: 1; font-weight: 500; }
+.wf-ico { width: 14px; height: 14px; border-radius: 4px; background: rgba(253,252,252,.14); flex: none; }
+.wf-ico-codex { background: linear-gradient(140deg, #4aa3ff, var(--blue)); }
+.wf-ico-term { background: #3f3a3a; box-shadow: inset 0 0 0 1px rgba(253,252,252,.18); }
+.wf-state { font-family: var(--mono); font-size: var(--t-micro); color: var(--dim); }
+.wf-state.wf-work { color: var(--green); }
+.wf-state.wf-wait { color: var(--amber); }
+
+/* 02 — conversation + composer */
+.wf-bubble {
+  padding: 7px 9px; border-radius: 6px;
+  font-size: var(--t-micro); line-height: 1.4; color: var(--text);
+  max-width: 88%;
+}
+.wf-bubble-user { align-self: flex-end; background: rgba(0,122,255,.14); border: 1px solid rgba(0,122,255,.32); }
+.wf-bubble-ai { background: var(--surface); border: 1px solid var(--border-soft); color: var(--muted); }
+.wf-composer {
+  margin-top: auto; display: flex; align-items: center; gap: 8px;
+  padding: 7px 9px; border-radius: 999px;
+  background: rgba(253,252,252,.05); border: 1px solid var(--border-soft);
+  font-size: var(--t-micro); color: var(--dim);
+}
+.wf-composer span { flex: 1; }
+.wf-composer i { width: 16px; height: 16px; border-radius: 50%; background: var(--blue); flex: none; }
+
+/* 03 — shared screen with a remote cursor */
+.wf-screen {
+  position: relative; flex: 1;
+  border-radius: 7px; overflow: hidden;
+  background: #171414; border: 1px solid var(--border-soft);
+}
+.wf-screen-bar { display: flex; gap: 4px; padding: 6px 8px; background: var(--surface-raised); }
+.wf-screen-bar i { width: 6px; height: 6px; border-radius: 50%; background: #524d4d; }
+.wf-screen-bar i:first-child { background: #ff5f57; }
+.wf-screen-body { padding: 9px; display: flex; flex-direction: column; gap: 6px; }
+.wf-line { height: 5px; border-radius: 3px; background: rgba(253,252,252,.14); }
+.wf-line.w60 { width: 60%; } .wf-line.w40 { width: 40%; }
+.wf-cursor {
+  position: absolute; right: 26%; bottom: 24%;
+  width: 0; height: 0;
+  border-left: 7px solid #fff;
+  border-bottom: 10px solid transparent;
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,.7));
+  transform: rotate(-14deg);
+}
+.wf-chip {
+  align-self: flex-start; padding: 4px 9px; border-radius: 999px;
+  background: rgba(48,209,88,.14); border: 1px solid rgba(48,209,88,.34);
+  font-family: var(--mono); font-size: var(--t-micro); color: var(--green);
+}
+
+@media (max-width: 860px) {
+  .wf-vig { min-height: 0; }
+}
+
+/* The three vignettes hold different content, so their natural heights differ
+   (136 / 140 / 132px) and the headings below fell out of alignment.
+   Make each article a flex column and let the vignette absorb the slack. */
+.workflow-steps article { display: flex; flex-direction: column; }
+.workflow-steps .wf-vig { height: 148px; }
+.workflow-steps h3 { margin-top: 0; }
+
+/* =============================================================================
+   Support tiers — app chips with per-app marks, so the names read as the apps
+   they are rather than a plain text list. Names match RemoteAppController's
+   displayName values exactly.
+   ========================================================================== */
+.support-apps { display: flex; flex-wrap: wrap; gap: 8px; }
+.app-tag {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 11px 6px 8px;
+  border-radius: 999px;
+  background: rgba(253, 252, 252, .05);
+  border: 1px solid var(--border-soft);
+  font-size: var(--t-ui);
+  color: var(--text);
+  white-space: nowrap;
+}
+.app-dot {
+  width: 14px; height: 14px; border-radius: 4px; flex: none;
+  background: var(--surface-raised);
+  box-shadow: inset 0 0 0 1px rgba(253, 252, 252, .16);
+}
+.app-dot.app-screen   { background: linear-gradient(140deg, #6aa9ff, var(--blue)); box-shadow: none; }
+.app-dot.app-terminal { background: #171414; box-shadow: inset 0 0 0 1px rgba(253,252,252,.3); }
+.app-dot.app-codex    { background: linear-gradient(140deg, #8e8e93, #2c2c2e); box-shadow: none; }
+.app-dot.app-cursor   { background: linear-gradient(140deg, #d7d7db, #6f6b6b); box-shadow: none; }
+.app-dot.app-gemini   { background: linear-gradient(140deg, #4aa3ff, #9b6bff); box-shadow: none; }
+.app-dot.app-opencode { background: linear-gradient(140deg, #30d158, #1c7f3a); box-shadow: none; }
+.app-dot.app-claude   { background: linear-gradient(140deg, #e8a87c, #d97757); box-shadow: none; }
+
+@media (max-width: 720px) {
+  .app-tag { font-size: var(--t-micro); padding: 5px 9px 5px 7px; }
 }

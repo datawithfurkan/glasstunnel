@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1200" viewBox="0 0 1200 1200">
+  <!--
+    Authored on a SQUARE canvas on purpose: qlmanage renders QuickLook thumbnails
+    square and scales to fit, which clipped a 1200x630 source. The OG artwork sits
+    in the centre 630px band (y 285..915) so a centre-crop to 1200x630 is exact.
+      qlmanage -t -s 1200 -o out brand/og-source.svg && sips -c 630 1200 out/*.png
+  -->
+  <defs>
+    <radialGradient id="glow" cx="76%" cy="26%" r="62%">
+      <stop offset="0%" stop-color="#2a2525"/>
+      <stop offset="46%" stop-color="#232020"/>
+      <stop offset="100%" stop-color="#201d1d"/>
+    </radialGradient>
+    <radialGradient id="accentGlow" cx="80%" cy="30%" r="38%">
+      <stop offset="0%" stop-color="#007aff" stop-opacity=".20"/>
+      <stop offset="60%" stop-color="#007aff" stop-opacity=".05"/>
+      <stop offset="100%" stop-color="#007aff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="1200" height="1200" fill="url(#glow)"/>
+  <rect width="1200" height="1200" fill="url(#accentGlow)"/>
+
+  <!-- brand mark — identical geometry to the app and site -->
+  <g transform="translate(84,352) scale(0.78)">
+    <rect x=".5" y=".5" width="99" height="99" rx="28"
+          fill="#007aff" fill-opacity=".12" stroke="#007aff" stroke-opacity=".26" stroke-width="1"/>
+    <g fill="none" stroke="#007aff" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M30 66 V38 C30 18 72 18 72 38 V66"/>
+      <g stroke-opacity=".72">
+        <path d="M12 48 H48"/><path d="M8 58 H48"/><path d="M16 68 H48"/>
+      </g>
+    </g>
+  </g>
+  <text x="176" y="415" fill="#fdfcfc" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif"
+        font-size="36" font-weight="600" letter-spacing="-0.4">Glasstunnel</text>
+
+  <text x="84" y="566" fill="#fdfcfc" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif"
+        font-size="70" font-weight="600" letter-spacing="-2.2">Control your coding</text>
+  <text x="84" y="648" fill="#fdfcfc" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif"
+        font-size="70" font-weight="600" letter-spacing="-2.2">agents from your phone.</text>
+
+  <text x="84" y="712" fill="#9a9898" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif"
+        font-size="26">Prompt Codex, run terminal commands, and take</text>
+  <text x="84" y="750" fill="#9a9898" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif"
+        font-size="26">over your Mac's screen — from anywhere.</text>
+
+  <rect x="84" y="800" width="420" height="1" fill="#fdfcfc" fill-opacity=".12"/>
+  <text x="84" y="842" fill="#6f6b6b" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+        font-size="21" letter-spacing="0.5">Open source · Apache 2.0 · macOS 14+</text>
+</svg>
