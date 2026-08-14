@@ -358,3 +358,5 @@ document.querySelector<HTMLButtonElement>('[data-copy-command]')?.addEventListen
     createIcons({ icons: siteIcons });
   }
 });
+
+import './hero-v2';
