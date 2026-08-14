@@ -13,26 +13,24 @@ function ariaProps(alt?: string) {
 export function BrandMark({ className = '', alt }: BrandImageProps) {
   return (
     <span
-      className={`inline-flex items-center justify-center rounded-[16px] border border-accent/25 bg-accent/10 text-accent ${className}`}
+      className={`inline-flex items-center justify-center rounded-[16px] border border-accent/25 bg-accent/12 text-accent ${className}`}
       {...ariaProps(alt)}
     >
+      {/* Geometry matches the Mac app's BrandMarkView (GlasstunnelBrand.swift)
+          and the marketing site's brand/glasstunnel-mark.svg, scaled to 40u,
+          so all three surfaces render the identical mark. */}
       <svg viewBox="0 0 40 40" className="h-[68%] w-[68%]" fill="none" aria-hidden="true">
         <path
-          d="M12 25V15c0-4.4 3.6-8 8-8h2c4.4 0 8 3.6 8 8v10"
+          d="M12 26.4V15.2C12 7.2 28.8 7.2 28.8 15.2V26.4"
           stroke="currentColor"
-          strokeWidth="2.4"
+          strokeWidth="2.2"
           strokeLinecap="round"
-        />
-        <path
-          d="M11 25h20v6H11z"
-          stroke="currentColor"
-          strokeWidth="2.4"
           strokeLinejoin="round"
         />
         <path
-          d="M6 20h13M4 25h15M8 30h11"
+          d="M4.8 19.2H19.2M3.2 23.2H19.2M6.4 27.2H19.2"
           stroke="currentColor"
-          strokeWidth="2.4"
+          strokeWidth="2.2"
           strokeLinecap="round"
           opacity="0.72"
         />

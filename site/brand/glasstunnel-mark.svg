@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="Glasstunnel">
+  <!--
+    Ported 1:1 from the Mac app's BrandMarkView (SwiftUI Canvas).
+    Geometry, opacities and stroke weights match apps/host-macos/Sources/App/UI/GlasstunnelBrand.swift
+    so the website and the app show the same mark.
+      container : cornerRadius size*0.28, accent @12% fill, accent @26% 1px stroke
+      tunnel    : (.30,.66) -> (.30,.38) -> curve -> (.72,.38) -> (.72,.66)
+      lines     : (.12,.48) (.08,.58) (.16,.68) -> x .48, accent @72%
+      stroke    : size * 0.055, round caps and joins
+  -->
+  <rect x=".5" y=".5" width="99" height="99" rx="28"
+        fill="#007aff" fill-opacity=".12"
+        stroke="#007aff" stroke-opacity=".26" stroke-width="1"/>
+  <g fill="none" stroke="#007aff" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M30 66 V38 C30 18 72 18 72 38 V66"/>
+    <g stroke-opacity=".72">
+      <path d="M12 48 H48"/>
+      <path d="M8 58 H48"/>
+      <path d="M16 68 H48"/>
+    </g>
+  </g>
+</svg>
