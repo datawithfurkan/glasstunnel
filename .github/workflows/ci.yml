@@ -22,6 +22,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: node scripts/public-repository-audit.mjs
+      - run: node scripts/public-remote-ref-audit.mjs
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter=@glasstunnel/protocol build
       - run: pnpm --filter=@glasstunnel/shared-crypto build

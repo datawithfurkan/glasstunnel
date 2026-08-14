@@ -82,6 +82,8 @@
     "qa:mac:notarization": "bash scripts/mac-notarization-smoke.sh",
     "qa:security-privacy": "bash scripts/security-privacy-audit.sh",
     "qa:public-repo": "node scripts/public-repository-audit.mjs",
+    "qa:public-remote-refs": "node scripts/public-remote-ref-audit.mjs",
+    "qa:public-remote-refs:test": "node --test scripts/public-remote-ref-audit.test.mjs",
     "qa:secrets:history": "gitleaks git --no-banner --redact=100 --config .gitleaks.toml --log-opts=HEAD .",
     "release:mac:install-smoke": "bash scripts/mac-install-upgrade-smoke.sh",
     "release:agent-apps": "bash scripts/release-agent-apps.sh",

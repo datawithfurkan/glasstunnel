@@ -129,6 +129,7 @@ echo "Branch: $(git branch --show-current)"
 echo
 
 run_check "Public repository metadata and artifact guard" pnpm qa:public-repo
+run_check "Public remote ref guard" pnpm qa:public-remote-refs
 run_check "Public security/privacy documentation" check_docs
 run_check "Tracked secret-file guard" check_tracked_secret_files
 run_check "Signaling log content guard" check_signaling_logs
