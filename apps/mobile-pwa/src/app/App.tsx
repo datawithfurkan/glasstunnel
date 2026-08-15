@@ -8,6 +8,15 @@ import { AgentCarousel } from '../agents/AgentCarousel';
 import { TopBar } from '../ui/TopBar';
 import { applyWorkspaceFixture, isWorkspaceFixtureEnabled } from '../dev/workspaceFixture';
 import { APP_UPDATE_REQUIRED_COPY, APP_UPDATE_REQUIRED_EVENT } from './appUpdateRecovery';
+import {
+  LIFECYCLE_RECOVERY_DEBOUNCE_MS,
+  focusRecoveryRequest,
+  mergeLifecycleRecoveryRequest,
+  networkOnlineRecoveryRequest,
+  pageResumeRecoveryRequest,
+  pageShowRecoveryRequest,
+  type LifecycleRecoveryRequest,
+} from './lifecycleRecovery';
 
 export function App() {
   const [updateRequired, setUpdateRequired] = useState(false);
@@ -61,28 +70,41 @@ export function App() {
 
   useEffect(() => {
     let hiddenAt = 0;
-    const recover = (forceRestart: boolean, reason: string) => {
+    let pendingRecover: LifecycleRecoveryRequest | null = null;
+    let recoverTimer: number | null = null;
+    const recover = (request: LifecycleRecoveryRequest) => {
       if (document.visibilityState === 'hidden') return;
-      void recoverConnection({ forceRestart, reason });
+      pendingRecover = mergeLifecycleRecoveryRequest(pendingRecover, request);
+      if (recoverTimer !== null) return;
+      recoverTimer = window.setTimeout(() => {
+        recoverTimer = null;
+        const request = pendingRecover;
+        pendingRecover = null;
+        if (!request || document.visibilityState === 'hidden') return;
+        void recoverConnection(request);
+      }, LIFECYCLE_RECOVERY_DEBOUNCE_MS);
     };
     const onVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
         hiddenAt = Date.now();
         return;
       }
-      recover(Date.now() - hiddenAt > 1_500, 'page-resume');
+      recover(pageResumeRecoveryRequest(Date.now() - hiddenAt));
     };
     const onPageShow = (event: PageTransitionEvent) => {
-      recover(event.persisted, 'page-show');
+      recover(pageShowRecoveryRequest(event.persisted));
     };
-    const onFocus = () => recover(false, 'focus');
-    const onOnline = () => recover(true, 'network-online');
+    const onFocus = () => recover(focusRecoveryRequest());
+    const onOnline = () => recover(networkOnlineRecoveryRequest());
 
     document.addEventListener('visibilitychange', onVisibilityChange);
     window.addEventListener('pageshow', onPageShow);
     window.addEventListener('focus', onFocus);
     window.addEventListener('online', onOnline);
     return () => {
+      if (recoverTimer !== null) {
+        window.clearTimeout(recoverTimer);
+      }
       document.removeEventListener('visibilitychange', onVisibilityChange);
       window.removeEventListener('pageshow', onPageShow);
       window.removeEventListener('focus', onFocus);

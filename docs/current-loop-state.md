@@ -1,6 +1,6 @@
 # Current loop state
 
-Last updated: 2026-08-05.
+Last updated: 2026-08-15.
 
 ## Baseline
 
@@ -23,6 +23,11 @@ signed, notarized `0.1.5` prerelease is available. Keep raw test artifacts, priv
 account details, absolute machine paths, and personal credentials out of Git. The next
 product-development loop should start from the highest-impact remaining beta risk in
 `docs/public-release-readiness.md` rather than replaying this release movement.
+
+Active product-audit slice: Mobile Interaction Fitness. Use
+`docs/product-audit-backlog.md` as the durable queue. After completing the
+active slice, record validation evidence there and mark the next queued slice
+active so follow-up work does not depend on chat history.
 
 ## Working rule
 

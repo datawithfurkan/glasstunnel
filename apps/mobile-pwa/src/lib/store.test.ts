@@ -1,4 +1,64 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const supabaseAuthMock = vi.hoisted(() => ({
+  getSession: vi.fn(),
+  refreshSession: vi.fn(),
+}));
+
+const relayConnectionMock = vi.hoisted(() => {
+  const instances: MockRelayConnection[] = [];
+
+  class MockRelayConnection {
+    opts: unknown;
+    connected = false;
+    resolveConnect: ((deviceId: string) => void) | null = null;
+    rejectConnect: ((error: Error) => void) | null = null;
+    connect = vi.fn(
+      () =>
+        new Promise<string>((resolve, reject) => {
+          this.resolveConnect = (deviceId: string) => {
+            this.connected = true;
+            resolve(deviceId);
+          };
+          this.rejectConnect = reject;
+        }),
+    );
+    disconnect = vi.fn(() => {
+      this.connected = false;
+    });
+    sendHeartbeat = vi.fn();
+
+    constructor(opts: unknown) {
+      this.opts = opts;
+      instances.push(this);
+    }
+
+    get isConnected() {
+      return this.connected;
+    }
+
+    get isHostOnline() {
+      return this.connected;
+    }
+  }
+
+  return {
+    instances,
+    MockRelayConnection,
+  };
+});
+
+vi.mock('./supabase', () => ({
+  hasSupabaseAuth: () => true,
+  supabase: {
+    auth: supabaseAuthMock,
+  },
+}));
+
+vi.mock('../transport/RelayConnection', () => ({
+  RelayConnection: relayConnectionMock.MockRelayConnection,
+}));
+
 import {
   hasLinkCodeParam,
   mergeClaimedHost,
@@ -8,6 +68,103 @@ import {
 } from './store';
 import { SCREEN_STREAM_CONNECTING_MESSAGE } from './screenStreamStatus';
 import { AdapterKind, AgentStatus, ChatRole, type AgentTargetOption } from '@glasstunnel/protocol';
+import type { DeviceKeypair } from '@glasstunnel/shared-crypto';
+import type { PairedHost } from './store';
+
+interface MockRelayConnection {
+  connected: boolean;
+  connect: ReturnType<typeof vi.fn>;
+  disconnect: ReturnType<typeof vi.fn>;
+  sendHeartbeat: ReturnType<typeof vi.fn>;
+  resolveConnect: ((deviceId: string) => void) | null;
+  rejectConnect: ((error: Error) => void) | null;
+  readonly isConnected: boolean;
+  readonly isHostOnline: boolean;
+}
+
+describe('app store connection recovery', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    relayConnectionMock.instances.length = 0;
+    supabaseAuthMock.getSession.mockReset();
+    supabaseAuthMock.refreshSession.mockReset();
+    useAppStore.getState().disconnectPeer();
+    useAppStore.setState({
+      route: 'loading',
+      phoneKeypair: null,
+      pairedHost: null,
+      relayHostOnline: null,
+      hostHello: null,
+      peer: null,
+      signaling: null,
+      relay: null,
+      error: null,
+    });
+  });
+
+  it('coalesces concurrent recovery requests into one peer start', async () => {
+    setupRecoverableWorkspace();
+
+    const first = useAppStore.getState().recoverConnection({
+      forceRestart: true,
+      reason: 'page-show',
+    });
+    const second = useAppStore.getState().recoverConnection({
+      forceRestart: true,
+      reason: 'page-resume',
+    });
+
+    expect(second).toBe(first);
+    await vi.waitFor(() => expect(relayConnectionMock.instances).toHaveLength(1));
+
+    relayConnectionMock.instances[0]?.resolveConnect?.('host-device');
+    await Promise.all([first, second]);
+
+    expect(relayConnectionMock.instances).toHaveLength(1);
+  });
+
+  it('disconnects a relay that connects after a newer peer start supersedes it', async () => {
+    setupRecoverableWorkspace();
+
+    const staleStart = useAppStore.getState().startPeer();
+    await vi.waitFor(() => expect(relayConnectionMock.instances).toHaveLength(1));
+    const staleRelay: MockRelayConnection = relayConnectionMock.instances[0]!;
+
+    const currentStart = useAppStore.getState().startPeer();
+    await vi.waitFor(() => expect(relayConnectionMock.instances).toHaveLength(2));
+    const currentRelay: MockRelayConnection = relayConnectionMock.instances[1]!;
+
+    staleRelay.resolveConnect?.('host-device');
+    await Promise.resolve();
+    currentRelay.resolveConnect?.('host-device');
+    await Promise.all([staleStart, currentStart]);
+
+    expect(staleRelay.disconnect).toHaveBeenCalledOnce();
+    expect(currentRelay.disconnect).not.toHaveBeenCalled();
+    expect(useAppStore.getState().relay).toBe(currentRelay);
+  });
+
+  it('does not let incidental lifecycle recovery cancel a pending reconnect backoff', async () => {
+    setupRecoverableWorkspace();
+
+    const failedStart = useAppStore.getState().startPeer();
+    await vi.waitFor(() => expect(relayConnectionMock.instances).toHaveLength(1));
+    relayConnectionMock.instances[0]?.rejectConnect?.(
+      new Error('relay WebSocket failed to connect'),
+    );
+    await failedStart;
+
+    expect(useAppStore.getState().relayHostOnline).toBe(false);
+
+    await useAppStore.getState().recoverConnection({
+      forceRestart: true,
+      reason: 'page-resume',
+    });
+
+    expect(relayConnectionMock.instances).toHaveLength(1);
+  });
+});
 
 describe('app store screen video lifecycle', () => {
   afterEach(() => {
@@ -826,6 +983,70 @@ describe('app store account link routing', () => {
     ]);
   });
 });
+
+function setupRecoverableWorkspace() {
+  vi.useFakeTimers();
+  vi.stubGlobal('document', { visibilityState: 'visible' });
+  vi.stubGlobal('window', {
+    setTimeout: globalThis.setTimeout.bind(globalThis),
+    clearTimeout: globalThis.clearTimeout.bind(globalThis),
+    setInterval: globalThis.setInterval.bind(globalThis),
+    clearInterval: globalThis.clearInterval.bind(globalThis),
+    location: {
+      protocol: 'https:',
+      host: 'app.example.test',
+      origin: 'https://app.example.test',
+      href: 'https://app.example.test/',
+      search: '',
+    },
+  });
+  supabaseAuthMock.getSession.mockResolvedValue({
+    data: {
+      session: {
+        access_token: 'test-access-token',
+        refresh_token: 'test-refresh-token',
+        user: {
+          id: 'user-test',
+          email: 'test@glasstunnel.test',
+          user_metadata: {},
+        },
+      },
+    },
+    error: null,
+  });
+  useAppStore.getState().disconnectPeer();
+  useAppStore.setState({
+    route: 'workspace',
+    locked: false,
+    phoneKeypair: testKeypair(),
+    pairedHost: testPairedHost(),
+    relayHostOnline: false,
+    hostHello: null,
+    peer: null,
+    signaling: null,
+    relay: null,
+    error: null,
+    refreshHosts: vi.fn(async () => {}),
+  });
+}
+
+function testKeypair(): DeviceKeypair {
+  return {
+    deviceId: 'phone-device',
+    publicKey: new Uint8Array(32).fill(1),
+    privateKey: new Uint8Array(32).fill(2),
+  };
+}
+
+function testPairedHost(): PairedHost {
+  return {
+    deviceId: 'host-device',
+    publicKeyB64: 'host-public-key',
+    label: 'Test Mac',
+    signalingUrl: 'wss://signal.example.test/signal',
+    pairedAtUnixMs: 1_781_000_000_000,
+  };
+}
 
 function agentSnapshot(
   agentId: string,

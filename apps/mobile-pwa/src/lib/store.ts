@@ -88,6 +88,12 @@ export interface AuthenticatedUser {
   avatarUrl?: string;
 }
 
+interface RecoverConnectionOptions {
+  reason?: string;
+  forceRestart?: boolean;
+  refreshHosts?: boolean;
+}
+
 export interface AppState {
   route: Route;
   locked: boolean;
@@ -123,11 +129,7 @@ export interface AppState {
   clearVideoStream: (agentId: string) => void;
   clearRelayScreenFrame: (agentId: string) => void;
   setScreenShareQuality: (quality: ScreenShareQuality) => void;
-  recoverConnection: (options?: {
-    reason?: string;
-    forceRestart?: boolean;
-    refreshHosts?: boolean;
-  }) => Promise<void>;
+  recoverConnection: (options?: RecoverConnectionOptions) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   signInWithGitHub: () => Promise<void>;
   signInWithPassword: (email: string, password: string) => Promise<void>;
@@ -180,6 +182,7 @@ let videoPeerStartGeneration = 0;
 const peerFlowAbortRegistry = new PeerFlowAbortRegistry();
 let reconnectTimer: number | null = null;
 let reconnectAttempt = 0;
+let recoverConnectionInFlight: Promise<void> | null = null;
 let lastRecoverHostRefreshAt = 0;
 let pendingScreenStop = false;
 let pendingScreenStopRequestedAt = 0;
@@ -188,6 +191,14 @@ let screenStopConfirmationTimer: number | null = null;
 const REFRESH_HOSTS_MIN_INTERVAL_MS = 5_000;
 const RECOVER_HOST_REFRESH_INTERVAL_MS = 30_000;
 const RECONNECT_BACKOFF_MS = [1_500, 3_000, 5_000, 10_000, 20_000, 30_000];
+const USER_INITIATED_RECOVERY_REASONS = new Set([
+  'workspace-retry',
+  'remote-app-retry',
+  'remote-app-start',
+  'terminal-new-session',
+  'terminal-close-session',
+  'terminal-rename-session',
+]);
 
 type SetState = (
   partial: AppState | Partial<AppState> | ((state: AppState) => AppState | Partial<AppState>),
@@ -344,6 +355,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { phoneKeypair, pairedHost } = get();
     if (!phoneKeypair || !pairedHost) return;
     const generation = ++peerStartGeneration;
+    const isCurrent = () => generation === peerStartGeneration;
     videoPeerStartGeneration += 1;
     peerFlowAbortRegistry.cancelAll();
     clearReconnectTimer();
@@ -351,6 +363,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     get().signaling?.disconnect();
     get().relay?.disconnect();
     const cached = await loadRelayCache(pairedHost.deviceId);
+    if (!isCurrent()) return;
     const current = get();
     const canReuseCurrentWorkspace = current.workspaceHostDeviceId === pairedHost.deviceId;
     set({
@@ -369,10 +382,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         ? connectionStatusCopy('cached-reconnecting')
         : connectionStatusCopy('connecting'),
     });
-    const isCurrent = () => generation === peerStartGeneration;
     try {
       const session = await currentSession();
+      if (!isCurrent()) return;
       const { RelayConnection } = await import('../transport/RelayConnection');
+      if (!isCurrent()) return;
       const relay = new RelayConnection({
         keypair: phoneKeypair,
         host: pairedHost,
@@ -478,7 +492,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         },
       });
       await relay.connect();
-      if (!isCurrent()) return;
+      if (!isCurrent()) {
+        relay.disconnect();
+        return;
+      }
       set({ relay });
       const heartbeat = window.setInterval(() => {
         if (!isCurrent() || !relay.isConnected) {
@@ -561,47 +578,59 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ screenShareQuality: quality });
   },
 
-  async recoverConnection(options) {
-    const state = get();
-    if (!isWorkspaceRoute(state.route) || !state.pairedHost || !state.phoneKeypair) return;
-    if (isDocumentHidden()) return;
-    if (
-      !options?.forceRestart &&
-      state.relayHostOnline === true &&
-      state.hostHello &&
-      (state.relay || state.peer) &&
-      (!state.error || isScreenStreamStatusMessage(state.error))
-    ) {
-      return;
-    }
-
-    const now = Date.now();
-    if (
-      options?.refreshHosts ||
-      now - lastRecoverHostRefreshAt > RECOVER_HOST_REFRESH_INTERVAL_MS
-    ) {
-      lastRecoverHostRefreshAt = now;
-      try {
-        await get().refreshHosts({ force: true });
-        const latest = get();
-        const selected = latest.pairedHost;
-        const accountHost = selected
-          ? latest.availableHosts.find((host) => host.deviceId === selected.deviceId)
-          : null;
-        if (accountHost && !accountHost.online) {
-          set({
-            relayHostOnline: false,
-            error: connectionStatusCopy('offline-cached'),
-          });
-        }
-      } catch (error) {
-        const message = connectionError(error);
-        set({ error: message });
-        scheduleReconnect(set, get, message);
+  recoverConnection(options) {
+    if (recoverConnectionInFlight) return recoverConnectionInFlight;
+    const recovery = (async () => {
+      const state = get();
+      if (!isWorkspaceRoute(state.route) || !state.pairedHost || !state.phoneKeypair) return;
+      if (isDocumentHidden()) return;
+      if (
+        !options?.forceRestart &&
+        state.relayHostOnline === true &&
+        state.hostHello &&
+        (state.relay || state.peer) &&
+        (!state.error || isScreenStreamStatusMessage(state.error))
+      ) {
+        return;
       }
-    }
+      if (shouldDeferToPendingReconnect(options?.reason)) return;
 
-    await get().startPeer();
+      const now = Date.now();
+      if (
+        options?.refreshHosts ||
+        now - lastRecoverHostRefreshAt > RECOVER_HOST_REFRESH_INTERVAL_MS
+      ) {
+        lastRecoverHostRefreshAt = now;
+        try {
+          await get().refreshHosts({ force: true });
+          const latest = get();
+          const selected = latest.pairedHost;
+          const accountHost = selected
+            ? latest.availableHosts.find((host) => host.deviceId === selected.deviceId)
+            : null;
+          if (accountHost && !accountHost.online) {
+            set({
+              relayHostOnline: false,
+              error: connectionStatusCopy('offline-cached'),
+            });
+          }
+        } catch (error) {
+          const message = connectionError(error);
+          set({ error: message });
+          scheduleReconnect(set, get, message);
+          return;
+        }
+      }
+
+      await get().startPeer();
+    })();
+    const guardedRecovery = recovery.finally(() => {
+      if (recoverConnectionInFlight === guardedRecovery) {
+        recoverConnectionInFlight = null;
+      }
+    });
+    recoverConnectionInFlight = guardedRecovery;
+    return guardedRecovery;
   },
 
   async signInWithGoogle() {
@@ -1725,6 +1754,10 @@ function clearReconnectTimer() {
     window.clearTimeout(reconnectTimer);
   }
   reconnectTimer = null;
+}
+
+function shouldDeferToPendingReconnect(reason?: string): boolean {
+  return reconnectTimer !== null && !USER_INITIATED_RECOVERY_REASONS.has(reason ?? '');
 }
 
 function scheduleReconnect(set: SetState, get: () => AppState, reason: string) {
