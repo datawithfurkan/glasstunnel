@@ -27,6 +27,14 @@ body,
   height: 100%;
 }
 
+@supports (height: 100dvh) {
+  html,
+  body,
+  #root {
+    height: 100dvh;
+  }
+}
+
 body {
   background: var(--gt-bg);
   color: var(--gt-text);
@@ -88,7 +96,7 @@ body {
   }
 
   .gt-button {
-    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-40;
+    @apply inline-flex min-h-11 items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-40;
     border-radius: 10px;
     border: 1px solid var(--gt-border);
   }
@@ -136,7 +144,7 @@ body {
   }
 
   .gt-input {
-    @apply w-full px-4 py-3 outline-none transition;
+    @apply w-full px-4 py-3 text-base outline-none transition;
     border-radius: 10px;
     border: 1px solid var(--gt-border);
     background: var(--gt-bg);
@@ -166,7 +174,7 @@ body {
   }
 
   .gt-segment-button {
-    @apply inline-flex items-center justify-center px-3 py-2 text-sm transition;
+    @apply inline-flex min-h-11 items-center justify-center px-3 py-2 text-sm transition;
     border-radius: 8px;
     color: rgba(154, 152, 152, 0.88);
   }
@@ -178,6 +186,19 @@ body {
 
   .gt-status-dot {
     @apply h-1.5 w-1.5 rounded-full;
+  }
+
+  .gt-touch-target {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .gt-mobile-composer {
+    padding-bottom: max(env(safe-area-inset-bottom), 12px);
+  }
+
+  .gt-composer-input {
+    font-size: 16px;
   }
 }
 
@@ -208,13 +229,7 @@ body {
 }
 
 .horizontal-strip-button {
-  @apply absolute top-1/2 z-10 hidden h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border border-white/15 bg-black/75 text-white shadow-lg shadow-black/30 transition hover:bg-black/90 focus:outline-none focus:ring-2 focus:ring-accent/70 sm:flex;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .horizontal-strip-button {
-    display: flex;
-  }
+  @apply absolute top-1/2 z-10 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full border border-white/15 bg-black/80 text-white shadow-lg shadow-black/30 transition hover:bg-black/90 focus:outline-none focus:ring-2 focus:ring-accent/70;
 }
 
 .horizontal-strip-button-left {

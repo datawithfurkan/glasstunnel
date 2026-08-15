@@ -32,6 +32,7 @@ interface Props {
   connectionError?: string | null;
   headerAction?: ReactNode;
   onSelectTarget?: (target: AgentTargetOption) => void;
+  compactChrome?: boolean;
 }
 
 const quickReplies: { label: string; kind: QuickReplyKind }[] = [
@@ -265,6 +266,7 @@ export function AgentCard({
   connectionError = null,
   headerAction,
   onSelectTarget,
+  compactChrome = false,
 }: Props) {
   const sendText = useAppStore((s) => s.sendText);
   const sendInputRequestResponse = useAppStore((s) => s.sendInputRequestResponse);
@@ -335,8 +337,8 @@ export function AgentCard({
     ? 'min-w-0 flex-1 min-h-0 overflow-hidden bg-[#0d0d0e] p-2 sm:p-4'
     : 'flex-1 page-scroll px-4 py-3 space-y-3';
   const footerClass = commandSurfaceMode
-    ? 'border-t border-[color:var(--gt-border)] bg-[#151312] px-3 pt-2 pb-3 safe-pad-bottom'
-    : 'border-t border-[color:var(--gt-border)] px-3 pt-2 pb-3 safe-pad-bottom';
+    ? 'gt-mobile-composer border-t border-[color:var(--gt-border)] bg-[#151312] px-3 pt-2 pb-3'
+    : 'gt-mobile-composer border-t border-[color:var(--gt-border)] px-3 pt-2 pb-3';
 
   useEffect(() => {
     const el = inputRef.current;
@@ -533,7 +535,7 @@ export function AgentCard({
           {onBack && (
             <button
               onClick={onBack}
-              className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[color:var(--gt-border)] bg-surface-2 transition hover:bg-surface-3"
+              className="gt-touch-target flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-[color:var(--gt-border)] bg-surface-2 transition hover:bg-surface-3"
               aria-label="Back to projects"
               title="Back to projects"
             >
@@ -551,7 +553,10 @@ export function AgentCard({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <span className={`rounded-[4px] px-2 py-1 text-[10px] uppercase tracking-[0.18em] ${hostUnavailable ? statusColor(AgentStatus.Disconnected) : statusColor(status)}`}>
+          <span
+            data-testid="agent-status-badge"
+            className={`rounded-[4px] px-2 py-1 text-[10px] uppercase tracking-[0.18em] ${hostUnavailable ? statusColor(AgentStatus.Disconnected) : statusColor(status)}`}
+          >
             {commandSurfaceMode
               ? terminalStatusLabel(status, waitingForSnapshot || targetSwitchingContext, hostUnavailable)
               : hostUnavailable
@@ -582,7 +587,7 @@ export function AgentCard({
                   aria-disabled={targetState.ariaDisabled}
                   aria-label={targetState.ariaLabel}
                   aria-pressed={targetState.ariaPressed}
-                  className={`min-w-[140px] max-w-[180px] shrink-0 rounded-[6px] border px-3 py-2 text-left transition ${
+                  className={`gt-touch-target min-w-[140px] max-w-[180px] shrink-0 rounded-[6px] border px-3 py-2 text-left transition ${
                     target.selected
                       ? `${targetState.canSelect ? 'cursor-pointer hover:bg-accent/18' : 'cursor-default'} border-accent/70 bg-accent/12 text-[color:var(--gt-text)]`
                       : 'border-[color:var(--gt-border)] bg-surface-2 gt-muted hover:border-white/18 hover:bg-surface-3'
@@ -624,6 +629,7 @@ export function AgentCard({
             status={status}
             hostUnavailable={hostUnavailable}
             messageEndRef={messageEndRef}
+            showFrameStatus={!compactChrome}
           />
         ) : (
           <>
@@ -710,7 +716,7 @@ export function AgentCard({
                   <button
                     onClick={() => removeAttachment(attachment.id)}
                     disabled={composerDisabled}
-                    className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full border border-[color:var(--gt-border)] bg-surface-0/90 text-xs"
+                    className="gt-touch-target absolute right-1.5 top-1.5 flex h-11 w-11 items-center justify-center rounded-full border border-[color:var(--gt-border)] bg-surface-0/90 text-xs"
                     aria-label={`Remove ${attachment.file.name || 'file'}`}
                   >
                     ×
@@ -765,7 +771,7 @@ export function AgentCard({
               <button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={composerDisabled}
-                className={commandSurfaceMode ? 'flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] border border-white/10 bg-white/[0.06] text-base text-white/75 transition hover:bg-white/10 disabled:opacity-40' : 'gt-button gt-button-secondary h-10 w-10 shrink-0 px-0 text-base'}
+                className={commandSurfaceMode ? 'gt-touch-target flex h-11 w-11 shrink-0 items-center justify-center rounded-[10px] border border-white/10 bg-white/[0.06] text-base text-white/75 transition hover:bg-white/10 disabled:opacity-40' : 'gt-button gt-button-secondary h-11 w-11 shrink-0 px-0 text-base'}
                 aria-label="Attach files"
                 title="Attach files"
               >
@@ -777,7 +783,7 @@ export function AgentCard({
             <button
               onClick={() => setActionsOpen((value) => !value)}
               disabled={composerDisabled}
-              className="gt-button gt-button-secondary h-10 shrink-0 px-3 text-xs"
+              className="gt-button gt-button-secondary h-11 shrink-0 px-3 text-xs"
               aria-expanded={actionsOpen}
             >
               Actions
@@ -818,7 +824,7 @@ export function AgentCard({
                       : 'Send a prompt...'
             }
             disabled={composerDisabled}
-            className={commandSurfaceMode ? 'min-h-[40px] max-h-32 flex-1 resize-none border-0 bg-transparent px-1 py-2 font-mono text-[15px] leading-6 text-white outline-none placeholder:text-white/30 disabled:opacity-50' : 'gt-input flex-1 min-h-[40px] max-h-40 resize-none px-3 py-2 text-sm disabled:opacity-50'}
+            className={commandSurfaceMode ? 'gt-composer-input min-h-11 max-h-32 flex-1 resize-none border-0 bg-transparent px-1 py-2 font-mono leading-6 text-white outline-none placeholder:text-white/30 disabled:opacity-50 sm:text-[15px]' : 'gt-composer-input gt-input flex-1 min-h-11 max-h-40 resize-none px-3 py-2 disabled:opacity-50 sm:text-sm'}
             rows={1}
           />
           <button
@@ -1146,7 +1152,7 @@ function composerPrimaryButtonClass({
   uploadingAttachments: boolean;
 }): string {
   const base =
-    'flex h-10 w-10 shrink-0 items-center justify-center rounded-full border transition duration-150 focus:outline-none focus:ring-2 focus:ring-white/30';
+    'gt-touch-target flex h-11 w-11 shrink-0 items-center justify-center rounded-full border transition duration-150 focus:outline-none focus:ring-2 focus:ring-white/30';
   if (uploadingAttachments) {
     return `${base} cursor-wait border-white/20 bg-white/20 text-white/70`;
   }
@@ -1238,6 +1244,7 @@ function TerminalViewport({
   status,
   hostUnavailable,
   messageEndRef,
+  showFrameStatus,
 }: {
   app: RemoteApp;
   messages: AgentChatMessage[];
@@ -1246,12 +1253,13 @@ function TerminalViewport({
   status: AgentStatus;
   hostUnavailable: boolean;
   messageEndRef: RefObject<HTMLDivElement>;
+  showFrameStatus: boolean;
 }) {
   const title = app.statusDetail || app.windowTitle || 'local shell';
   const hasMessages = messages.length > 0;
 
   return (
-    <div className="flex h-full min-h-[360px] w-full min-w-0 max-w-full flex-col overflow-hidden rounded-[18px] border border-white/10 bg-[#050505] shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+    <div className="flex h-full min-h-[240px] w-full min-w-0 max-w-full flex-col overflow-hidden rounded-[18px] border border-white/10 bg-[#050505] shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] sm:min-h-[360px]">
       <div className="flex h-11 shrink-0 items-center justify-between border-b border-white/10 bg-white/[0.035] px-3">
         <div className="flex items-center gap-1.5" aria-hidden="true">
           <span className="h-3 w-3 rounded-full bg-[#ff5f57]" />
@@ -1261,9 +1269,14 @@ function TerminalViewport({
         <div className="min-w-0 flex-1 px-3 text-center font-mono text-[11px] text-white/45 truncate">
           {title}
         </div>
-        <span className={`shrink-0 rounded-full px-2 py-1 font-mono text-[10px] uppercase tracking-[0.14em] ${terminalStatusTone(status, waitingForSnapshot, hostUnavailable)}`}>
-          {terminalStatusLabel(status, waitingForSnapshot, hostUnavailable)}
-        </span>
+        {showFrameStatus && (
+          <span
+            data-testid="terminal-frame-status"
+            className={`shrink-0 rounded-full px-2 py-1 font-mono text-[10px] uppercase tracking-[0.14em] ${terminalStatusTone(status, waitingForSnapshot, hostUnavailable)}`}
+          >
+            {terminalStatusLabel(status, waitingForSnapshot, hostUnavailable)}
+          </span>
+        )}
       </div>
 
       <div className="page-scroll flex-1 overflow-y-auto px-3 py-4 font-mono text-[13px] leading-6 text-[#f4f4f5] sm:px-4 sm:text-sm">

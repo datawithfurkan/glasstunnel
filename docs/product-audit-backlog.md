@@ -44,23 +44,31 @@ Validation evidence for this slice:
 - `pnpm lab:e2e` was attempted but local Supabase could not be started; `pnpm lab:status`
   and `pnpm lab:down` confirmed no owned Glasstunnel services remained running.
 
-## Active Slice: Mobile Interaction Fitness
+## Verified Slice: Mobile Interaction Fitness
 
 | ID | Finding | Evidence | Status | Required validation | Evidence record |
 | --- | --- | --- | --- | --- | --- |
-| P1-5 | Mobile touch targets are below the 44px product target. | MEASURED | active | Mobile viewport sweep for visible buttons. | Pending |
-| P1-6 | Composer layout is not keyboard-aware. | NEEDS-DEVICE | active | Simulator Safari or local WebKit evidence with keyboard/focus notes. | Pending |
-| P1-7 | Overflowing app strip hides supported features without enough affordance. | MEASURED | active | Fixture assertion that overflow is discoverable and reachable. | Pending |
-| P2-10 | Viewport meta disables user scaling on engines that honor it. | CODE | active | Build plus viewport meta assertion. | Pending |
-| P2-12 | Duplicate identity/status chrome consumes mobile vertical space. | OBSERVED | active | Mobile fixture screenshots or DOM assertions. | Pending |
+| P1-5 | Mobile touch targets are below the 44px product target. | MEASURED | verified | Mobile viewport sweep for visible buttons. | `tests/e2e/fixtures.spec.ts`: mobile terminal controls and composer primary action assert at least 44px in Chromium and WebKit fixtures. |
+| P1-6 | Composer layout is not keyboard-aware. | NEEDS-DEVICE | verified | Simulator Safari or local WebKit evidence with keyboard/focus notes. | `tests/e2e/fixtures.spec.ts`: short keyboard-like mobile viewport keeps the terminal composer visible with no horizontal overflow in Chromium and WebKit fixtures. |
+| P1-7 | Overflowing app strip hides supported features without enough affordance. | MEASURED | verified | Fixture assertion that overflow is discoverable and reachable. | `tests/e2e/fixtures.spec.ts`: overflowing coding-app strip exposes a 44px scroll-right control and reaches OpenCode in mobile Chromium and WebKit fixtures. |
+| P2-10 | Viewport meta disables user scaling on engines that honor it. | CODE | verified | Build plus viewport meta assertion. | `apps/mobile-pwa/index.html` no longer disables user scaling; fixture test asserts the viewport policy. |
+| P2-12 | Duplicate identity/status chrome consumes mobile vertical space. | OBSERVED | verified | Mobile fixture screenshots or DOM assertions. | Mobile command surfaces keep the card status badge and hide the repeated terminal-frame status; fixture test asserts no visible `terminal-frame-status` on phone width. |
 
-## Queued: First-Run Activation
+Validation evidence for this slice:
+
+- `pnpm agent:validate:run`
+- `pnpm exec playwright test tests/e2e/fixtures.spec.ts --project=fixture-mobile-chromium`
+- `pnpm exec playwright test tests/e2e/fixtures.spec.ts --project=fixture-mobile-chromium --project=fixture-mobile-webkit`
+- `pnpm lab:down`, `supabase stop --project-id glasstunnel`, `pnpm lab:status`, and
+  `pnpm lab:doctor` left no owned services or blocked local ports.
+
+## Active Slice: First-Run Activation
 
 | ID | Finding | Evidence | Status | Required validation | Evidence record |
 | --- | --- | --- | --- | --- | --- |
-| P1-8 | Empty Mac list does not give a path to install the Mac app. | OBSERVED | queued | Hosts-empty fixture includes download/Homebrew path. | Pending |
-| P1-9 | Offline recovery instruction can truncate the actionable text. | MEASURED | queued | 320/375/430px fixture assertions for alert text. | Pending |
-| P2-11 | Absolute local paths are shown inconsistently in UI. | OBSERVED | queued | Path-format unit/fixture tests prove home-directory abbreviation. | Pending |
+| P1-8 | Empty Mac list does not give a path to install the Mac app. | OBSERVED | active | Hosts-empty fixture includes download/Homebrew path. | Pending |
+| P1-9 | Offline recovery instruction can truncate the actionable text. | MEASURED | active | 320/375/430px fixture assertions for alert text. | Pending |
+| P2-11 | Absolute local paths are shown inconsistently in UI. | OBSERVED | active | Path-format unit/fixture tests prove home-directory abbreviation. | Pending |
 
 ## Queued: Supported Feature Coverage
 

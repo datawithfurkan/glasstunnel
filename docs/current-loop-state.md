@@ -24,7 +24,7 @@ account details, absolute machine paths, and personal credentials out of Git. Th
 product-development loop should start from the highest-impact remaining beta risk in
 `docs/public-release-readiness.md` rather than replaying this release movement.
 
-Active product-audit slice: Mobile Interaction Fitness. Use
+Active product-audit slice: First-Run Activation. Use
 `docs/product-audit-backlog.md` as the durable queue. After completing the
 active slice, record validation evidence there and mark the next queued slice
 active so follow-up work does not depend on chat history.

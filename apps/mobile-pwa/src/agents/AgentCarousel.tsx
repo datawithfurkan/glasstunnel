@@ -707,7 +707,7 @@ function AppSwitcher({
             type="button"
             onClick={() => onChoose(filter.id)}
             title={filter.label}
-            className={`flex h-10 shrink-0 items-center gap-2 rounded-full px-3 text-sm font-semibold transition ${
+            className={`gt-touch-target flex h-11 shrink-0 items-center gap-2 rounded-full px-3 text-sm font-semibold transition ${
               active
                 ? 'bg-white text-black'
                 : 'bg-white/12 text-white hover:bg-white/18'
@@ -767,7 +767,7 @@ function ProjectGroupRow({
         <button
           type="button"
           onClick={canOpenDirectly ? () => onOpenThread(group.app, defaultTarget) : onToggle}
-          className="flex min-w-0 flex-1 items-center gap-3 rounded-[14px] px-1 py-1.5 text-left transition focus:outline-none focus:ring-2 focus:ring-accent/35"
+          className="gt-touch-target flex min-w-0 flex-1 items-center gap-3 rounded-[14px] px-1 py-1.5 text-left transition focus:outline-none focus:ring-2 focus:ring-accent/35"
         >
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[12px] bg-white/[0.06] text-white">
             <FolderIcon />
@@ -787,7 +787,7 @@ function ProjectGroupRow({
         <button
           type="button"
           onClick={() => onOpenThread(group.app, defaultTarget)}
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-white/70 transition hover:bg-white/8 hover:text-white"
+          className="gt-touch-target flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-white/70 transition hover:bg-white/8 hover:text-white"
           aria-label={`Open ${group.label}`}
           title={`Open ${group.label}`}
         >
@@ -804,7 +804,7 @@ function ProjectGroupRow({
                 key={thread.targetId}
                 type="button"
                 onClick={() => onOpenThread(group.app, thread)}
-                className={`block w-full rounded-[14px] px-3 py-2.5 text-left transition ${
+                className={`gt-touch-target block w-full rounded-[14px] px-3 py-2.5 text-left transition ${
                   selected ? 'bg-white/12 text-white' : 'text-white/88 hover:bg-white/[0.06]'
                 }`}
               >
@@ -843,7 +843,7 @@ function StandaloneChatRow({
     <button
       type="button"
       onClick={() => onOpenThread(group.app, target)}
-      className={`flex w-full items-center gap-3 rounded-[16px] px-2 py-2.5 text-left transition ${
+      className={`gt-touch-target flex w-full items-center gap-3 rounded-[16px] px-2 py-2.5 text-left transition ${
         selected ? 'bg-white/12 text-white' : 'text-white/90 hover:bg-white/[0.06]'
       }`}
     >
@@ -1027,12 +1027,12 @@ function FocusedChat({
             maxLength={48}
             autoFocus
             aria-label="Terminal session name"
-            className="h-8 min-w-0 max-w-[12rem] rounded-full border border-white/12 bg-black/30 px-3 text-xs font-semibold text-white outline-none ring-0 placeholder:text-white/35 focus:border-blue-400/70"
+            className="gt-composer-input gt-touch-target h-11 min-w-0 max-w-[12rem] rounded-full border border-white/12 bg-black/30 px-3 text-sm font-semibold text-white outline-none ring-0 placeholder:text-white/35 focus:border-blue-400/70"
           />
           <button
             type="submit"
             disabled={!renameDraft.trim()}
-            className="rounded-full bg-white/10 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-white/16 disabled:cursor-not-allowed disabled:opacity-45"
+            className="gt-touch-target rounded-full bg-white/10 px-3 py-2 text-xs font-semibold text-white transition hover:bg-white/16 disabled:cursor-not-allowed disabled:opacity-45"
           >
             Save
           </button>
@@ -1042,7 +1042,7 @@ function FocusedChat({
               setRenameDraft(terminalSessionLabel);
               setRenamingTerminal(false);
             }}
-            className="rounded-full border border-white/10 px-3 py-1.5 text-xs font-semibold text-white/70 transition hover:bg-white/10"
+            className="gt-touch-target rounded-full border border-white/10 px-3 py-2 text-xs font-semibold text-white/70 transition hover:bg-white/10"
           >
             Cancel
           </button>
@@ -1055,7 +1055,7 @@ function FocusedChat({
             disabled={Boolean(pendingSessionAction)}
             aria-label="Start a new Terminal session"
             title="Start a new Terminal session"
-            className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition disabled:cursor-wait disabled:opacity-60 ${
+            className={`gt-touch-target rounded-full border px-3 py-2 text-xs font-semibold transition disabled:cursor-wait disabled:opacity-60 ${
               newTerminalSessionPending
                 ? 'border-blue-400/35 bg-blue-500/15 text-blue-100'
                 : 'border-white/10 text-white/80 hover:bg-white/10'
@@ -1070,7 +1070,7 @@ function FocusedChat({
               disabled={Boolean(pendingSessionAction)}
               aria-label="Rename Terminal session"
               title="Rename Terminal session"
-              className="rounded-full border border-white/10 px-3 py-1.5 text-xs font-semibold text-white/80 transition hover:bg-white/10 disabled:cursor-wait disabled:opacity-60"
+              className="gt-touch-target rounded-full border border-white/10 px-3 py-2 text-xs font-semibold text-white/80 transition hover:bg-white/10 disabled:cursor-wait disabled:opacity-60"
             >
               Rename
             </button>
@@ -1081,7 +1081,7 @@ function FocusedChat({
             disabled={Boolean(pendingSessionAction)}
             aria-label="Close Terminal session"
             title="Close Terminal session"
-            className="rounded-full border border-white/10 px-3 py-1.5 text-xs font-semibold text-white/80 transition hover:bg-white/10 disabled:cursor-wait disabled:opacity-60"
+            className="gt-touch-target rounded-full border border-white/10 px-3 py-2 text-xs font-semibold text-white/80 transition hover:bg-white/10 disabled:cursor-wait disabled:opacity-60"
           >
             {terminalSessionActionCopy('closeSession', pendingSessionAction)}
           </button>
@@ -1102,6 +1102,7 @@ function FocusedChat({
       connectionError={connectionError}
       headerAction={terminalHeaderAction}
       onSelectTarget={(target) => onSelectTarget(app, target)}
+      compactChrome={Boolean(onBack)}
     />
   );
 }
