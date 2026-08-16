@@ -226,6 +226,28 @@ recipe:
 pnpm qa:mac:cask-update
 ```
 
+## Website download button
+
+The public site should not hardcode a versioned DMG URL. It points at GitHub's
+latest-release asset instead:
+
+```text
+https://github.com/datawithfurkan/glasstunnel/releases/latest/download/Glasstunnel.dmg
+```
+
+Every GitHub Release should still include the immutable, versioned asset for
+auditing and Homebrew, plus the stable alias used by the website:
+
+```bash
+pnpm release:mac:assets -- 0.1.0 dist/Glasstunnel-0.1.0.dmg
+gh release upload v0.1.0 \
+  dist/Glasstunnel-0.1.0.dmg dist/Glasstunnel-0.1.0.dmg.sha256 \
+  dist/Glasstunnel.dmg dist/Glasstunnel.dmg.sha256
+```
+
+`pnpm qa:site-download-links` rejects versioned DMG links in the public site so
+future release bumps do not leave the download buttons stale.
+
 To exercise a real Homebrew cask install without publishing a release or
 touching `/Applications`, pass a current local DMG to the isolated cask smoke:
 

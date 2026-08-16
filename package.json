@@ -80,6 +80,8 @@
     "qa:mac:cask-update": "bash scripts/homebrew-cask-update-smoke.sh",
     "qa:mac:cask-install": "bash scripts/homebrew-cask-local-install-smoke.sh",
     "qa:mac:notarization": "bash scripts/mac-notarization-smoke.sh",
+    "qa:site-download-links": "bash scripts/site-download-link-audit.sh",
+    "release:mac:assets": "bash scripts/prepare-github-release-assets.sh",
     "qa:security-privacy": "bash scripts/security-privacy-audit.sh",
     "qa:public-repo": "node scripts/public-repository-audit.mjs",
     "qa:public-remote-refs": "node scripts/public-remote-ref-audit.mjs",
