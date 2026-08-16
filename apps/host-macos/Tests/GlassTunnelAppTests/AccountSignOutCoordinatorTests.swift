@@ -22,7 +22,7 @@ final class AccountSignOutCoordinatorTests: XCTestCase {
         XCTAssertNil(outcome.remoteUnlinkFailureDescription)
     }
 
-    func testSuccessfulRemoteUnlinkKeepsIdentityAfterClearingTrustedDevices() async throws {
+    func testSuccessfulRemoteUnlinkStillRotatesLocalIdentityAfterClearingTrustedDevices() async throws {
         var events: [String] = []
         let coordinator = AccountSignOutCoordinator<String>(
             clearTrustedDevices: {
@@ -38,8 +38,8 @@ final class AccountSignOutCoordinatorTests: XCTestCase {
             events.append("remote-unlink")
         })
 
-        XCTAssertEqual(events, ["remote-unlink", "clear-devices"])
-        XCTAssertNil(outcome.replacementIdentity)
+        XCTAssertEqual(events, ["remote-unlink", "clear-devices", "rotate-identity"])
+        XCTAssertEqual(outcome.replacementIdentity, "new-identity")
         XCTAssertTrue(outcome.remoteUnlinkConfirmed)
         XCTAssertNil(outcome.remoteUnlinkFailureDescription)
     }

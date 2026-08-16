@@ -142,6 +142,27 @@ attach_dmg() {
   attached=1
 }
 
+verify_dmg_layout() {
+  local context="$1"
+
+  if [[ ! -d "$mount_root/$APP_NAME" ]]; then
+    echo "$context: missing top-level $APP_NAME in the mounted DMG." >&2
+    exit 1
+  fi
+
+  if [[ ! -L "$mount_root/Applications" ]]; then
+    echo "$context: missing top-level Applications symlink for drag-to-install." >&2
+    exit 1
+  fi
+
+  local applications_target
+  applications_target="$(readlink "$mount_root/Applications" || true)"
+  if [[ "$applications_target" != "/Applications" ]]; then
+    echo "$context: Applications symlink points to '${applications_target:-missing}', expected /Applications." >&2
+    exit 1
+  fi
+}
+
 VERIFIED_VERSION=""
 VERIFIED_REQUIREMENT=""
 
@@ -269,6 +290,7 @@ hdiutil verify "$INITIAL_DMG" >/dev/null
 
 echo "==> Mounting initial DMG"
 attach_dmg "$INITIAL_DMG"
+verify_dmg_layout "initial DMG layout"
 
 source_app="$mount_root/$APP_NAME"
 initial_source_policy="current"
@@ -298,6 +320,7 @@ if [[ -n "$UPGRADE_DMG" ]]; then
   hdiutil verify "$UPGRADE_DMG" >/dev/null
   echo "==> Mounting upgrade DMG"
   attach_dmg "$UPGRADE_DMG"
+  verify_dmg_layout "upgrade DMG layout"
   source_app="$mount_root/$APP_NAME"
   verify_app "$source_app" "mounted upgrade app"
   upgrade_version="$VERIFIED_VERSION"

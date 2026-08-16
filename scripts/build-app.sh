@@ -254,7 +254,16 @@ echo "==> Embedded WebRTC architectures: $(/usr/bin/lipo -archs "$DIST/$APP_NAME
 
 echo "==> Creating DMG"
 rm -f "$DIST/$DMG_NAME"
-hdiutil create -volname "Glasstunnel" -srcfolder "$DIST/$APP_NAME" -ov -format UDZO "$DIST/$DMG_NAME"
+DMG_ROOT="$(mktemp -d /tmp/glasstunnel-dmg-root.XXXXXX)"
+cleanup_dmg_root() {
+  if [[ -n "${DMG_ROOT:-}" && -d "$DMG_ROOT" ]]; then
+    rm -rf "$DMG_ROOT"
+  fi
+}
+trap cleanup_dmg_root EXIT
+ditto "$DIST/$APP_NAME" "$DMG_ROOT/$APP_NAME"
+ln -s /Applications "$DMG_ROOT/Applications"
+hdiutil create -volname "Glasstunnel" -srcfolder "$DMG_ROOT" -ov -format UDZO "$DIST/$DMG_NAME"
 
 if [[ "$SIGNING_MODE" != "ad-hoc" ]]; then
   codesign --force "${TIMESTAMP_ARGS[@]}" --sign "$SIGN_IDENTITY" "$DIST/$DMG_NAME"

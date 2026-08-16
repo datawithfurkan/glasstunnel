@@ -92,11 +92,13 @@ your real `/Applications` folder:
 pnpm release:mac:install-smoke
 ```
 
-This mounts the newest `dist/Glasstunnel-*.dmg`, copies `Glasstunnel.app` into
-an isolated temporary Applications folder, reinstalls that version, and verifies
-the bundle ID, source commit, clean-source marker, version, executable, code
-signature, required signed entitlements, both supported Mac architectures, and
-the embedded signed `WebRTC.framework` plus its runtime search path.
+This mounts the newest `dist/Glasstunnel-*.dmg`, verifies the installer volume
+contains both `Glasstunnel.app` and an `/Applications` drag target, copies
+`Glasstunnel.app` into an isolated temporary Applications folder, reinstalls
+that version, and verifies the bundle ID, source commit, clean-source marker,
+version, executable, code signature, required signed entitlements, both
+supported Mac architectures, and the embedded signed `WebRTC.framework` plus
+its runtime search path.
 
 To prove a real version-to-version upgrade, build two clean-commit artifacts
 with the same stable identity and pass both DMGs explicitly:

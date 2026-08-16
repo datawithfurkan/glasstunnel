@@ -665,7 +665,7 @@ private struct ProfilePopoverView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This unlinks the Mac from your account and clears all access devices on this Mac.")
+            Text("This unlinks the Mac from your account, clears access devices on this Mac, and rotates the local identity. Deleting the app alone does not sign out.")
         }
     }
 

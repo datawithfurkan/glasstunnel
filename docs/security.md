@@ -62,7 +62,7 @@ No new primitives. No hand-rolled crypto. No Glasstunnel-operated TLS endpoint s
 
 ## Data storage
 
-- **Mac:** host private key in the system Keychain (generic password, `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`). Paired-device public keys + labels in `~/Library/Application Support/Glasstunnel/devices.json`.
+- **Mac:** host private key in the system Keychain (generic password, `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`). Paired-device public keys + labels in `~/Library/Application Support/Glasstunnel/devices.json`. Moving `Glasstunnel.app` to Trash does not delete this per-user Keychain and Application Support state; users should use **Sign Out** first when they want to unlink the Mac and rotate its local device identity.
 - **Phone:** phone keypair in IndexedDB via `idb-keyval`. WebAuthn biometric credential stored by the browser / platform keychain.
 - **Local Go signaling server:** no durable account data. Offline envelopes live in memory briefly. Web Push subscriptions may be stored when push is enabled.
 - **Hosted Cloudflare/Supabase control plane:** Supabase stores account profiles, device public keys, host link codes, device pairings, and approval requests. It does not store captured content, prompts, chats, or media.

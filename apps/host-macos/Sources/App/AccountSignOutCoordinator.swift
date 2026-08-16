@@ -24,7 +24,7 @@ struct AccountSignOutCoordinator<Identity> {
         }
 
         try clearTrustedDevices()
-        let replacementIdentity = remoteUnlinkConfirmed ? nil : try rotateDeviceIdentity()
+        let replacementIdentity = try rotateDeviceIdentity()
 
         return Outcome(
             remoteUnlinkConfirmed: remoteUnlinkConfirmed,

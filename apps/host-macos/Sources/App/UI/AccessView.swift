@@ -32,7 +32,7 @@ struct AccessView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This unlinks the Mac from your account and clears all access devices on this Mac.")
+            Text("This unlinks the Mac from your account, clears access devices on this Mac, and rotates the local identity. Deleting the app alone does not sign out.")
         }
     }
 
@@ -109,7 +109,8 @@ struct AccessView: View {
         guard let linkedAccount = appState.linkedAccount else {
             return "Signed-in devices on this account can open this Mac."
         }
-        return linkedAccount.email.isEmpty ? linkedAccount.displayName : linkedAccount.email
+        let account = linkedAccount.email.isEmpty ? linkedAccount.displayName : linkedAccount.email
+        return "\(account) · Linked until you sign out"
     }
 
     private var trustedDevicesGroup: some View {
