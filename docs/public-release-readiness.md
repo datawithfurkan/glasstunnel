@@ -50,7 +50,7 @@ release-only documentation and cask updates are descendants of that immutable so
 Developer ID signing/notarization, stapling, and Gatekeeper verification all passed for
 that published artifact.
 
-The `0.1.6` prerelease is the current public beta. Its signed and notarized DMG is tied
+The `0.1.6` public beta release is the current public beta. Its signed and notarized DMG is tied
 to source commit `54b57fc3` and SHA-256
 `edaa9d317414b03ccf332f6418d11149161ab4de4d2e6125d79bf7df9b41a5c4`.
 Developer ID signing/notarization, stapling, Gatekeeper verification, isolated
