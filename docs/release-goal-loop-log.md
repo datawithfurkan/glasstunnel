@@ -67,3 +67,19 @@ changes or a blocker is materially narrowed.
 - Next action: Continue Preview hardening from the support matrix without widening public support claims.
 - End commit: The final release documentation and cask commit is the result of record.
 - CI/deploy: The consolidated publication commit is checked by one CI run; no production web deploy is requested.
+
+## 2026-08-16 14:30 - Installer and latest-download beta patch
+
+- Start commit: b360e326
+- Release gate: Replace the public DMG that lacked an Applications drag target and prevent stale landing-page download links.
+- Why chosen: The published `0.1.5` DMG mounted without an `/Applications` shortcut, the public site hardcoded versioned DMG URLs, and deleting the app alone could be mistaken for sign-out.
+- Files changed: Mac release assembly, install smoke, app/PWA icon assets, sign-out wording/identity rotation, website download links, release asset prep, Homebrew cask metadata, and release docs.
+- Validation: Developer ID signing, Apple notarization, stapling, Gatekeeper assessment, isolated install/reinstall, stable latest-release asset preparation, site download-link audit, site/workspace builds, workspace tests, lint, shell syntax, and distribution/security/public audits pass.
+- Manual testing: The mounted `0.1.6` DMG contains `Glasstunnel.app` and an `Applications` symlink; the mounted app is accepted by Gatekeeper.
+- Evidence recorded: The DMG is tied to source commit `54b57fc3`; SHA-256 is `edaa9d317414b03ccf332f6418d11149161ab4de4d2e6125d79bf7df9b41a5c4`; Apple submission ID is `5fe7ba6a-1c00-4a8f-be24-c21f661a23b6`.
+- Outcome: passed
+- Uncertainty: Public GitHub Release asset and hosted-site behavior still require final upload/deploy verification after the consolidated push.
+- Stale-loop risk: Low; one notarization submission was used and the website now resolves the latest DMG through a stable GitHub release asset.
+- Next action: Push the consolidated release commit, inspect one CI/deploy run, create `v0.1.6`, upload both immutable and stable DMG assets, then verify the public download URL.
+- End commit: The final release documentation and cask commit is the result of record.
+- CI/deploy: Pending the final consolidated push for this release slice.

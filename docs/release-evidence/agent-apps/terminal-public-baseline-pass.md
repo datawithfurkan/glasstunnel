@@ -1,20 +1,21 @@
 # Agent App Release Evidence
 
-- Date: 2026-08-01T14:11:53Z
+- Date: 2026-08-16T13:21:31Z
 - App: Terminal
 - Result: pass
-- Environment: local PTY plus authenticated mobile Chromium fixture
-- Glasstunnel commit: 8eb429ceeca762a499955f2df3dbab51e950bb1f
+- Environment: local PTY and shared-screen-session regression coverage
+- Glasstunnel commit: 54b57fc3
 - Artifact: artifacts/terminal-public-baseline.txt
 - Privacy review: pass
 
 ## Passed
 
-A shell command streamed output, a long-running process was interrupted, the session
-recovered to a ready prompt, and the next command was accepted. Session create,
-select, rename, and close controls passed in the authenticated mobile path. Stale
-host-owned screen attachment clients were reaped on stop and teardown without
-ending persistent sessions.
+A shell command streamed output, a long-running process was interrupted, the
+session recovered to a ready prompt, and the next command was accepted. Default
+and named Terminal sessions published correctly; create, select, rename, and
+close behavior stayed stable, including the no-op select-current path and the
+guard against duplicate generated session names. Shared screen-session launch
+and cleanup behavior passed without leaving host-owned attachment clients stale.
 
 ## Limitations
 

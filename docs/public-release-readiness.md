@@ -1,6 +1,6 @@
 # Public release readiness
 
-Last updated: 2026-08-01.
+Last updated: 2026-08-16.
 
 This checklist is the current release baseline. Historical investigations and raw
 test artifacts are intentionally not stored in the public repository.
@@ -50,8 +50,10 @@ release-only documentation and cask updates are descendants of that immutable so
 Developer ID signing/notarization, stapling, and Gatekeeper verification all passed for
 that published artifact.
 
-The `0.1.5` prerelease is the current public beta. Its signed and notarized DMG is tied
-to source commit `8eb429ce` and SHA-256
-`4f74a23ca64df907d7b44c8ab7edbf722c19819f8f9c1118f8b12de2f0409fef`.
-Developer ID signing/notarization, stapling, Gatekeeper verification, an isolated
-`0.1.4` to `0.1.5` upgrade, and a disposable Homebrew install passed.
+The `0.1.6` prerelease is the current public beta. Its signed and notarized DMG is tied
+to source commit `54b57fc3` and SHA-256
+`edaa9d317414b03ccf332f6418d11149161ab4de4d2e6125d79bf7df9b41a5c4`.
+Developer ID signing/notarization, stapling, Gatekeeper verification, isolated
+install/reinstall, stable latest-download asset preparation, and cask metadata
+validation passed. It replaces the `0.1.5` DMG, whose installer volume lacked an
+Applications drag target.

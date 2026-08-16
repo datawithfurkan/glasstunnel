@@ -1,4 +1,7 @@
 Privacy-reviewed summary artifact.
-Scope: Mac Screen lifecycle and input.
+Date: 2026-08-16T13:21:31Z.
+Commit: 54b57fc3.
+Scope: Mac Screen local mobile-browser lifecycle and automated state regression.
 Result: pass.
-Raw media and account-specific output are intentionally not retained in Git.
+Evidence commands: pnpm lab:e2e:screen; pnpm lab:e2e:screen:safari; pnpm qa:screen-state.
+Raw media, link codes, account-specific output, and screen content are intentionally not retained in Git.
