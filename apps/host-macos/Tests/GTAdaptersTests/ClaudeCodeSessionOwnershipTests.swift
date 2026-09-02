@@ -382,6 +382,73 @@ final class ClaudeCodeSessionOwnershipTests: XCTestCase {
         XCTAssertFalse(ClaudeCodeAdapter.showsComposer("❯ 1. Yes, I trust this folder"))
     }
 
+    func testPromptKeptInTheComposerIsResubmittedUntilTheTranscriptRecordsIt() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        // A fake Claude Code that shows its composer, swallows the first Return
+        // (the way a paste-detected burst does), and records the prompt in its
+        // transcript only on the second Return.
+        let script = """
+        import sys, os, tty, time, json
+        tty.setcbreak(sys.stdin.fileno())
+        args = sys.argv
+        root = args[1]
+        # Spelled apart: the adapter treats a literal session flag in its arguments as caller-provided.
+        sid = args[args.index('--session' + '-id') + 1]
+        print('\\u276f Try "fix lint errors"')
+        print('  ? for shortcuts')
+        sys.stdout.flush()
+        buf = b''
+        returns = 0
+        typed = ''
+        while True:
+            ch = sys.stdin.buffer.read(1)
+            if ch in (b'\\r', b'\\n'):
+                returns += 1
+                if buf:
+                    typed = buf.decode('utf-8', 'replace')
+                buf = b''
+                if returns == 1:
+                    print('(kept in composer)')
+                    sys.stdout.flush()
+                    continue
+                path = os.path.join(root, '-Users-developer-Example', sid + '.jsonl')
+                with open(path, 'a') as f:
+                    f.write(json.dumps({'type': 'user', 'entrypoint': 'cli', 'cwd': '/tmp', 'sessionId': sid, 'timestamp': '2026-09-02T10:00:00.000Z', 'message': {'role': 'user', 'content': typed}}) + '\\n')
+                print('GT_ACCEPTED returns=' + str(returns))
+                sys.stdout.flush()
+                time.sleep(3)
+                break
+            else:
+                buf += ch
+        """
+        // Passed as a file: a `-c` argument reads as Claude Code's own
+        // `--continue` short flag and suppresses the fresh session id.
+        let scriptURL = fixture.directory.appendingPathComponent("bin/fake-resubmit.py")
+        try script.write(to: scriptURL, atomically: true, encoding: .utf8)
+        let adapter = ClaudeCodeAdapter(
+            agentID: "claude-code-resubmit-\(UUID().uuidString)",
+            executable: "/usr/bin/python3",
+            cwd: fixture.directory.path,
+            arguments: [scriptURL.path, fixture.projectsRoot.path],
+            projectsRoot: fixture.projectsRoot,
+            hookRouter: fixture.router,
+            hookInstaller: fixture.installer
+        )
+        defer { Task { await adapter.stop() } }
+        try await adapter.start()
+        _ = try await waitForSnapshot(adapter, timeoutSeconds: 12) { $0.status == .done }
+
+        try await adapter.sendInput("Reply with the marker GT_RESUBMIT", submit: true)
+
+        let recorded = try await waitForSnapshot(adapter, timeoutSeconds: 10) { snapshot in
+            snapshot.recentMessages.contains { $0.role == .user && $0.text.contains("GT_RESUBMIT") }
+        }
+        XCTAssertNotNil(recorded)
+        XCTAssertTrue(adapter.recentOutputTail(maxLength: 2000).contains("GT_ACCEPTED returns=2"),
+                      "The second Return, not a retyped prompt, is what got it accepted: \(adapter.recentOutputTail(maxLength: 300))")
+    }
+
     func testTrustPromptDetectionSurvivesTerminalWrapping() {
         let wrapped = """
          Quick safety check: Is this a project you created or one you

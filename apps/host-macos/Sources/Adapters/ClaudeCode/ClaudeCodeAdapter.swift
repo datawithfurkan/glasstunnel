@@ -311,6 +311,35 @@ public final class ClaudeCodeAdapter: PTYAdapterBase, @unchecked Sendable {
             )
         }
         try await super.sendInput(text, submit: submit)
+        guard submit else { return }
+
+        // Claude Code sometimes keeps a prompt in its composer instead of
+        // running it (text and Return arriving like a paste, or a resumed
+        // session still settling). An accepted prompt is in the transcript
+        // within a couple of seconds; when it is not, press Return once more,
+        // then retype it once, so a prompt from the phone is never silently
+        // stranded on the Mac.
+        if await transcriptRecords(prompt: text, within: 4) { return }
+        try await super.sendInput("\r", submit: false)
+        if await transcriptRecords(prompt: text, within: 3) { return }
+        try await super.sendInput(text, submit: true)
+        _ = await transcriptRecords(prompt: text, within: 4)
+    }
+
+    /// Polls the live session's transcript for a user record carrying `prompt`.
+    private func transcriptRecords(prompt: String, within seconds: TimeInterval) async -> Bool {
+        let needle = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return true }
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            _ = refreshClaudeSessions()
+            sessionLock.lock()
+            let recorded = currentMessages.last(where: { $0.role == .user })?.text.contains(needle) == true
+            sessionLock.unlock()
+            if recorded { return true }
+            try? await Task.sleep(nanoseconds: 300_000_000)
+        }
+        return false
     }
 
     public override func respondToInputRequest(_ response: AgentInputRequestResponse) async throws {
