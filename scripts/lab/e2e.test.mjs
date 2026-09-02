@@ -36,6 +36,13 @@ test('projectsForMode isolates the opt-in Claude account journeys', () => {
   ]);
 });
 
+test('projectsForMode offers mobile WebKit variants of the Claude account journeys', () => {
+  assert.deepEqual(projectsForMode('claude-code-webkit'), ['local-claude-code-mobile-webkit']);
+  assert.deepEqual(projectsForMode('claude-code-safari'), ['local-claude-code-mobile-webkit']);
+  assert.deepEqual(projectsForMode('claude-desktop-webkit'), ['local-claude-desktop-mobile-webkit']);
+  assert.deepEqual(projectsForMode('claude-desktop-safari'), ['local-claude-desktop-mobile-webkit']);
+});
+
 test('runE2E passes only local account and host values to Playwright', async (t) => {
   const config = fixtureConfig(t);
   const calls = [];

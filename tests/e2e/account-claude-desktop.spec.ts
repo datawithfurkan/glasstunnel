@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process';
+import path from 'node:path';
 import { expect, type Page, test } from '@playwright/test';
 
 function requiredEnv(name: string): string {
@@ -8,6 +10,31 @@ function requiredEnv(name: string): string {
 
 /** Title of the dedicated Claude app session the lane may type into. */
 const sessionTitle = process.env.GT_LAB_CLAUDE_SESSION ?? 'Glasstunnel live evidence';
+
+/**
+ * Mac-side helper that reads or switches the front session's permission mode
+ * through Accessibility. It refuses to act unless the app shows `sessionTitle`,
+ * so a run can never change the mode of one of the user's own sessions.
+ */
+const permissionModeHelper = path.resolve(process.cwd(), 'scripts/lab/claude-desktop-permission-mode.swift');
+
+function permissionMode(...args: string[]): { ok: boolean; output: string } {
+  try {
+    const output = execFileSync('swift', [permissionModeHelper, '--session', sessionTitle, ...args], {
+      encoding: 'utf8',
+      timeout: 120_000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return { ok: true, output: output.trim() };
+  } catch (error) {
+    const failed = error as { stdout?: string; stderr?: string };
+    return { ok: false, output: `${failed.stdout ?? ''}${failed.stderr ?? ''}`.trim() || String(error) };
+  }
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 async function signInAndLinkHost(page: Page): Promise<void> {
   const email = requiredEnv('GT_LAB_EMAIL');
@@ -118,14 +145,16 @@ async function decide(page: Page, choice: RegExp): Promise<void> {
  * Drives the Claude desktop card from a phone-sized browser through the local
  * lab against the real Claude app: switches to a dedicated session, sends a
  * prompt that the Mac types into the app's composer via Accessibility, answers
- * a permission prompt and an AskUserQuestion from the phone, and checks that
- * the Claude Code CLI card started alongside never inherits the desktop
- * session's hook events. Costs three short turns on the signed-in account.
+ * a permission prompt (with the session switched to the app's ask-first mode
+ * for that step) and an AskUserQuestion from the phone, interrupts a running
+ * turn from the phone, and checks that the Claude Code CLI card started
+ * alongside never inherits the desktop session's hook events. Costs four
+ * short turns on the signed-in account.
  */
-test('@claude-desktop-account prompts, answers permission and question dialogs, and leaves the CLI card untouched', async ({
+test('@claude-desktop-account prompts, answers permission and question dialogs, interrupts, and leaves the CLI card untouched', async ({
   page,
 }) => {
-  test.setTimeout(480_000);
+  test.setTimeout(600_000);
   const marker = `GT_CLAUDE_APP_${Date.now()}`;
 
   await signInAndLinkHost(page);
@@ -153,33 +182,53 @@ test('@claude-desktop-account prompts, answers permission and question dialogs, 
   }
   await expect(current).toBeVisible({ timeout: 30_000 });
 
+  // The app's per-session permission mode decides whether a shell command
+  // shows a dialog. Read it first so the run can put it back afterwards.
+  const initialMode = permissionMode('--read');
+  const initialModeName = initialMode.output.match(/^mode: (.+?)(?: \(|$)/)?.[1];
+  test.info().annotations.push({ type: 'permission mode', description: initialMode.output });
+
   // 1. Plain prompt: typed into the real composer, answered, Stop hook → "Response ready".
   await sendPrompt(page, `Reply with exactly ${marker} and nothing else.`);
   await turnFinished(page, marker, 2);
 
-  // 2. A tool call that may need permission. Sessions in the app's "auto"
-  //    permission mode approve a harmless shell command themselves, so the
-  //    dialog is answered when it appears and its absence is recorded.
+  // 2. A file write behind the permission dialog. The session is switched to
+  //    the app's "Manual" mode ("Always ask before making changes") for this
+  //    step, so the Write reaches the phone as a decision and is answered
+  //    Allow there; the mode is put back afterwards, even if the step fails.
+  //    (A read-only shell command such as echo runs without a dialog even in
+  //    Manual mode.) When the mode cannot be switched, the step records
+  //    whether the session approved the write itself.
+  const askMode = permissionMode('--set', '^Manual');
+  test.info().annotations.push({ type: 'permission mode for the file write', description: askMode.output });
   const permissionMarker = `${marker}_PERM`;
-  await sendPrompt(
-    page,
-    `Run this shell command with your Bash tool and show me its output: echo ${permissionMarker}`,
-  );
-  const permissionCard = page
-    .getByText('Claude needs a decision', { exact: true })
-    .filter({ visible: true });
-  const prompted = await permissionCard
-    .waitFor({ state: 'visible', timeout: 25_000 })
-    .then(() => true)
-    .catch(() => false);
-  if (prompted) await decide(page, /Allow/);
-  test.info().annotations.push({
-    type: 'permission dialog',
-    description: prompted
-      ? 'shown by the app and answered Allow from the phone'
-      : 'not shown: the session permission mode approved the command itself',
-  });
-  await turnFinished(page, permissionMarker, 2);
+  try {
+    await sendPrompt(
+      page,
+      `Use your Write tool to create the file .cache/glasstunnel-lab/permission-${marker}.txt in the current working directory containing exactly ${permissionMarker}, then reply with only that file's contents.`,
+    );
+    const permissionCard = page
+      .getByText('Claude needs a decision', { exact: true })
+      .filter({ visible: true });
+    const prompted = await permissionCard
+      .waitFor({ state: 'visible', timeout: askMode.ok ? 90_000 : 25_000 })
+      .then(() => true)
+      .catch(() => false);
+    if (prompted) await decide(page, /Allow/);
+    if (askMode.ok) expect(prompted, 'the permission dialog reached the phone').toBe(true);
+    test.info().annotations.push({
+      type: 'permission dialog',
+      description: prompted
+        ? 'shown by the app and answered Allow from the phone'
+        : 'not shown: the session permission mode approved the write itself',
+    });
+    await turnFinished(page, permissionMarker, 2);
+  } finally {
+    if (askMode.ok && initialModeName && !askMode.output.includes('(unchanged)')) {
+      const restored = permissionMode('--set', `^${escapeRegExp(initialModeName)}$`);
+      test.info().annotations.push({ type: 'permission mode restored', description: restored.output });
+    }
+  }
 
   // 3. AskUserQuestion answered from the phone. Sessions in "auto" permission
   //    mode first ask permission to use the tool (a second decision card), and
@@ -220,7 +269,28 @@ test('@claude-desktop-account prompts, answers permission and question dialogs, 
   });
   await turnFinished(page, `Beta_PICKED_${marker}`, 1);
 
-  // 4. The CLI card owns a different session, so none of the above moved it.
+  // 4. Interrupt from the phone. A long shell command is stopped through the
+  //    app's own Stop control; the transcript then records the turn as
+  //    stopped, so the card reads "idle" and the command's output never lands.
+  const sleepMarker = `${marker}_SLEPT`;
+  await sendPrompt(
+    page,
+    `Run this shell command with your Bash tool and show me its output: sleep 45 && echo ${sleepMarker}`,
+  );
+  const runPermission = page.getByText('Claude needs a decision', { exact: true }).filter({ visible: true });
+  if (await runPermission.waitFor({ state: 'visible', timeout: 20_000 }).then(() => true).catch(() => false)) {
+    await decide(page, /Allow/);
+  }
+  const stop = page.getByRole('button', { name: 'Stop response', exact: true }).filter({ visible: true });
+  await expect(stop).toBeVisible({ timeout: 60_000 });
+  await stop.click();
+  await expect(page.getByText('idle', { exact: true }).filter({ visible: true }).first()).toBeVisible({
+    timeout: 90_000,
+  });
+  await expect(stop).toBeHidden();
+  expect(await occurrences(page, sleepMarker), 'the interrupted command never reported its output').toBe(1);
+
+  // 5. The CLI card owns a different session, so none of the above moved it.
   await openTab(page, 'Code');
   await expect(page.getByText('Response ready', { exact: true })).toBeHidden();
   await expect(page.getByText('Claude needs a decision', { exact: true })).toBeHidden();
