@@ -553,6 +553,13 @@ public final class ClaudeCodeAdapter: PTYAdapterBase, @unchecked Sendable {
         case .stop:
             transitionTo(.done, detail: event.summary == "Stop" ? "Response ready" : event.summary, forceEmit: true)
         case .subagentStop:
+            // Claude Code also reports background work (title generation,
+            // summaries) as a subagent finishing after the turn is over; a
+            // finished turn must not read as working again.
+            guard currentStatusValue() == .working else {
+                emitSnapshotKeepingDetail()
+                return
+            }
             transitionTo(.working, detail: "Claude is working", forceEmit: true)
         case .notification where event.notificationType == ClaudeCodeHookListener.idlePromptNotification:
             // Claude is merely idle after a finished turn; the turn's own

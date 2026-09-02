@@ -336,6 +336,27 @@ final class ClaudeDesktopAdapterTests: XCTestCase {
         XCTAssertEqual(finished.statusDetail, "Response ready")
     }
 
+    func testSubagentStopAfterAFinishedTurnKeepsResponseReady() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        try writeSession(fixture, sessionId: "5a5a5a5a-5a5a-4a5a-8a5a-5a5a5a5a5a5a", title: "Target session")
+        fixture.ui.frontTitle = "Target session"
+        defer { Task { await fixture.adapter.stop() } }
+        try await fixture.adapter.start()
+        _ = try await waitForSnapshot(fixture.adapter) { $0.status == .done }
+
+        fixture.source.fire(.stop, session: "5a5a5a5a-5a5a-4a5a-8a5a-5a5a5a5a5a5a", summary: "Stop")
+        let finished = try await waitForSnapshot(fixture.adapter) { $0.statusDetail == "Response ready" }
+        XCTAssertEqual(finished.status, .done)
+
+        // The desktop app runs background work (title generation) after the
+        // turn and reports it as a subagent finishing; the phone must keep
+        // seeing a finished turn.
+        fixture.source.fire(.subagentStop, session: "5a5a5a5a-5a5a-4a5a-8a5a-5a5a5a5a5a5a", summary: "SubagentStop")
+        try await Task.sleep(nanoseconds: 800_000_000)
+        XCTAssertEqual(fixture.adapter.currentStatusForTesting(), .done)
+    }
+
     func testHousekeepingRecordsDoNotDismissAPermissionPrompt() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }

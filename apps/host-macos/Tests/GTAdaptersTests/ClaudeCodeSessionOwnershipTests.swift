@@ -141,6 +141,28 @@ final class ClaudeCodeSessionOwnershipTests: XCTestCase {
         }
     }
 
+    func testSubagentStopAfterAFinishedTurnDoesNotReopenIt() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let adapter = makeAdapter(fixture)
+        defer { Task { await adapter.stop() } }
+        try await adapter.start()
+        let sessionFlag = try XCTUnwrap(adapter.arguments.firstIndex(of: "--session-id"))
+        let sessionId = adapter.arguments[sessionFlag + 1]
+
+        fixture.source.fire(kind: .stop, session: sessionId, summary: "Stop")
+        let finished = try await waitForSnapshot(adapter) { $0.statusDetail == "Response ready" }
+        XCTAssertEqual(finished.status, .done)
+
+        fixture.source.fire(kind: .subagentStop, session: sessionId, summary: "SubagentStop")
+        do {
+            let reopened = try await waitForSnapshot(adapter, timeoutSeconds: 2) { $0.status == .working }
+            XCTFail("A finished turn must stay finished; got \(reopened.statusDetail)")
+        } catch is CancellationError {
+            // No working snapshot arrived: the background subagent was ignored.
+        }
+    }
+
     func testTrustDialogBecomesADecisionAndBlocksPromptsUntilAnswered() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }

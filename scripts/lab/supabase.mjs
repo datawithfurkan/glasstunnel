@@ -98,12 +98,32 @@ export async function resetSupabase({
   };
 }
 
+/**
+ * Right after `supabase db reset` the gateway answers 502/503 for up to a
+ * minute while GoTrue reconnects; the first admin call after a reset must
+ * wait that out instead of failing the whole lane.
+ */
+async function fetchWhileGatewayRecovers(
+  fetchImpl,
+  url,
+  init,
+  { attempts = 30, retryDelayMs = 3_000, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {},
+) {
+  let response = await fetchImpl(url, init);
+  for (let attempt = 1; attempt < attempts && (response.status === 502 || response.status === 503); attempt += 1) {
+    await sleep(retryDelayMs);
+    response = await fetchImpl(url, init);
+  }
+  return response;
+}
+
 export async function upsertLabUser({
   apiUrl,
   serviceRoleKey,
   email,
   password,
   fetchImpl = fetch,
+  recovery = {},
 }) {
   const baseUrl = assertLocalApiUrl(apiUrl);
   assertLabIdentity(email);
@@ -114,7 +134,7 @@ export async function upsertLabUser({
   };
   const listUrl = new URL('/auth/v1/admin/users?page=1&per_page=1000', baseUrl);
   const users = await responseJson(
-    await fetchImpl(listUrl, { headers }),
+    await fetchWhileGatewayRecovers(fetchImpl, listUrl, { headers }, recovery),
     'Listing local lab users',
   );
   const existing = users.users?.find((user) => user.email?.toLowerCase() === email.toLowerCase());
