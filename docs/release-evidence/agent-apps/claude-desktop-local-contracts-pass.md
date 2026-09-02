@@ -4,7 +4,7 @@
 - App: Claude desktop
 - Result: pass
 - Environment: Claude desktop app 1.40609.1 installed and running on the development Mac; local contracts, store parsing, and a read-only Accessibility probe from a trusted process
-- Glasstunnel commit: ee897343
+- Glasstunnel commit: 95c792bf
 - Artifact: artifacts/claude-desktop-local-contracts.txt
 - Privacy review: pass
 
