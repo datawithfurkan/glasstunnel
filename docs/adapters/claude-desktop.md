@@ -28,28 +28,35 @@ a permission prompt stays visible on the phone until it is answered.
 
 ## Driving the app
 
-- **Bringing a session to the front** — the adapter compares the front window's title
-  (the Code UI sets it to the session title) with the selected session's title. If they
-  differ it tries `claude://code/continue?session=<id>`, then presses the session's row
-  through Accessibility, and re-checks. Current Claude builds answer every `claude://code`
-  link with "deep link gated off" in their own log, so the Accessibility path is the one
-  that matters today; the link stays in place for builds that enable it.
-- **Prompts** — only once the front window is confirmed to show the selected session
-  (or when the title cannot be read at all), the adapter writes into the composer via
-  Accessibility (placeholder hint "Ask Claude a question or start a task"), falling
-  back to a click on the composer strip plus synthetic keystrokes, and posts Return to
-  submit. If the window verifiably shows another session, the prompt is refused with
-  "Switch Claude to “<title>” before sending this prompt" rather than typed into the
-  wrong conversation.
+- **Bringing a session to the front** — the adapter reads the name of the session in
+  front from the Code UI's "<name>, rename session" control (the window title is a
+  bare "Claude" on build 1.40609.1) and compares it with the selected session's title.
+  If they differ it tries `claude://code/continue?session=<id>`, then presses the
+  session's sidebar entry through Accessibility (entries are titled "Idle …" /
+  "Running …" / "Unread response …", so the match is by substring), and re-checks.
+  Current Claude builds answer every `claude://code` link with "deep link gated off" in
+  their own log, so the Accessibility path is the one that matters today.
+- **Prompts** — only once the app is confirmed to show the selected session (or when
+  neither the rename control nor the window title can be read), the adapter writes
+  into the composer via Accessibility (an editable text area described "Prompt", or
+  the older placeholder "Ask Claude a question or start a task"), falling back to a
+  click on the composer strip plus synthetic keystrokes, and posts Return to submit.
+  If the app verifiably shows another session, the prompt is refused with "Switch
+  Claude to “<title>” before sending this prompt" rather than typed into the wrong
+  conversation.
 - **Switching sessions** — the same bring-to-front sequence; a selected session the app
   is not yet showing is published with `isActive: false` so the phone retries.
 - **Permission prompts** — the phone shows Allow / Deny as a structured question; the
   answer presses the dialog's "Allow once" / "Allow" or "Deny" button. Typed text always
   goes to the composer.
-- **Questions** — answering an `AskUserQuestion` presses the chosen option, then
-  "Submit" / "Continue" / "Send" when the UI exposes one. The question stays open on the
-  phone until the transcript records the answer, so a press the app did not take can
-  simply be retried.
+- **Questions** — answering an `AskUserQuestion` brings the session in front, presses
+  the chosen option by exact label inside the session pane (the newest match, so an
+  earlier answer's bubble or a sidebar control such as "Dispatch Beta" is never hit),
+  then "Submit" / "Continue" / "Send" when the UI exposes one. When the app is not
+  showing the question yet (its own tool-permission dialog comes first in "auto"
+  mode), the question stays open on the phone with "open the question in Claude to
+  answer" so it can be retried. Permission and Stop buttons are pressed inside the
+  session pane the same way.
 - **Interrupt** — presses "Stop" / "Interrupt" when exposed, else focuses the app and
   sends Escape.
 
@@ -87,7 +94,10 @@ a permission prompt stays visible on the phone until it is answered.
   AskUserQuestion from the phone, and checks that a Claude Code CLI card started
   alongside never moves. Needs the app open with that session created, an
   Accessibility-trusted lab process, and a signed-in account; it spends three short
-  turns. Keep your hands off the Claude window while it runs.
+  turns. Keep your hands off the Claude window while it runs. A session in the app's
+  "auto" permission mode approves a harmless shell command itself, so the permission
+  dialog is answered only when it appears (the lane records which happened); sessions
+  set to ask before running exercise it.
 
 ## Implementation compatibility
 

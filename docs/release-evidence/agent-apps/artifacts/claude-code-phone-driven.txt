@@ -1,8 +1,8 @@
 Privacy-reviewed summary artifact.
 Date: 2026-09-02.
-Commit: 95c792bf.
+Commit: afa93663.
 Scope: Claude Code CLI card driven from a phone-sized mobile Chromium through the Local Test Lab against the real signed-in Claude Code CLI 2.1.226.
-Result: pass (two consecutive passes: the working tree of this commit, then the commit itself).
+Result: pass (three passes across the day, the last at this commit; the run before it exposed a prompt the TUI kept in its composer, which the adapter now resubmits).
 Evidence command: pnpm lab:e2e:claude-code (Playwright project local-claude-code-mobile-chromium).
 Card state trail recorded by the lab host: Starting → trust dialog published as a decision → answered from the phone (highlight moved, confirmed) → resume refused because another process held the session → fresh session started in the same folder → trust dialog answered again → Starting Claude Code → ready → prompt submitted → Response ready (Stop hook) → second prompt interrupted from the phone → ready.
 Raw transcripts, session ids, account-specific output, and screenshots are intentionally not retained in Git.

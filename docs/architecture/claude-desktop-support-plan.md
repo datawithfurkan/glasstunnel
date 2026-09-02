@@ -243,22 +243,21 @@ the CLI adapter running untouched alongside.
   flags; `pnpm qa:claude-desktop:live-ax` adds a read-only composer probe that needs
   an Accessibility-trusted terminal) and `pnpm qa:claude-code` now also checks
   `--session-id`.
-- [~] **T3.2 Release evidence** (M) — recorded on 2026-09-02:
+- [x] **T3.2 Release evidence** (M) — recorded on 2026-09-02:
   `claude-code-live-adapter-pass.md` (the CLI adapter drove the real `claude` binary
-  end to end), `claude-desktop-local-contracts-pass.md` (bundle, scheme, store parsing
-  against the running app, every `claude://code` deep link gated off on build
-  1.40609.1, composer and rename control reachable through Accessibility), and
-  `claude-code-phone-driven-pass.md` (`pnpm lab:e2e:claude-code`: a phone-sized
-  Chromium signed in, started the card, answered the workspace-trust dialog, watched
-  the held-session fallback create a fresh session, got "Response ready" for a prompt,
-  and interrupted a second one). Still open: `pnpm lab:e2e:claude-desktop` against a
-  dedicated Claude app session with the window left alone (the lane is written), and
-  a WebKit pass of the CLI lane.
-- [x] **T3.3 Status updates** (S): Claude Code is Preview ("Partial") on the strength of
-  the adapter-level evidence; Claude desktop stays Experimental until the Accessibility
-  path is exercised. README tiers, known-limitations, and the Unreleased changelog are
-  updated. Promotion procedure for the remaining step: `pnpm qa:agent-app:record`,
-  `pnpm qa:agent-app-claims`, `pnpm release:readiness`.
+  end to end), `claude-code-phone-driven-pass.md` (`pnpm lab:e2e:claude-code`: trust
+  decision answered from the phone, held-session fallback, prompt → "Response ready",
+  interrupt), `claude-desktop-local-contracts-pass.md` (bundle, scheme, store parsing,
+  deep links gated off, composer and rename control reachable through Accessibility),
+  and `claude-desktop-phone-driven-pass.md` (`pnpm lab:e2e:claude-desktop`: switched
+  the real app to a dedicated session, three prompts typed and answered through
+  Accessibility, an AskUserQuestion answered from the phone, CLI card untouched).
+  Not recorded: the permission dialog itself (the session's "auto" mode approved the
+  command), interrupt on the desktop card, WebKit, and app-restart behavior.
+- [x] **T3.3 Status updates** (S): both Claude cards are Preview ("Partial") on the
+  phone-driven evidence above. README tiers, known-limitations, and the Unreleased
+  changelog are updated. Any later host change re-runs the evidence lanes before
+  `pnpm qa:agent-app-claims` and `pnpm release:readiness`.
 
 ### Live evidence checklist (the one part that needs a person at the Mac)
 
