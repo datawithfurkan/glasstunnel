@@ -22,6 +22,8 @@ const SCREEN_WEBKIT_PROJECTS = ['local-screen-mobile-webkit'];
 const CODEX_CLI_CHROMIUM_PROJECTS = ['local-codex-cli-mobile-chromium'];
 const CLAUDE_CODE_CHROMIUM_PROJECTS = ['local-claude-code-mobile-chromium'];
 const CLAUDE_DESKTOP_CHROMIUM_PROJECTS = ['local-claude-desktop-mobile-chromium'];
+const CLAUDE_CODE_WEBKIT_PROJECTS = ['local-claude-code-mobile-webkit'];
+const CLAUDE_DESKTOP_WEBKIT_PROJECTS = ['local-claude-desktop-mobile-webkit'];
 const execFileAsync = promisify(execFile);
 const DEFAULT_PTY_PROCESS_REGISTRY = join(
   homedir(),
@@ -301,6 +303,8 @@ export function projectsForMode(mode) {
   if (mode === 'codex-cli-chromium') return CODEX_CLI_CHROMIUM_PROJECTS;
   if (mode === 'claude-code-chromium') return CLAUDE_CODE_CHROMIUM_PROJECTS;
   if (mode === 'claude-desktop-chromium') return CLAUDE_DESKTOP_CHROMIUM_PROJECTS;
+  if (mode === 'claude-code-webkit' || mode === 'claude-code-safari') return CLAUDE_CODE_WEBKIT_PROJECTS;
+  if (mode === 'claude-desktop-webkit' || mode === 'claude-desktop-safari') return CLAUDE_DESKTOP_WEBKIT_PROJECTS;
   if (mode === 'screen-chromium') return SCREEN_CHROMIUM_PROJECTS;
   if (mode === 'screen-webkit' || mode === 'screen-safari') return SCREEN_WEBKIT_PROJECTS;
   if (mode === 'webkit' || mode === 'safari') return WEBKIT_PROJECTS;

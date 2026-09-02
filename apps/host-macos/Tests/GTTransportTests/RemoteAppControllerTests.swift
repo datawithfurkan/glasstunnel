@@ -1288,6 +1288,66 @@ final class RemoteAppControllerTests: XCTestCase {
         })
     }
 
+    /// The Claude desktop card is window-backed: when the app quits, its
+    /// adapter goes away and the card reads unavailable; when the app comes
+    /// back (with a new pid), the card is available again and a fresh
+    /// adapter is started for it.
+    func testWindowBackedRemoteAppIsRecreatedAfterItsAppRestarts() async throws {
+        let defaults = isolatedDefaults()
+        defaults.set([], forKey: "remoteApps.enabled.v1")
+        let adapter = StubAgentAdapter(agentID: "claude-desktop", kind: .claudeDesktop, label: "Claude")
+        let factory = AdapterFactoryRecorder(remoteAppId: "claude-desktop", adapter: adapter)
+        let controller = RemoteAppController(
+            defaults: defaults,
+            executableExists: { _ in false },
+            adapterFactory: { definition, window in
+                factory.makeAdapter(definition: definition, window: window)
+            }
+        )
+        func claudeWindow(id: UInt32, pid: pid_t) -> CapturableWindow {
+            CapturableWindow(
+                windowID: id,
+                title: "Claude",
+                applicationName: "Claude",
+                applicationBundleID: "com.anthropic.claudefordesktop",
+                pid: pid,
+                frame: .zero,
+                isOnScreen: true
+            )
+        }
+        func claudeCard() -> RemoteApp? {
+            controller.remoteAppsSnapshot().first { $0.remoteAppId == "claude-desktop" }
+        }
+
+        controller.updateWindows([claudeWindow(id: 300, pid: 4321)])
+        controller.setEnabled(remoteAppId: "claude-desktop", enabled: true)
+        XCTAssertEqual(claudeCard()?.enabled, true, "enabled after setEnabled")
+        XCTAssertEqual(claudeCard()?.available, true, "available with the window present")
+        XCTAssertEqual(factory.remoteAppIds().count, 1, "factory consulted once the card is enabled and available")
+        for _ in 0..<80 where adapter.startCalls() < 1 {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertEqual(
+            adapter.startCalls(),
+            1,
+            "start not called; snapshots=\(controller.cachedSnapshots().map { "\($0.agentId):\($0.status):\($0.statusDetail)" })"
+        )
+        XCTAssertEqual(factory.remoteAppIds().count, 1)
+        XCTAssertEqual(claudeCard()?.available, true)
+
+        // The app quits: its window disappears and the card is no longer
+        // offered as available (window-backed apps drop out of the list).
+        controller.updateWindows([])
+        try await waitUntil { claudeCard()?.available != true }
+
+        // The app relaunches with a new pid and window: a fresh adapter starts.
+        controller.updateWindows([claudeWindow(id: 301, pid: 8765)])
+        try await waitUntil { adapter.startCalls() == 2 }
+        XCTAssertEqual(factory.remoteAppIds().count, 2)
+        XCTAssertEqual(claudeCard()?.available, true)
+        XCTAssertEqual(claudeCard()?.enabled, true)
+    }
+
     private func isolatedDefaults() -> UserDefaults {
         let suiteName = "RemoteAppControllerTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!

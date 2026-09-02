@@ -81,6 +81,20 @@ export default defineConfig({
       },
     },
     {
+      name: 'local-claude-code-mobile-webkit',
+      grep: /@claude-code-account/,
+      use: {
+        ...devices['iPhone 15'],
+      },
+    },
+    {
+      name: 'local-claude-desktop-mobile-webkit',
+      grep: /@claude-desktop-account/,
+      use: {
+        ...devices['iPhone 15'],
+      },
+    },
+    {
       name: 'fixture-mobile-webkit',
       grep: /@fixture/,
       use: {
