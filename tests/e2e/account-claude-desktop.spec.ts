@@ -181,12 +181,43 @@ test('@claude-desktop-account prompts, answers permission and question dialogs, 
   });
   await turnFinished(page, permissionMarker, 2);
 
-  // 3. AskUserQuestion answered from the phone.
+  // 3. AskUserQuestion answered from the phone. Sessions in "auto" permission
+  //    mode first ask permission to use the tool (a second decision card), and
+  //    the question itself follows once that is allowed.
   await sendPrompt(
     page,
     'Use your AskUserQuestion tool to ask me one question with exactly two options labelled Alpha and Beta. After I answer, reply with only the label I picked followed by _PICKED.',
   );
-  await decide(page, /Beta/);
+  let questionAnswered = false;
+  let toolPermissionAnswered = false;
+  const questionDeadline = Date.now() + 240_000;
+  while (Date.now() < questionDeadline && (await occurrences(page, 'Beta_PICKED')) < 1) {
+    const card = page.getByText('Claude needs a decision', { exact: true }).filter({ visible: true });
+    if (await card.isVisible().catch(() => false)) {
+      const beta = page.getByRole('button', { name: /\bBeta\b/ }).filter({ visible: true }).first();
+      const allow = page.getByRole('button', { name: /\bAllow\b/ }).filter({ visible: true }).first();
+      if (await beta.isVisible().catch(() => false)) {
+        await beta.click();
+        questionAnswered = true;
+      } else if (await allow.isVisible().catch(() => false)) {
+        await allow.click();
+        toolPermissionAnswered = true;
+      } else {
+        await page.waitForTimeout(1_000);
+        continue;
+      }
+      await page.getByRole('button', { name: 'Continue', exact: true }).filter({ visible: true }).click();
+      await card.waitFor({ state: 'hidden', timeout: 60_000 }).catch(() => undefined);
+    }
+    await page.waitForTimeout(1_000);
+  }
+  expect(questionAnswered, 'the question reached the phone and was answered there').toBe(true);
+  test.info().annotations.push({
+    type: 'AskUserQuestion',
+    description: toolPermissionAnswered
+      ? 'tool permission allowed from the phone, then the question answered from the phone'
+      : 'question answered from the phone (no tool permission dialog)',
+  });
   await turnFinished(page, 'Beta_PICKED', 1);
 
   // 4. The CLI card owns a different session, so none of the above moved it.
