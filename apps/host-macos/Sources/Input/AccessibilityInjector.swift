@@ -138,6 +138,50 @@ public final class AccessibilityInjector: @unchecked Sendable {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Like `press(bundleID:matching:exact:)`, but only inside the pane that
+    /// holds both a control whose description ends with `paneMarkerSuffix` and
+    /// an editable field matching `paneInputHint`. Web apps put navigation
+    /// (sidebars, feature switchers) in the same window as the content, and a
+    /// window-wide search for an option called "Beta" once pressed a sidebar's
+    /// "Dispatch Beta" button through its child text.
+    public func press(
+        bundleID: String,
+        matching query: String,
+        exact: Bool,
+        inPaneWith paneMarkerSuffix: String,
+        inputHint paneInputHint: String
+    ) throws {
+        guard let runningApp = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first else {
+            throw InjectionError.appNotRunning(bundleID)
+        }
+        runningApp.activate(options: [.activateIgnoringOtherApps])
+
+        let app = AXUIElementCreateApplication(runningApp.processIdentifier)
+        guard let window = focusedWindow(of: app) ?? firstWindow(of: app) else {
+            throw InjectionError.noFrontWindow
+        }
+        guard
+            let markerPath = path(in: window, to: { element in
+                (self.copyStringAttribute(element, kAXDescriptionAttribute) ?? "").hasSuffix(paneMarkerSuffix)
+            }),
+            let inputPath = path(in: window, to: { element in
+                self.isEditableField(element) && self.elementMatchesHint(element, hint: paneInputHint)
+            }),
+            let pane = lowestCommonAncestor(markerPath, inputPath)
+        else {
+            throw InjectionError.noMatchingElement("pane holding \(paneMarkerSuffix) and \(paneInputHint)")
+        }
+
+        guard let element = findFirstPressMatch(in: pane, query: query, exact: exact) else {
+            throw InjectionError.noMatchingElement(query)
+        }
+
+        let err = AXUIElementPerformAction(element, kAXPressAction as CFString)
+        if err != .success {
+            throw InjectionError.axFailed("press \(query)", err)
+        }
+    }
+
     /// The full accessibility description of the first element in the front
     /// window whose description ends with `suffix`; nil when none does.
     /// Web-based apps often expose a control such as "Thread title, rename"
@@ -236,6 +280,34 @@ public final class AccessibilityInjector: @unchecked Sendable {
             }
         }
         return nil
+    }
+
+    /// The chain of elements from `root` down to the first element satisfying
+    /// `predicate` (root first), or nil.
+    private func path(
+        in root: AXUIElement,
+        depth: Int = 0,
+        trail: [AXUIElement] = [],
+        to predicate: (AXUIElement) -> Bool
+    ) -> [AXUIElement]? {
+        guard depth <= 60 else { return nil }
+        let current = trail + [root]
+        if predicate(root) { return current }
+        for child in children(of: root) {
+            if let found = path(in: child, depth: depth + 1, trail: current, to: predicate) {
+                return found
+            }
+        }
+        return nil
+    }
+
+    private func lowestCommonAncestor(_ a: [AXUIElement], _ b: [AXUIElement]) -> AXUIElement? {
+        var ancestor: AXUIElement?
+        for (x, y) in zip(a, b) {
+            guard CFEqual(x, y) else { break }
+            ancestor = x
+        }
+        return ancestor
     }
 
     private func findFirstDescription(in element: AXUIElement, endingWith suffix: String, depth: Int) -> String? {
@@ -497,5 +569,6 @@ public final class AccessibilityInjector: @unchecked Sendable {
     public func frontWindowDescription(bundleID: String, endingWith suffix: String) throws -> String? { nil }
     public func clickFrontWindow(bundleID: String, xFraction: Double, yFromBottom: Double) throws {}
     public func press(bundleID: String, matching query: String, exact: Bool = true) throws {}
+    public func press(bundleID: String, matching query: String, exact: Bool, inPaneWith paneMarkerSuffix: String, inputHint paneInputHint: String) throws {}
 }
 #endif
