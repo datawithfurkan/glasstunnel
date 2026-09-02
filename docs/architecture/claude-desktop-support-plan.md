@@ -145,12 +145,14 @@ Spike findings (all three done; details in `docs/adapters/claude-desktop.md`):
   controls "Submit" / "Continue" / "Send"; "Stop" / "Interrupt". The strings hardcoded in
   `AccessibilityInjector.isPlaceholderValue` do not occur in the Claude app at all, so
   they were left alone.
-- [x] **S1.b Deep-link probe.** The app's URL handler (in `app.asar`) accepts
-  `claude://code/continue?session=<uuid|last>` (opens that session),
-  `claude://code/needs-input?session=<uuid>` (the session waiting longest for a
-  permission answer), `claude://code/new?folder=<path>`, and
-  `claude://resume?session=<uuid>` (imports a CLI session). The adapter uses
-  `code/continue` for switching and before every prompt.
+- [x] **S1.b Deep-link probe.** The app's URL handler (in `app.asar`) defines
+  `claude://code/continue?session=<last|local_…>`, `claude://code/needs-input`,
+  `claude://code/new?folder=<path>`, `claude://code/<cse_…|session_…>` and
+  `claude://resume?session=<uuid>`. **Live result:** the ids it validates are the app's
+  own (`local_`/`cse_` ids, not the transcript UUID), and on the installed build every
+  `claude://code` form logs `claudeURLHandler: … deep link gated off`. The adapter
+  therefore verifies the front window title and switches sessions by pressing the
+  session row through Accessibility, keeping the link as a first attempt.
 - [x] **S1.c Desktop JSONL status semantics.** `assistant.stop_reason` `tool_use` →
   working, `end_turn` → done; a `[Request interrupted by user…]` user record → stopped;
   an `AskUserQuestion` tool call with no `tool_result` → waiting for an answer.

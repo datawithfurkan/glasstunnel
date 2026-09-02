@@ -578,10 +578,17 @@ describe('AgentCarousel primary copy', () => {
     expect(shouldShowCommandTargetSwitcher(directApp('screen'))).toBe(false);
   });
 
-  it('retries a selected Codex target until the desktop confirms it is active', () => {
+  it('retries a selected Codex or Claude desktop target until the app confirms it is active', () => {
     expect(shouldRequestTargetSelection(codexApp(), { selected: true, isActive: false })).toBe(true);
     expect(shouldRequestTargetSelection(codexApp(), { selected: true, isActive: true })).toBe(false);
     expect(shouldRequestTargetSelection(codexApp(), { selected: false, isActive: false })).toBe(true);
+    expect(
+      shouldRequestTargetSelection({ ...codexApp(), remoteAppId: 'claude-desktop' }, { selected: true, isActive: false }),
+    ).toBe(true);
+    expect(
+      shouldRequestTargetSelection({ ...codexApp(), remoteAppId: 'claude-desktop' }, { selected: true, isActive: true }),
+    ).toBe(false);
+    expect(shouldRequestTargetSelection(cliApp('claude-code'), { selected: true, isActive: false })).toBe(false);
     expect(shouldRequestTargetSelection(cursorApp(), { selected: true, isActive: false })).toBe(false);
   });
 
