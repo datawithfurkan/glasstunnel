@@ -10,7 +10,11 @@ import GTProtocol
 /// `claude://` deep links; tests substitute a fake.
 protocol ClaudeDesktopUIDriving: Sendable {
     func deliver(text: String, submit: Bool) throws
+    /// Presses anywhere in the window: for navigation such as sidebar entries.
     func press(label: String, exact: Bool) throws
+    /// Presses only inside the session pane (dialog buttons, question options),
+    /// never the sidebar or feature switchers that share the window.
+    func pressInSession(label: String, exact: Bool) throws
     func interrupt() throws
     func open(_ url: URL) -> Bool
     /// The front window's title; nil when Accessibility cannot read it. Current
@@ -247,18 +251,41 @@ public final class ClaudeDesktopAdapter: AgentAdapter, @unchecked Sendable {
             return
         }
 
+        // Pressing anything in the wrong session, or a look-alike control,
+        // would be worse than failing: bring the session in front first, and
+        // match option labels exactly (a substring match once hit the
+        // sidebar's "Dispatch Beta" for an option called "Beta").
+        if let selected = selectedSummary() {
+            let confirmed = await bringSessionToFront(selected)
+            if !confirmed, let front = frontSessionTitle(), !front.isEmpty, let title = selected.threadName {
+                throw NSError(
+                    domain: "ClaudeDesktopAdapter",
+                    code: 409,
+                    userInfo: [NSLocalizedDescriptionKey: "Switch Claude to “\(title)” before answering this question."]
+                )
+            }
+        }
         var summaryLines: [String] = []
         for question in request.questions {
             guard let choiceId = answerByQuestion[question.questionId]?.first,
                   let choice = question.choices.first(where: { $0.choiceId == choiceId }) else {
                 continue
             }
-            try ui.press(label: choice.label, exact: false)
+            do {
+                try ui.pressInSession(label: choice.label, exact: true)
+            } catch {
+                // The app is not showing the question yet (its own permission
+                // dialog for the tool comes first); keep the question pending
+                // so the phone can retry once it is.
+                setStatus(.waitingInput, detail: "open the question in Claude to answer")
+                emitCurrentSnapshot()
+                return
+            }
             summaryLines.append("\(question.header): \(choice.label)")
             try? await Task.sleep(nanoseconds: 120_000_000)
         }
         for label in Self.choiceSubmitLabels {
-            if (try? ui.press(label: label, exact: true)) != nil { break }
+            if (try? ui.pressInSession(label: label, exact: true)) != nil { break }
         }
 
         // The question stays pending — and the status stays "waiting", which
@@ -724,7 +751,7 @@ public final class ClaudeDesktopAdapter: AgentAdapter, @unchecked Sendable {
         var lastError: Error?
         for label in allow ? Self.permissionAllowLabels : Self.permissionDenyLabels {
             do {
-                try ui.press(label: label, exact: true)
+                try ui.pressInSession(label: label, exact: true)
                 return
             } catch {
                 lastError = error
@@ -811,9 +838,31 @@ struct ClaudeDesktopAccessibilityDriver: ClaudeDesktopUIDriving {
         try accessibility.press(bundleID: ClaudeDesktopAdapter.bundleID, matching: label, exact: exact)
     }
 
+    func pressInSession(label: String, exact: Bool) throws {
+        // The pane is the smallest container holding both the session's
+        // rename control and its composer; the composer is found by the same
+        // vocabulary the prompt delivery uses.
+        var lastError: Error?
+        for hint in ClaudeDesktopAdapter.composerHints {
+            do {
+                try accessibility.press(
+                    bundleID: ClaudeDesktopAdapter.bundleID,
+                    matching: label,
+                    exact: exact,
+                    inPaneWith: ClaudeDesktopAdapter.renameControlSuffix,
+                    inputHint: hint
+                )
+                return
+            } catch {
+                lastError = error
+            }
+        }
+        throw lastError ?? NSError(domain: "ClaudeDesktopAdapter", code: 404)
+    }
+
     func interrupt() throws {
         for label in ClaudeDesktopAdapter.interruptLabels {
-            if (try? accessibility.press(bundleID: ClaudeDesktopAdapter.bundleID, matching: label, exact: true)) != nil {
+            if (try? pressInSession(label: label, exact: true)) != nil {
                 return
             }
         }

@@ -156,6 +156,11 @@ final class ClaudeDesktopAdapterTests: XCTestCase {
             lock.lock(); _delivered.append((text, submit)); lock.unlock()
         }
 
+        /// The fake has no panes; session-scoped presses behave like presses.
+        func pressInSession(label: String, exact: Bool) throws {
+            try press(label: label, exact: exact)
+        }
+
         func press(label: String, exact: Bool) throws {
             let matches = pressableLabels.contains { exact ? $0 == label : $0.localizedCaseInsensitiveContains(label) }
             guard matches else { throw NSError(domain: "FakeDesktopUI", code: 404) }
@@ -334,6 +339,34 @@ final class ClaudeDesktopAdapterTests: XCTestCase {
         fixture.source.fire(.stop, session: "44444444-4444-4444-8444-444444444444", summary: "Stop")
         let finished = try await waitForSnapshot(fixture.adapter) { $0.status == .done }
         XCTAssertEqual(finished.statusDetail, "Response ready")
+    }
+
+    func testQuestionAnswersPressExactLabelsOnlyAndStayPendingWhenTheAppHidesTheQuestion() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        _ = try writeSession(fixture, sessionId: "6b6b6b6b-6b6b-4b6b-8b6b-6b6b6b6b6b6b", title: "Target session", extraLines: [
+            #"{"type":"assistant","sessionId":"6b6b6b6b-6b6b-4b6b-8b6b-6b6b6b6b6b6b","timestamp":"2026-09-01T10:00:09.000Z","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","id":"toolu_ab","name":"AskUserQuestion","input":{"questions":[{"question":"Which one?","header":"Pick","options":[{"label":"Alpha","description":""},{"label":"Beta","description":""}]}]}}]}}"#,
+        ])
+        fixture.ui.frontTitle = "Target session"
+        // The app shows its tool-permission dialog first; the only control that
+        // contains the option's text is an unrelated sidebar button.
+        fixture.ui.pressableLabels = ["Dispatch Beta", "Allow once", "Submit"]
+        defer { Task { await fixture.adapter.stop() } }
+        try await fixture.adapter.start()
+        let waiting = try await waitForSnapshot(fixture.adapter) { $0.status == .waitingInput }
+        let request = try XCTUnwrap(waiting.pendingInputRequest)
+        let beta = try XCTUnwrap(request.questions.first?.choices.first { $0.label == "Beta" })
+
+        try await fixture.adapter.respondToInputRequest(AgentInputRequestResponse(
+            agentId: fixture.adapter.agentID,
+            requestId: request.requestId,
+            answers: [AgentInputRequestAnswer(questionId: request.questions[0].questionId, choiceIds: [beta.choiceId])]
+        ))
+
+        XCTAssertEqual(fixture.ui.pressed, [], "A substring match must never press a look-alike control.")
+        let kept = try await waitForSnapshot(fixture.adapter) { $0.statusDetail == "open the question in Claude to answer" }
+        XCTAssertEqual(kept.status, .waitingInput)
+        XCTAssertNotNil(kept.pendingInputRequest, "The unanswered question stays open for a retry.")
     }
 
     func testSubagentStopAfterAFinishedTurnKeepsResponseReady() async throws {
