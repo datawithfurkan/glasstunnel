@@ -330,7 +330,7 @@ private struct AppIconTile: View {
         switch app.remoteAppId {
         case "codex": return GlasstunnelDesign.accent
         case "cursor": return Color(red: 0.75, green: 0.76, blue: 0.78)
-        case "claude-code": return Color(red: 0.93, green: 0.58, blue: 0.34)
+        case "claude-desktop", "claude-code": return Color(red: 0.93, green: 0.58, blue: 0.34)
         case "codex-cli": return Color(red: 0.38, green: 0.76, blue: 1.0)
         case "opencode": return Color(red: 0.58, green: 0.88, blue: 0.68)
         default: return GlasstunnelDesign.accent

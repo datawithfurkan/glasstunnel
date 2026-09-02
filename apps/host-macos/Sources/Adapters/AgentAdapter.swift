@@ -92,6 +92,8 @@ public enum AdapterFactory {
         switch bundleID {
         case "com.todesktop.230313mzl4w4u92": // Cursor
             return .cursor
+        case ClaudeDesktopAdapter.bundleID:
+            return .claudeDesktop
         case "com.openai.codex.cli":
             return .codexCli
         case "com.google.gemini.cli",

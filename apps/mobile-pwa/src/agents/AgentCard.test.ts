@@ -65,6 +65,7 @@ describe('AgentCard terminal copy', () => {
     expect(isCommandSurfaceApp(remoteApp('gemini-cli', AdapterKind.GeminiCli, 'Gemini CLI'))).toBe(true);
     expect(isCommandSurfaceApp(remoteApp('codex', AdapterKind.Mirror, 'Codex'))).toBe(false);
     expect(isCommandSurfaceApp(remoteApp('cursor', AdapterKind.Cursor, 'Cursor'))).toBe(false);
+    expect(isCommandSurfaceApp(remoteApp('claude-desktop', AdapterKind.ClaudeDesktop, 'Claude'))).toBe(false);
   });
 
   it('keeps Terminal opening and empty states short', () => {

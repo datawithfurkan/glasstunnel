@@ -1,6 +1,14 @@
+import Foundation
+
+public extension ClaudeCodeHookListener {
+    /// Claude Code notification types the adapters distinguish.
+    static let permissionPromptNotification = "permission_prompt"
+    static let idlePromptNotification = "idle_prompt"
+    static let elicitationNotification = "elicitation_dialog"
+}
+
 #if os(macOS)
 import Darwin
-import Foundation
 
 /// Listens on a Unix-domain socket for JSON events posted by our installed
 /// Claude Code hooks. Each line of JSON is one event.
@@ -15,6 +23,17 @@ public final class ClaudeCodeHookListener: @unchecked Sendable {
         public let kind: HookKind
         public let session: String
         public let summary: String
+        /// Claude Code's `notification_type` for Notification hooks
+        /// (`permission_prompt`, `idle_prompt`, `elicitation_dialog`, …);
+        /// empty for other hooks and for hooks installed by older builds.
+        public let notificationType: String
+
+        public init(kind: HookKind, session: String, summary: String, notificationType: String = "") {
+            self.kind = kind
+            self.session = session
+            self.summary = summary
+            self.notificationType = notificationType
+        }
     }
 
     public var onHook: (@Sendable (Event) -> Void)?
@@ -102,14 +121,26 @@ public final class ClaudeCodeHookListener: @unchecked Sendable {
         guard let kindString = obj["kind"] as? String, let kind = HookKind(rawValue: kindString) else { return }
         let session = (obj["session"] as? String) ?? ""
         let summary = (obj["summary"] as? String) ?? kindString
-        onHook?(Event(kind: kind, session: session, summary: summary))
+        let notificationType = (obj["notificationType"] as? String) ?? ""
+        onHook?(Event(kind: kind, session: session, summary: summary, notificationType: notificationType))
     }
 }
 #else
 public final class ClaudeCodeHookListener: @unchecked Sendable {
     public init() {}
     public enum HookKind: String, Sendable { case stop = "Stop", subagentStop = "SubagentStop", notification = "Notification" }
-    public struct Event: Sendable { public let kind: HookKind; public let session: String; public let summary: String }
+    public struct Event: Sendable {
+        public let kind: HookKind
+        public let session: String
+        public let summary: String
+        public let notificationType: String
+        public init(kind: HookKind, session: String, summary: String, notificationType: String = "") {
+            self.kind = kind
+            self.session = session
+            self.summary = summary
+            self.notificationType = notificationType
+        }
+    }
     public var onHook: (@Sendable (Event) -> Void)?
     public func start() throws {}
     public func stop() {}

@@ -82,6 +82,15 @@ public struct RemoteAppDefinition: Sendable, Hashable, Identifiable {
             openHint: "Open Codex on this Mac"
         ),
         RemoteAppDefinition(
+            remoteAppId: "claude-desktop",
+            displayName: "Claude",
+            adapterKind: .claudeDesktop,
+            bundleIDs: [ClaudeDesktopAdapter.bundleID],
+            agentId: "claude-desktop",
+            symbolName: "macwindow",
+            openHint: "Open Claude on this Mac"
+        ),
+        RemoteAppDefinition(
             remoteAppId: "cursor",
             displayName: "Cursor",
             adapterKind: .cursor,
@@ -681,6 +690,13 @@ public final class RemoteAppController {
             case "codex":
                 guard let window else { return }
                 adapter = CodexDesktopAdapter(
+                    agentID: definition.agentId,
+                    label: definition.displayName,
+                    targetPID: window.pid
+                )
+            case "claude-desktop":
+                guard let window else { return }
+                adapter = ClaudeDesktopAdapter(
                     agentID: definition.agentId,
                     label: definition.displayName,
                     targetPID: window.pid

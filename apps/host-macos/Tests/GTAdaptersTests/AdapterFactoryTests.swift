@@ -14,8 +14,9 @@ final class AdapterFactoryTests: XCTestCase {
         XCTAssertEqual(AdapterFactory.resolveKind(forBundleID: "com.anthropic.claudecode.macos"), .mirror)
     }
 
-    func testClaudeDesktopStaysMirrorUntilItsAdapterExists() {
-        XCTAssertEqual(AdapterFactory.resolveKind(forBundleID: "com.anthropic.claudefordesktop"), .mirror)
+    func testResolveClaudeDesktop() {
+        XCTAssertEqual(AdapterFactory.resolveKind(forBundleID: "com.anthropic.claudefordesktop"), .claudeDesktop)
+        XCTAssertEqual(ClaudeDesktopAdapter.bundleID, "com.anthropic.claudefordesktop")
     }
 
     func testClaudeCodeExecutableCandidatesCoverCommonLocalInstalls() {

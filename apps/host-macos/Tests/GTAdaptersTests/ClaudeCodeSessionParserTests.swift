@@ -22,6 +22,45 @@ final class ClaudeCodeSessionParserTests: XCTestCase {
         XCTAssertEqual(parsed.messages[1].pendingToolCalls.first?.toolName, "Bash")
     }
 
+    func testTitleRecordsOutrankTheFirstPromptForCliSessions() {
+        let jsonl = """
+        {"type":"user","entrypoint":"sdk-cli","cwd":"/Users/developer/Example","sessionId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","timestamp":"2026-05-17T10:00:00.000Z","message":{"role":"user","content":"First prompt text"}}
+        {"type":"ai-title","aiTitle":"Generated title","sessionId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}
+        {"type":"custom-title","customTitle":"My title","sessionId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}
+        {"type":"ai-title","aiTitle":"Regenerated title","sessionId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}
+        """
+
+        let parsed = ClaudeCodeSessionParser.parse(jsonl: jsonl, agentID: "claude-code", maxMessages: 24)
+
+        XCTAssertEqual(parsed.threadName, "My title", "A user-set title outranks AI titles, even newer ones.")
+        XCTAssertTrue(parsed.titleIsExplicit)
+
+        let withoutTitles = ClaudeCodeSessionParser.parse(
+            jsonl: String(jsonl.split(separator: "\n").first!),
+            agentID: "claude-code",
+            maxMessages: 24
+        )
+        XCTAssertEqual(withoutTitles.threadName, "First prompt text")
+        XCTAssertFalse(withoutTitles.titleIsExplicit)
+    }
+
+    func testInterruptedTurnsRenderAsStoppedAndToolResultsAsToolOutput() {
+        let jsonl = """
+        {"type":"user","cwd":"/Users/developer/Example","sessionId":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","timestamp":"2026-05-17T10:00:00.000Z","message":{"role":"user","content":"Run the tests"}}
+        {"type":"assistant","sessionId":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","timestamp":"2026-05-17T10:00:01.000Z","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"swift test"}}]}}
+        {"type":"user","cwd":"/Users/developer/Example","sessionId":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","timestamp":"2026-05-17T10:00:02.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":[{"type":"text","text":"All tests passed"}]},{"type":"text","text":"<system-reminder>injected context</system-reminder>"}]}}
+        {"type":"user","cwd":"/Users/developer/Example","sessionId":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","timestamp":"2026-05-17T10:00:03.000Z","message":{"role":"user","content":"[Request interrupted by user]"}}
+        """
+
+        let parsed = ClaudeCodeSessionParser.parse(jsonl: jsonl, agentID: "claude-code", maxMessages: 24)
+
+        XCTAssertEqual(parsed.messages.map(\.role), [.user, .tool, .tool, .system])
+        XCTAssertEqual(parsed.messages[2].text, "All tests passed", "Injected context blocks are not the user's words.")
+        XCTAssertEqual(parsed.messages[3].text, "Stopped")
+        XCTAssertEqual(parsed.status, .idle)
+        XCTAssertEqual(parsed.statusDetail, "Stopped")
+    }
+
     func testSessionStoreSkipsSubagentTranscripts() throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

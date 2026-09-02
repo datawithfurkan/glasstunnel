@@ -12,6 +12,7 @@ export type AppFilterId =
   | 'all'
   | 'screen'
   | 'codex'
+  | 'claude-desktop'
   | 'claude-code'
   | 'cursor'
   | 'cursor-agent'
@@ -73,7 +74,8 @@ const APP_FILTERS: AppFilter[] = [
   { id: 'all', label: 'All' },
   { id: 'screen', label: 'Mac Screen', shortLabel: 'Screen' },
   { id: 'codex', label: 'Codex' },
-  { id: 'claude-code', label: 'Claude Code', shortLabel: 'Claude' },
+  { id: 'claude-desktop', label: 'Claude' },
+  { id: 'claude-code', label: 'Claude Code', shortLabel: 'Code' },
   { id: 'cursor', label: 'Cursor' },
   { id: 'cursor-agent', label: 'Cursor Agent', shortLabel: 'Agent' },
   { id: 'gemini-cli', label: 'Gemini CLI', shortLabel: 'Gemini' },
@@ -1429,7 +1431,9 @@ export function shouldShowCommandTargetSwitcher(app: RemoteApp): boolean {
     app.remoteAppId === 'terminal' ||
     app.remoteAppId === 'opencode' ||
     app.remoteAppId === 'cursor' ||
-    app.remoteAppId === 'codex'
+    app.remoteAppId === 'codex' ||
+    app.remoteAppId === 'claude-desktop' ||
+    app.remoteAppId === 'claude-code'
   );
 }
 
@@ -1712,7 +1716,7 @@ function AppGlyph({ appId }: { appId: string }) {
   if (appId === 'all') return <AllAppsGlyph />;
   if (appId === 'screen') return <ScreenGlyph />;
   if (appId === 'cursor') return <CursorGlyph />;
-  if (appId === 'claude-code') return <ClaudeGlyph />;
+  if (appId === 'claude-desktop' || appId === 'claude-code') return <ClaudeGlyph />;
   if (appId === 'gemini-cli') return <GeminiGlyph />;
   if (appId === 'opencode') return <OpenCodeGlyph />;
   if (appId === 'codex-cli' || appId === 'cursor-agent' || appId === 'terminal') return <TerminalGlyph />;

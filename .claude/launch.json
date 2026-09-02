@@ -1,0 +1,14 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "mobile-pwa",
+      "runtimeExecutable": "/bin/sh",
+      "runtimeArgs": [
+        "-c",
+        "cd apps/mobile-pwa && exec /Users/furkan/.volta/bin/node node_modules/vite/bin/vite.js --port 5173 --strictPort"
+      ],
+      "port": 5173
+    }
+  ]
+}
