@@ -6,6 +6,8 @@
   "vars": {
     "PUBLIC_APP_URL": "http://127.0.0.1:5173",
     "ALLOWED_ORIGINS": "http://127.0.0.1:5173",
+    "SUPABASE_URL": "http://127.0.0.1:1",
+    "SUPABASE_SERVICE_ROLE_KEY": "test-service-role-key",
   },
   "ratelimits": [
     {
