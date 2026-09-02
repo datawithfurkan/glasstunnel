@@ -41,6 +41,11 @@ versioning after the first public beta; pre-release compatibility may still chan
 
 ### Fixed
 
+- The signaling and relay Workers no longer fail a connection's authentication
+  when the socket closes, or a quick reconnect replaces it, while the Worker is
+  still waiting on the account service. Frames for closed sockets are dropped
+  and the socket is forgotten, so a dead connection can no longer stay registered
+  as the Mac's relay and block the next one.
 - Mac Screen no longer reports "Screen unavailable" when the phone announces
   itself twice in quick succession (for example while switching screen quality):
   the Mac now keeps the newer WebRTC session instead of tearing it down while the
