@@ -1,0 +1,9 @@
+Privacy-reviewed summary artifact.
+Date: 2026-09-02.
+Commit: 2c4d343e.
+Scope: Claude Code CLI driven through ClaudeCodeAdapter on the Mac host: PTY launch pinned to a fresh session id, hooks loaded from a temporary settings file, prompt delivery, Stop hook, transcript parse.
+Result: pass.
+Evidence commands: GT_CLAUDE_LIVE=1 swift test --package-path apps/host-macos --filter ClaudeCodeLiveTests (signed-in Claude Code CLI 2.1.226); pnpm qa:claude-code.
+Observed: the adapter launched `claude --settings <temp> --session-id <uuid>` in a trusted project directory, typed a one-line prompt through sendInput, the TUI submitted it, the Stop hook arrived over the shared socket and set "Response ready", and the transcript parsed to the user prompt followed by the assistant reply containing the expected marker; the selected target was the pinned session.
+Not covered: the phone-driven path through the mobile browser (prompt, permission prompt, interrupt from a paired phone).
+Raw terminal output, transcripts, and account details are intentionally not retained in Git.

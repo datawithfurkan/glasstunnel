@@ -21,6 +21,17 @@ versioning after the first public beta; pre-release compatibility may still chan
   notification type, so idle prompts no longer read as input requests.
 - Claude transcripts render tool output as tool output, show "Stopped" for
   interrupted turns, and use the session's title records.
+- The Claude Code CLI card is now Preview: the adapter has recorded evidence of a
+  real prompt/result round trip with the signed-in CLI. The Claude desktop card
+  stays Experimental because the app's `claude://code` links are gated off and the
+  Accessibility path is not yet verified on a real window.
+
+### Fixed
+
+- Mac Screen no longer reports "Screen unavailable" when the phone announces
+  itself twice in quick succession (for example while switching screen quality):
+  the Mac now keeps the newer WebRTC session instead of tearing it down while the
+  earlier one was still preparing its offer.
 
 ## 0.1.5 - Codex compatibility and Mac hardening
 
