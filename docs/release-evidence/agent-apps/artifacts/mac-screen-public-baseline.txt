@@ -1,7 +1,8 @@
 Privacy-reviewed summary artifact.
-Date: 2026-08-16T13:21:31Z.
-Commit: 54b57fc3.
+Date: 2026-09-02.
+Commit: aa036fdf.
 Scope: Mac Screen local mobile-browser lifecycle and automated state regression.
 Result: pass.
 Evidence commands: pnpm lab:e2e:screen; pnpm lab:e2e:screen:safari; pnpm qa:screen-state.
+Note: the Chromium lane failed on every run before the host fix in this commit (overlapping phone announcements during the quality switch) and passed once it was applied.
 Raw media, link codes, account-specific output, and screen content are intentionally not retained in Git.

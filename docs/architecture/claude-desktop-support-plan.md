@@ -243,14 +243,18 @@ the CLI adapter running untouched alongside.
   flags; `pnpm qa:claude-desktop:live-ax` adds a read-only composer probe that needs
   an Accessibility-trusted terminal) and `pnpm qa:claude-code` now also checks
   `--session-id`.
-- [ ] **T3.2 Release evidence** (M) — needs a live run, see below. The
-  `GT_AGENT_APP_NAME` allowlist accepts "Claude desktop"; record
-  prompt/result/stop/recovery/relaunch/mobile-browser evidence for the CLI first, then
-  desktop → `docs/release-evidence/agent-apps/`.
-- [x] **T3.3 Status updates** (S): support-matrix rows describe the implemented
-  capability without a tier change (both Claude rows stay Experimental until live
-  evidence exists); README tiers, known-limitations, and the Unreleased changelog are
-  updated. Promotion procedure once evidence lands: `pnpm qa:agent-app:record`,
+- [~] **T3.2 Release evidence** (M) — adapter-level evidence recorded on 2026-09-02
+  (`docs/release-evidence/agent-apps/claude-code-live-adapter-pass.md` and
+  `claude-desktop-local-contracts-pass.md`): the CLI adapter drove the real `claude`
+  binary end to end (prompt → Stop hook → "Response ready" → transcript), and the
+  desktop lane verified the bundle, the scheme, store parsing against the running app,
+  and that every `claude://code` deep link is gated off on build 1.40609.1. Still open:
+  the phone-driven mobile-browser run for both cards and Accessibility delivery on a
+  real Claude window (needs an Accessibility-trusted process; see the checklist below).
+- [x] **T3.3 Status updates** (S): Claude Code is Preview ("Partial") on the strength of
+  the adapter-level evidence; Claude desktop stays Experimental until the Accessibility
+  path is exercised. README tiers, known-limitations, and the Unreleased changelog are
+  updated. Promotion procedure for the remaining step: `pnpm qa:agent-app:record`,
   `pnpm qa:agent-app-claims`, `pnpm release:readiness`.
 
 ### Live evidence checklist (the one part that needs a person at the Mac)
