@@ -4,7 +4,7 @@
 - App: Mac Screen
 - Result: pass
 - Environment: local lab host with authenticated mobile Chromium and WebKit screen E2E plus automated state regression coverage
-- Glasstunnel commit: de2cefc9
+- Glasstunnel commit: 214b053c
 - Artifact: artifacts/mac-screen-public-baseline.txt
 - Privacy review: pass
 
