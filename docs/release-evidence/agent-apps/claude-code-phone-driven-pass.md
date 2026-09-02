@@ -4,7 +4,7 @@
 - App: Claude Code
 - Result: pass
 - Environment: Local Test Lab host on the development Mac, phone-sized mobile Chromium (Pixel 7 emulation), real signed-in Claude Code CLI 2.1.226
-- Glasstunnel commit: afa93663
+- Glasstunnel commit: 277044fb
 - Artifact: artifacts/claude-code-phone-driven.txt
 - Privacy review: pass
 

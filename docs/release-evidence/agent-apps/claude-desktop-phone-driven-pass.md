@@ -4,7 +4,7 @@
 - App: Claude desktop
 - Result: pass
 - Environment: Local Test Lab host on the development Mac (Accessibility-trusted), phone-sized mobile Chromium (Pixel 7 emulation), real Claude desktop app 1.40609.1 with a dedicated session titled "Glasstunnel live evidence"
-- Glasstunnel commit: 5c659eb6
+- Glasstunnel commit: b1c19228
 - Artifact: artifacts/claude-desktop-phone-driven.txt
 - Privacy review: pass
 
