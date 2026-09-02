@@ -243,14 +243,17 @@ the CLI adapter running untouched alongside.
   flags; `pnpm qa:claude-desktop:live-ax` adds a read-only composer probe that needs
   an Accessibility-trusted terminal) and `pnpm qa:claude-code` now also checks
   `--session-id`.
-- [~] **T3.2 Release evidence** (M) — adapter-level evidence recorded on 2026-09-02
-  (`docs/release-evidence/agent-apps/claude-code-live-adapter-pass.md` and
-  `claude-desktop-local-contracts-pass.md`): the CLI adapter drove the real `claude`
-  binary end to end (prompt → Stop hook → "Response ready" → transcript), and the
-  desktop lane verified the bundle, the scheme, store parsing against the running app,
-  and that every `claude://code` deep link is gated off on build 1.40609.1. Still open:
-  the phone-driven mobile-browser run for both cards and Accessibility delivery on a
-  real Claude window (needs an Accessibility-trusted process; see the checklist below).
+- [~] **T3.2 Release evidence** (M) — recorded on 2026-09-02:
+  `claude-code-live-adapter-pass.md` (the CLI adapter drove the real `claude` binary
+  end to end), `claude-desktop-local-contracts-pass.md` (bundle, scheme, store parsing
+  against the running app, every `claude://code` deep link gated off on build
+  1.40609.1, composer and rename control reachable through Accessibility), and
+  `claude-code-phone-driven-pass.md` (`pnpm lab:e2e:claude-code`: a phone-sized
+  Chromium signed in, started the card, answered the workspace-trust dialog, watched
+  the held-session fallback create a fresh session, got "Response ready" for a prompt,
+  and interrupted a second one). Still open: `pnpm lab:e2e:claude-desktop` against a
+  dedicated Claude app session with the window left alone (the lane is written), and
+  a WebKit pass of the CLI lane.
 - [x] **T3.3 Status updates** (S): Claude Code is Preview ("Partial") on the strength of
   the adapter-level evidence; Claude desktop stays Experimental until the Accessibility
   path is exercised. README tiers, known-limitations, and the Unreleased changelog are

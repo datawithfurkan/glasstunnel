@@ -1,10 +1,10 @@
 # Agent App Release Evidence
 
-- Date: 2026-09-02T10:11:31Z
+- Date: 2026-09-02T12:13:12Z
 - App: Mac Screen
 - Result: pass
 - Environment: local lab host with authenticated mobile Chromium and WebKit screen E2E plus automated state regression coverage
-- Glasstunnel commit: 761c926f
+- Glasstunnel commit: ee897343
 - Artifact: artifacts/mac-screen-public-baseline.txt
 - Privacy review: pass
 
@@ -17,9 +17,8 @@ screen-specific mobile flow after a page refresh. Automated state coverage also
 passed for serialized capture transitions, superseded peer cleanup,
 start/off/restart snapshots, stale stopping snapshots, stale and far-future
 relay-frame rejection, render-gated control, stop confirmation copy, video-peer
-cleanup, and quality-change feedback. Re-recorded after the host learned to keep
-the newest phone session when two announcements overlap; before that fix the
-Chromium lane failed the quality switch on every run.
+cleanup, and quality-change feedback. Re-recorded after the PTY layer changes
+that shipped with the Claude phone-driven lanes.
 
 ## Limitations
 
