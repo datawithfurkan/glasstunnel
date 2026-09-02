@@ -76,3 +76,6 @@ gitleaks-report.*
 # those generated links so project-owned Codex skills can still be committed.
 .codex/skills/core.gc-*
 .codex/skills/.gc-skill-ownership.json
+
+# Claude Code local dev-server launch config (machine-specific paths)
+.claude/launch.json
