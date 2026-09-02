@@ -1,4 +1,6 @@
 Privacy-reviewed summary artifact.
-Scope: native permission onboarding, account linking, and relaunch persistence.
+Date: 2026-09-02.
+Commit: dbf8a90d (notarized 0.1.7 build installed over the published 0.1.6 app).
+Scope: native permission state after an in-place upgrade, account persistence across quit and relaunch, and the Claude card appearing on the Mac and on the phone.
 Result: pass.
 Raw screenshots, account identifiers, and local machine names are intentionally not retained in Git.

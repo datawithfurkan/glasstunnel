@@ -1,6 +1,6 @@
 # Public release readiness
 
-Last updated: 2026-08-16.
+Last updated: 2026-09-02.
 
 This checklist is the current release baseline. Historical investigations and raw
 test artifacts are intentionally not stored in the public repository.
@@ -57,3 +57,12 @@ Developer ID signing/notarization, stapling, Gatekeeper verification, isolated
 install/reinstall, stable latest-download asset preparation, and cask metadata
 validation passed. It replaces the `0.1.5` DMG, whose installer volume lacked an
 Applications drag target.
+
+The `0.1.7` public beta release is the current public beta. Its signed and notarized DMG is tied
+to source commit `dbf8a90d` and SHA-256
+`17420e334e9e280212c7aa4db550c953a43b0b20b7057d1d6d2fa1c5d75bb334`.
+Developer ID signing/notarization, stapling, Gatekeeper verification, isolated
+install/reinstall and 0.1.6 → 0.1.7 upgrade, stable latest-download asset preparation, and
+cask metadata validation passed. It adds the Claude desktop and Claude Code cards in Preview
+with recorded real-app evidence, and fixes the relay authentication race and the Mac Screen
+reconnect bug.
