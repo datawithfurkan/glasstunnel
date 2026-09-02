@@ -1438,7 +1438,14 @@ public final class SessionManager {
 
         do {
             await session.prepareMediaForOffer()
+            // A later ping from the same phone replaces this session while media
+            // settles (it closes this peer and installs its own session). From then
+            // on the newer call owns the phone's entry: creating an offer on the
+            // closed peer would fail, and the cleanup below would evict the newer
+            // session instead of this one, leaving the phone without a host peer.
+            guard sessions[phoneDeviceId] === session else { return }
             let offer = try await peer.createOffer()
+            guard sessions[phoneDeviceId] === session else { return }
             let env = Envelope(
                 fromDeviceId: deviceKey.deviceId,
                 toDeviceId: phoneDeviceId,
@@ -1446,6 +1453,7 @@ public final class SessionManager {
             )
             try await signaling.send(env)
         } catch {
+            guard sessions[phoneDeviceId] === session else { return }
             let stopTask = session.stop()
             sessions.removeValue(forKey: phoneDeviceId)
             await stopTask.value
