@@ -4,7 +4,7 @@
 - App: Terminal
 - Result: pass
 - Environment: local PTY and shared-screen-session regression coverage
-- Glasstunnel commit: de2cefc9
+- Glasstunnel commit: 214b053c
 - Artifact: artifacts/terminal-public-baseline.txt
 - Privacy review: pass
 
