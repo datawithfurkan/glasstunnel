@@ -147,6 +147,21 @@ describe('workspace mobile fixtures', () => {
     });
   });
 
+  it("models Claude Code's workspace-trust dialog as a pending decision", () => {
+    const state = workspaceFixtureState('workspace-claude-code-trust');
+    const snapshot = state.agents?.['claude-code'];
+    const app = state.remoteApps?.find((candidate) => candidate.remoteAppId === 'claude-code');
+
+    expect(app?.enabled).toBe(true);
+    expect(snapshot?.status).toBe(AgentStatus.WaitingInput);
+    expect(snapshot?.statusDetail).toBe('Trust this folder?');
+    expect(snapshot?.pendingInputRequest?.requestId).toBe('claude-code-trust-prompt');
+    expect(snapshot?.pendingInputRequest?.questions[0]?.choices.map((choice) => choice.label)).toEqual([
+      'Yes, I trust this folder',
+      'No, exit',
+    ]);
+  });
+
   it('models running command surfaces for non-Codex CLI apps', () => {
     const cases = [
       ['workspace-opencode-running', 'opencode', 'OpenCode', 'provider/model: opencode/nemotron-3-ultra-free'],

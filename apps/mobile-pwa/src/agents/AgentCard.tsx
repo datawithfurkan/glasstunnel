@@ -621,16 +621,40 @@ export function AgentCard({
 
       <section className={mainSurfaceClass}>
         {commandSurfaceMode ? (
-          <TerminalViewport
-            app={app}
-            messages={messages}
-            waitingForSnapshot={waitingForSnapshot || targetSwitchingContext}
-            loadingContext={loadingContext || targetSwitchingContext}
-            status={status}
-            hostUnavailable={hostUnavailable}
-            messageEndRef={messageEndRef}
-            showFrameStatus={!compactChrome}
-          />
+          <div className="flex h-full min-h-0 flex-col gap-3">
+            <div className="flex min-h-0 flex-1 flex-col">
+              <TerminalViewport
+                app={app}
+                messages={messages}
+                waitingForSnapshot={waitingForSnapshot || targetSwitchingContext}
+                loadingContext={loadingContext || targetSwitchingContext}
+                status={status}
+                hostUnavailable={hostUnavailable}
+                messageEndRef={messageEndRef}
+                showFrameStatus={!compactChrome}
+                sharesHeightWithDecision={Boolean(pendingInputRequest)}
+              />
+            </div>
+            {pendingInputRequest && (
+              // CLI dialogs (Codex's update prompt, Claude Code's workspace
+              // trust check) arrive as structured requests; the viewport only
+              // shows their text, so the decision needs its own controls.
+              <div className="page-scroll max-h-[60%] shrink-0 overflow-y-auto">
+                <PlanningRequestCard
+                  appName={app.displayName}
+                  request={pendingInputRequest}
+                  disabled={readOnly || hostUnavailable}
+                  onSubmit={(answers) => {
+                    sendInputRequestResponse({
+                      agentId: app.agentId,
+                      requestId: pendingInputRequest.requestId,
+                      answers,
+                    });
+                  }}
+                />
+              </div>
+            )}
+          </div>
         ) : (
           <>
             {loadingContext && (
@@ -654,6 +678,7 @@ export function AgentCard({
             ))}
             {pendingInputRequest && (
               <PlanningRequestCard
+                appName={app.displayName}
                 request={pendingInputRequest}
                 disabled={readOnly || interactionUnavailable}
                 onSubmit={(answers) => {
@@ -1024,10 +1049,12 @@ function RuntimeControlsBar({
 }
 
 function PlanningRequestCard({
+  appName,
   request,
   disabled,
   onSubmit,
 }: {
+  appName: string;
   request: AgentInputRequest;
   disabled: boolean;
   onSubmit: (answers: AgentInputRequestAnswer[]) => void;
@@ -1054,7 +1081,7 @@ function PlanningRequestCard({
     <div className="rounded-[10px] border border-warn/35 bg-warn/10 p-4 shadow-sm">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <div className="text-sm font-semibold">Codex needs a decision</div>
+          <div className="text-sm font-semibold">{appName} needs a decision</div>
           <div className="gt-muted mt-1 text-xs">
             Choose here and Glasstunnel will continue on your Mac.
           </div>
@@ -1245,6 +1272,7 @@ function TerminalViewport({
   hostUnavailable,
   messageEndRef,
   showFrameStatus,
+  sharesHeightWithDecision = false,
 }: {
   app: RemoteApp;
   messages: AgentChatMessage[];
@@ -1254,12 +1282,15 @@ function TerminalViewport({
   hostUnavailable: boolean;
   messageEndRef: RefObject<HTMLDivElement>;
   showFrameStatus: boolean;
+  /** A pending decision sits below the viewport, so it may shrink further. */
+  sharesHeightWithDecision?: boolean;
 }) {
   const title = app.statusDetail || app.windowTitle || 'local shell';
   const hasMessages = messages.length > 0;
+  const minHeightClass = sharesHeightWithDecision ? 'min-h-[132px]' : 'min-h-[240px]';
 
   return (
-    <div className="flex h-full min-h-[240px] w-full min-w-0 max-w-full flex-col overflow-hidden rounded-[18px] border border-white/10 bg-[#050505] shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] sm:min-h-[360px]">
+    <div className={`flex h-full ${minHeightClass} w-full min-w-0 max-w-full flex-1 flex-col overflow-hidden rounded-[18px] border border-white/10 bg-[#050505] shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] ${sharesHeightWithDecision ? '' : 'sm:min-h-[360px]'}`}>
       <div className="flex h-11 shrink-0 items-center justify-between border-b border-white/10 bg-white/[0.035] px-3">
         <div className="flex items-center gap-1.5" aria-hidden="true">
           <span className="h-3 w-3 rounded-full bg-[#ff5f57]" />

@@ -120,6 +120,10 @@ public final class PTYWrapper: @unchecked Sendable {
                 try? FileManager.default.removeItem(at: processRecordURL)
             }
             guard let self else { return }
+            // Whatever the child wrote right before exiting may still sit in
+            // the pty buffer; the read source has not necessarily run for it.
+            // Drain on the reader's queue so it lands before the exit state.
+            self.ioQueue.sync { self.drainRemainingOutput() }
             self.pid = -1
             if self.masterFD != -1 {
                 close(self.masterFD)
@@ -245,6 +249,24 @@ public final class PTYWrapper: @unchecked Sendable {
         guard childPid > 0 else { return }
         if kill(-childPid, signal) != 0 {
             kill(childPid, signal)
+        }
+    }
+
+    /// Reads everything still buffered on the master side without blocking.
+    /// Runs on `ioQueue`, after the child has exited.
+    private func drainRemainingOutput() {
+        guard masterFD != -1 else { return }
+        let flags = fcntl(masterFD, F_GETFL)
+        if flags != -1 {
+            _ = fcntl(masterFD, F_SETFL, flags | O_NONBLOCK)
+        }
+        var buf = [UInt8](repeating: 0, count: 4096)
+        while true {
+            let n = Darwin.read(masterFD, &buf, buf.count)
+            guard n > 0 else { break }
+            let data = Data(bytes: buf, count: n)
+            respondToTerminalQueries(in: data)
+            onData?(data)
         }
     }
 

@@ -29,6 +29,13 @@ test('projectsForMode isolates the opt-in Codex CLI account journey', () => {
   assert.deepEqual(projectsForMode('codex-cli-chromium'), ['local-codex-cli-mobile-chromium']);
 });
 
+test('projectsForMode isolates the opt-in Claude account journeys', () => {
+  assert.deepEqual(projectsForMode('claude-code-chromium'), ['local-claude-code-mobile-chromium']);
+  assert.deepEqual(projectsForMode('claude-desktop-chromium'), [
+    'local-claude-desktop-mobile-chromium',
+  ]);
+});
+
 test('runE2E passes only local account and host values to Playwright', async (t) => {
   const config = fixtureConfig(t);
   const calls = [];

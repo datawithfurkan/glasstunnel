@@ -64,9 +64,21 @@ struct TerminalLiveHostHarness {
                     manager.applyRemoteApps(apps)
                 }
             }
+            let logAgentStates = env["GT_TERMINAL_LIVE_LOG_AGENT_STATES"] == "1"
             remoteApps.onAgentState = { snapshot in
                 Task { @MainActor in
                     manager.broadcastAgentState(snapshot)
+                    if logAgentStates {
+                        // Status only; transcripts and prompts never reach the log,
+                        // except the tail of what a process printed as it failed.
+                        let pending = snapshot.pendingInputRequest?.requestId ?? "-"
+                        print("AGENT \(snapshot.agentId) \(snapshot.status) \(snapshot.statusDetail) pending=\(pending)")
+                        if snapshot.status == .error, let last = snapshot.recentMessages.last {
+                            let tail = last.text.suffix(400).replacingOccurrences(of: "\n", with: "⏎")
+                            print("AGENT_EXIT_TAIL \(snapshot.agentId) \(tail)")
+                        }
+                        fflush(stdout)
+                    }
                 }
             }
             manager.onState = { state in

@@ -12,6 +12,14 @@ versioning after the first public beta; pre-release compatibility may still chan
   Allow/Deny for permission prompts, structured answers to Claude's questions, and
   a read-only model display.
 - The Claude Code CLI card now offers its session switcher on the phone.
+- The Claude Code CLI card turns Claude Code's workspace-trust dialog into a
+  decision on the phone (trust the folder, or exit) instead of dropping the prompt
+  typed over it, and starts a fresh session when the one it tried to resume is
+  still held by another process (a background agent or a second terminal).
+- Decisions raised by CLI cards (Codex's update prompt, Claude Code's trust check)
+  now render their choices on the phone; before, only the terminal text showed.
+- Phone-driven Local Test Lab lanes for both Claude cards: `pnpm lab:e2e:claude-code`
+  and `pnpm lab:e2e:claude-desktop`.
 
 ### Changed
 
@@ -32,6 +40,13 @@ versioning after the first public beta; pre-release compatibility may still chan
   itself twice in quick succession (for example while switching screen quality):
   the Mac now keeps the newer WebRTC session instead of tearing it down while the
   earlier one was still preparing its offer.
+- CLI cards no longer drop terminal output when a read boundary splits a
+  multi-byte character, and they keep what a process prints as it exits (Claude
+  Code's "session held elsewhere" message, a shell's error) instead of showing a
+  bare "process exited".
+- The Claude desktop card recognises the app's composer and the session in front
+  on build 1.40609.1 (composer described as "Prompt", session name on the
+  "rename session" control) instead of refusing every prompt.
 
 ## 0.1.5 - Codex compatibility and Mac hardening
 

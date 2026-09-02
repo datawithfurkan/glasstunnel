@@ -40,6 +40,12 @@ public final class ClaudeCodeAdapter: PTYAdapterBase, @unchecked Sendable {
     private var sessionSummaries: [ClaudeCodeSessionSummary] = []
     private var selectedSessionId: String?
     private var liveSession: LiveSession?
+    /// Set once `--resume` was refused because another process holds the
+    /// session and the adapter relaunched with a fresh id.
+    private var fellBackToFreshSession = false
+    private var startupGraceUntil = Date.distantPast
+    /// Whether the composer hint has been seen since the last launch or reset.
+    private var composerSeenSinceLaunch = false
     private var currentMessages: [AgentChatMessage] = []
     private var parsedTranscript: (path: String, modifiedAt: Date)?
     private var refreshTask: Task<Void, Never>?
@@ -80,6 +86,7 @@ public final class ClaudeCodeAdapter: PTYAdapterBase, @unchecked Sendable {
     public override var submittedInputSettleNanoseconds: UInt64 { 120_000_000 }
 
     public override func start() async throws {
+        beginStartupGrace()
         // Pin an explicitly requested session before the first scan, so the
         // scan never selects (and briefly publishes) some other session.
         if let explicitId = Self.explicitSessionId(in: initialArguments) {
@@ -129,6 +136,267 @@ public final class ClaudeCodeAdapter: PTYAdapterBase, @unchecked Sendable {
         releaseHookSubscription()
         await super.stop()
     }
+
+    // MARK: - Sessions held by another process
+
+    /// `--resume` fails when another process (a background agent, a second
+    /// terminal) still holds the session; Claude Code prints this and exits 1.
+    static func isSessionHeldElsewhere(_ text: String) -> Bool {
+        let compact = text.lowercased().filter { !$0.isWhitespace }
+        // Two wordings are in the wild: "is currently running as a background
+        // agent (bg) … add --fork-session" and "is running as a background
+        // session … Run `claude attach <id>`".
+        let running = compact.contains("iscurrentlyrunning") || compact.contains("isrunningasabackground")
+        let remedy = compact.contains("--fork-session") || compact.contains("attachtoit") || compact.contains("claudeattach")
+        return running && remedy
+    }
+
+    public override func didExitProcess(status: Int32) {
+        super.didExitProcess(status: status)
+        guard status != 0 else { return }
+        // A resume that dies before ever showing the composer did not resume:
+        // the session is held elsewhere (the message names it), unreadable, or
+        // from an incompatible build. A fresh session in the same folder is
+        // the useful recovery for all of them.
+        let held = Self.isSessionHeldElsewhere(recentOutputTail(maxLength: 4096))
+        sessionLock.lock()
+        let wasResume = currentLaunchArgumentsLocked().contains("--resume")
+        let sawComposer = composerSeenSinceLaunch
+        let alreadyFellBack = fellBackToFreshSession
+        let heldSession = liveSession?.id
+        let shouldFallBack = wasResume && (held || !sawComposer) && !alreadyFellBack
+        if shouldFallBack { fellBackToFreshSession = true }
+        sessionLock.unlock()
+        // One fallback per launch: a fresh id cannot be held by anyone, so a
+        // second failure is a different problem and must stay visible.
+        guard shouldFallBack else { return }
+
+        let id = UUID().uuidString.lowercased()
+        setLiveSession(LiveSession(id: id, arguments: initialArguments + ["--session-id", id], cwd: cwd))
+        Task { [weak self] in
+            // Let the base adapter publish the exit first; the restart then
+            // moves the card back to working instead of the two racing.
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            guard let self else { return }
+            let launch = self.currentLaunch()
+            do {
+                self.beginStartupGrace()
+                try self.restartProcess(arguments: self.runtimeArguments(base: launch.arguments), cwd: launch.cwd)
+                self.transitionTo(
+                    .working,
+                    detail: "Session \(heldSession.map { String($0.prefix(8)) } ?? "") is open elsewhere; starting a fresh one",
+                    forceEmit: true
+                )
+            } catch {
+                self.transitionTo(.error, detail: "Could not start a fresh session: \(error.localizedDescription)", forceEmit: true)
+            }
+        }
+    }
+
+    // MARK: - Workspace trust dialog
+
+    /// Claude Code opens a folder it has not seen before with a "Quick safety
+    /// check" dialog instead of the composer. Text typed while it is up is
+    /// dropped, so the dialog is published as a decision for the phone and
+    /// prompts are refused until it is answered.
+    static let trustPromptRequestId = "claude-code-trust-prompt"
+    static let trustPromptQuestionId = "claude-code-trust-choice"
+    /// Choice ids on the phone; they are not keystrokes (see
+    /// `respondToInputRequest`, which moves the dialog's highlight instead).
+    static let trustChoiceId = "trust"
+    static let exitChoiceId = "exit"
+
+    static func isTrustPrompt(_ text: String) -> Bool {
+        let compact = text.lowercased().filter { !$0.isWhitespace }
+        return compact.contains("isthisaprojectyoucreatedoroneyoutrust")
+            || (compact.contains("yes,itrustthisfolder") && compact.contains("no,exit"))
+    }
+
+    static func trustPromptInputRequest(cwd: String?) -> AgentInputRequest {
+        let folder = cwd.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "this folder"
+        return AgentInputRequest(
+            requestId: trustPromptRequestId,
+            questions: [
+                AgentInputRequestQuestion(
+                    questionId: trustPromptQuestionId,
+                    header: "Workspace trust",
+                    question: "Claude Code asks whether to trust \(folder) before it runs there.",
+                    choices: [
+                        AgentInputRequestChoice(
+                            choiceId: trustChoiceId,
+                            label: "Yes, I trust this folder",
+                            description: "Claude Code can read, edit, and run files there."
+                        ),
+                        AgentInputRequestChoice(
+                            choiceId: exitChoiceId,
+                            label: "No, exit",
+                            description: "Stop Claude Code without touching the folder."
+                        ),
+                    ]
+                ),
+            ]
+        )
+    }
+
+    private func trustPromptIsShowing() -> Bool {
+        Self.isTrustPrompt(recentOutputTail(maxLength: 4096))
+    }
+
+    /// The hint line Claude Code draws under its composer once input is
+    /// accepted ("? for shortcuts"). Startup and the trust dialog print
+    /// nothing like it, so silence before it is still "starting".
+    static func showsComposer(_ text: String) -> Bool {
+        let compact = text.lowercased().filter { !$0.isWhitespace }
+        return compact.contains("?forshortcuts")
+    }
+
+    /// Silence during startup is not readiness; past this, assume a build
+    /// without the hint line rather than hiding the composer forever.
+    static let startupSilenceGraceSeconds: TimeInterval = 20
+
+    /// Until this instant, silence without the composer hint means the process
+    /// is still starting. Reset whenever the output buffer restarts from
+    /// scratch (launch, trust answer, relaunch), because the base adapter's
+    /// silence clock is meaningless right after a reset.
+    private func beginStartupGrace() {
+        sessionLock.lock()
+        startupGraceUntil = Date().addingTimeInterval(Self.startupSilenceGraceSeconds)
+        composerSeenSinceLaunch = false
+        sessionLock.unlock()
+    }
+
+    /// The launch arguments the running process was started with, for callers
+    /// already holding `sessionLock`.
+    private func currentLaunchArgumentsLocked() -> [String] {
+        guard let live = liveSession else { return initialArguments }
+        let hasTranscript = sessionSummaries.contains { $0.sessionId == live.id }
+        if hasTranscript, live.arguments.contains("--session-id") {
+            return ["--resume", live.id]
+        }
+        return live.arguments
+    }
+
+    private func withinStartupGrace() -> Bool {
+        sessionLock.lock()
+        defer { sessionLock.unlock() }
+        return Date() < startupGraceUntil
+    }
+
+    public override func statusAfterOutputSilence(buffer: String, silenceDuration: TimeInterval) -> (status: AgentStatus, detail: String) {
+        if Self.isTrustPrompt(buffer) {
+            return (.waitingInput, "Trust this folder?")
+        }
+        if !Self.showsComposer(buffer), withinStartupGrace() {
+            return (.working, "Starting Claude Code")
+        }
+        return super.statusAfterOutputSilence(buffer: buffer, silenceDuration: silenceDuration)
+    }
+
+    public override func snapshotPendingInputRequest() -> AgentInputRequest? {
+        guard trustPromptIsShowing() else {
+            return super.snapshotPendingInputRequest()
+        }
+        return Self.trustPromptInputRequest(cwd: cwd)
+    }
+
+    public override func sendInput(_ text: String, submit: Bool) async throws {
+        if trustPromptIsShowing() {
+            let folder = cwd.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "this folder"
+            throw NSError(
+                domain: "ClaudeCodeAdapter",
+                code: 409,
+                userInfo: [
+                    NSLocalizedDescriptionKey: "Claude Code is asking whether to trust \(folder). Answer that first.",
+                ]
+            )
+        }
+        try await super.sendInput(text, submit: submit)
+    }
+
+    public override func respondToInputRequest(_ response: AgentInputRequestResponse) async throws {
+        guard response.requestId == Self.trustPromptRequestId else {
+            try await super.respondToInputRequest(response)
+            return
+        }
+        let choice = response.answers
+            .first(where: { $0.questionId == Self.trustPromptQuestionId })?
+            .choiceIds
+            .first
+        guard let choice, choice == Self.trustChoiceId || choice == Self.exitChoiceId else {
+            throw NSError(
+                domain: "ClaudeCodeAdapter",
+                code: 422,
+                userInfo: [NSLocalizedDescriptionKey: "Claude Code trust choice is not valid"]
+            )
+        }
+        // The phone can answer within milliseconds of the dialog text arriving,
+        // before Claude Code has put the terminal into raw mode; a keystroke
+        // sent that early waits in the line buffer until the next Return and
+        // the dialog looks ignored. Let the screen settle first.
+        var waited: TimeInterval = 0
+        while timeSinceLastOutput() < Self.dialogSettleSeconds, waited < Self.dialogSettleTimeoutSeconds {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            waited += 0.1
+        }
+        // The dialog's option order and default differ between builds and
+        // launch contexts ("❯ 1. Yes, I trust" first in a terminal, "❯ No,
+        // exit" first under the host's PTY), so never press a number or a bare
+        // Return: move the highlight until it sits on the wanted option, read
+        // the redraw back, and only then confirm.
+        let wanted: TrustDialogSelection = choice == Self.trustChoiceId ? .trust : .exit
+        var moves = 0
+        while Self.trustDialogSelection(in: recentOutputTail(maxLength: 4096)) != wanted {
+            guard moves < 4 else {
+                throw NSError(
+                    domain: "ClaudeCodeAdapter",
+                    code: 500,
+                    userInfo: [NSLocalizedDescriptionKey: "Could not move Claude Code's trust dialog to “\(wanted.label)”."]
+                )
+            }
+            try await super.sendInput("\u{1b}[B", submit: false)
+            moves += 1
+            try? await Task.sleep(nanoseconds: 350_000_000)
+        }
+        // Drop the dialog text first so the confirm is not refused as a
+        // prompt typed over the dialog, and so a stale match cannot republish
+        // the decision after it was answered.
+        clearOutputBuffer()
+        beginStartupGrace()
+        transitionTo(.working, detail: wanted == .trust ? "Opening the folder" : "Exiting")
+        try await super.sendInput("\r", submit: false)
+    }
+
+    enum TrustDialogSelection: Equatable {
+        case trust
+        case exit
+
+        var label: String {
+            switch self {
+            case .trust: return "Yes, I trust this folder"
+            case .exit: return "No, exit"
+            }
+        }
+    }
+
+    /// Which option the dialog's highlight ("❯") currently sits on, read from
+    /// the newest rendering in the output; nil when it cannot be told.
+    static func trustDialogSelection(in text: String) -> TrustDialogSelection? {
+        let compact = text.lowercased().filter { !$0.isWhitespace }
+        guard let marker = compact.range(of: "❯", options: .backwards) else { return nil }
+        let after = compact[marker.upperBound...].prefix(40)
+        if after.hasPrefix("1.") || after.hasPrefix("2.") {
+            // Numbered variant: "❯ 1. Yes, I trust…" / "❯ 2. No, exit".
+            return after.dropFirst(2).hasPrefix("yes") ? .trust : (after.dropFirst(2).hasPrefix("no,exit") ? .exit : nil)
+        }
+        if after.hasPrefix("yes,itrust") { return .trust }
+        if after.hasPrefix("no,exit") { return .exit }
+        return nil
+    }
+
+    /// How long the dialog must have been quiet before it is answered, and
+    /// the most the answer waits for that.
+    static let dialogSettleSeconds: TimeInterval = 0.6
+    static let dialogSettleTimeoutSeconds: TimeInterval = 3
 
     public override func runtimeControls() -> AgentRuntimeControls? {
         runtimeLock.lock()
@@ -236,6 +504,11 @@ public final class ClaudeCodeAdapter: PTYAdapterBase, @unchecked Sendable {
     public override func snapshotMessages(from buffer: String) -> [AgentChatMessage] {
         sessionLock.lock()
         let messages = currentMessages
+        // Every snapshot carries the current PTY buffer, which makes this the
+        // one place the adapter sees output arrive.
+        if !composerSeenSinceLaunch, Self.showsComposer(buffer) {
+            composerSeenSinceLaunch = true
+        }
         sessionLock.unlock()
         if !messages.isEmpty {
             return messages
@@ -399,17 +672,12 @@ public final class ClaudeCodeAdapter: PTYAdapterBase, @unchecked Sendable {
     /// because Claude Code refuses to create a session id that is already in use.
     private func currentLaunch() -> (arguments: [String], cwd: String?) {
         sessionLock.lock()
-        let live = liveSession
-        let hasTranscript = live.map { session in sessionSummaries.contains { $0.sessionId == session.id } } ?? false
-        sessionLock.unlock()
-
-        guard let live else {
-            return (initialArguments, cwd)
+        defer { sessionLock.unlock() }
+        let arguments = currentLaunchArgumentsLocked()
+        guard let live = liveSession else {
+            return (arguments, cwd)
         }
-        if hasTranscript, live.arguments.contains("--session-id") {
-            return (["--resume", live.id], live.cwd)
-        }
-        return (live.arguments, live.cwd)
+        return (arguments, live.cwd)
     }
 
     private func modelLabel(_ modelId: String?) -> String {
