@@ -172,7 +172,10 @@ public final class AccessibilityInjector: @unchecked Sendable {
             throw InjectionError.noMatchingElement("pane holding \(paneMarkerSuffix) and \(paneInputHint)")
         }
 
-        guard let element = findFirstPressMatch(in: pane, query: query, exact: exact) else {
+        // A conversation pane keeps earlier answers on screen above the live
+        // controls, and those bubbles can carry the same text; the newest
+        // match, lowest in the pane, is the control that is waiting.
+        guard let element = findLastPressMatch(in: pane, query: query, exact: exact) else {
             throw InjectionError.noMatchingElement(query)
         }
 
@@ -277,6 +280,31 @@ public final class AccessibilityInjector: @unchecked Sendable {
         for child in children(of: element) {
             if let found = findFirstPressMatch(in: child, query: query, exact: exact, ancestors: nextAncestors) {
                 return found
+            }
+        }
+        return nil
+    }
+
+    /// Like `findFirstPressMatch`, but returns the last match in document
+    /// order (children visited in reverse).
+    private func findLastPressMatch(
+        in element: AXUIElement,
+        query: String,
+        exact: Bool,
+        ancestors: [AXUIElement] = []
+    ) -> AXUIElement? {
+        let nextAncestors = ancestors + [element]
+        for child in children(of: element).reversed() {
+            if let found = findLastPressMatch(in: child, query: query, exact: exact, ancestors: nextAncestors) {
+                return found
+            }
+        }
+        if matchesQuery(element, query: query, exact: exact) {
+            if isPressable(element) {
+                return element
+            }
+            if let ancestor = ancestors.reversed().first(where: isPressable) {
+                return ancestor
             }
         }
         return nil
