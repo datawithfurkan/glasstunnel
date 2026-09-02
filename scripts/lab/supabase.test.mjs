@@ -117,6 +117,37 @@ test('resetSupabase preserves whether it started the local stack', async () => {
   ]);
 });
 
+test('upsertLabUser waits out the gateway 502s that follow a database reset', async (t) => {
+  let listCalls = 0;
+  const apiUrl = await fakeAuthServer(t, async (request, response) => {
+    if (request.method === 'GET') {
+      listCalls += 1;
+      if (listCalls <= 2) {
+        response.statusCode = 502;
+        response.end('An invalid response was received from the upstream server');
+        return;
+      }
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify({ users: [] }));
+      return;
+    }
+    const body = await readJson(request);
+    response.setHeader('content-type', 'application/json');
+    response.end(JSON.stringify({ id: 'user-2', ...body }));
+  });
+
+  const user = await upsertLabUser({
+    apiUrl,
+    serviceRoleKey: 'service-value',
+    email: 'lab@glasstunnel.test',
+    password: 'local-password',
+    recovery: { retryDelayMs: 1 },
+  });
+
+  assert.equal(user.id, 'user-2');
+  assert.equal(listCalls, 3);
+});
+
 test('upsertLabUser updates an existing local user', async (t) => {
   const requests = [];
   const apiUrl = await fakeAuthServer(t, async (request, response) => {

@@ -395,6 +395,16 @@ public final class ClaudeDesktopAdapter: AgentAdapter, @unchecked Sendable {
         case .stop:
             override = (.done, "Response ready")
         case .subagentStop:
+            // The app also fires this for background work after a turn has
+            // finished (title generation, summaries), so a finished turn must
+            // not read as working again; only a turn already in flight does.
+            lock.lock()
+            let turnInFlight = currentStatus == .working
+            lock.unlock()
+            guard turnInFlight else {
+                refresh(force: true)
+                return
+            }
             override = (.working, "Claude is working")
         case .notification:
             switch event.notificationType {

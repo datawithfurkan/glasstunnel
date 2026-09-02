@@ -402,6 +402,13 @@ open class PTYAdapterBase: AgentAdapter, @unchecked Sendable {
         return tail
     }
 
+    /// The status most recently published for this adapter.
+    public func currentStatusValue() -> AgentStatus {
+        lock.lock()
+        defer { lock.unlock() }
+        return currentStatus
+    }
+
     /// Seconds since the process last wrote to the PTY; huge when it has not
     /// written since the buffer was last reset.
     public func timeSinceLastOutput() -> TimeInterval {
