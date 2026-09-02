@@ -29,6 +29,8 @@ open class PTYAdapterBase: AgentAdapter, @unchecked Sendable {
     private let redactor: SecretRedactor
     private let stateStream: StreamWriter<AgentStateSnapshot>
     private var outputBuffer = ""
+    /// Trailing bytes of a UTF-8 sequence split across PTY reads.
+    private var pendingOutputBytes = Data()
     private var lastOutputAt: Date = .distantPast
     private var lastSnapshotAt: Date = .distantPast
     private var currentStatus: AgentStatus = .idle
@@ -214,7 +216,46 @@ open class PTYAdapterBase: AgentAdapter, @unchecked Sendable {
     }
 
     private func handlePTYOutput(_ data: Data) {
-        guard let str = String(data: data, encoding: .utf8) else { return }
+        // Reads split UTF-8 sequences wherever the 4 KiB boundary falls; a
+        // chunk that fails to decode as a whole must not be dropped, or the
+        // process's last words (exit reasons, dialogs) vanish with it.
+        lock.lock()
+        pendingOutputBytes.append(data)
+        let (str, remainder) = Self.decodeUTF8Prefix(pendingOutputBytes)
+        pendingOutputBytes = remainder
+        lock.unlock()
+        guard !str.isEmpty else { return }
+        handleDecodedPTYOutput(str)
+    }
+
+    /// Decodes the longest UTF-8 prefix of `data`, returning up to three
+    /// trailing bytes of an unfinished sequence for the next chunk. Bytes that
+    /// can never decode are replaced rather than dropped.
+    static func decodeUTF8Prefix(_ data: Data) -> (String, Data) {
+        if let whole = String(data: data, encoding: .utf8) {
+            return (whole, Data())
+        }
+        for cut in 1...min(3, data.count) {
+            let head = data.prefix(data.count - cut)
+            if let text = String(data: head, encoding: .utf8) {
+                return (text, Data(data.suffix(cut)))
+            }
+        }
+        return (String(decoding: data, as: UTF8.self), Data())
+    }
+
+    /// Flushes bytes still waiting for the rest of a UTF-8 sequence, lossily;
+    /// used when no more output can arrive.
+    private func flushPendingOutputBytes() {
+        lock.lock()
+        let pending = pendingOutputBytes
+        pendingOutputBytes = Data()
+        lock.unlock()
+        guard !pending.isEmpty else { return }
+        handleDecodedPTYOutput(String(decoding: pending, as: UTF8.self))
+    }
+
+    private func handleDecodedPTYOutput(_ str: String) {
         let stripped = collapsesTerminalRewritesForLog ? ANSIStripper.normalizeForLog(str) : ANSIStripper.strip(str)
         let (redacted, hits) = redactor.redact(stripped)
         let now = Date()
@@ -247,6 +288,7 @@ open class PTYAdapterBase: AgentAdapter, @unchecked Sendable {
         case .idle, .running:
             break
         case .exited(let code):
+            flushPendingOutputBytes()
             didExitProcess(status: code)
             transitionTo(code == 0 ? .done : .error, detail: "process exited (\(code))")
         case .error(let msg):
@@ -358,6 +400,14 @@ open class PTYAdapterBase: AgentAdapter, @unchecked Sendable {
         let tail = String(outputBuffer.suffix(maxLength))
         lock.unlock()
         return tail
+    }
+
+    /// Seconds since the process last wrote to the PTY; huge when it has not
+    /// written since the buffer was last reset.
+    public func timeSinceLastOutput() -> TimeInterval {
+        lock.lock()
+        defer { lock.unlock() }
+        return Date().timeIntervalSince(lastOutputAt)
     }
 
     public func clearOutputBuffer() {

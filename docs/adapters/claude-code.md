@@ -30,6 +30,24 @@ Claude Code stores every session as `~/.claude/projects/**/<sessionId>.jsonl`, s
 
 The adapter always knows which session its PTY is driving: it launches `claude --resume <id>` for an existing session or `claude --session-id <uuid>` for a fresh one (unless you passed your own `--resume`/`--continue`/`--session-id` arguments). Hook events are matched against that id, so neither a desktop-app session nor a separate `claude` you run in Terminal can move this adapter's status or selection. Session listings are memoized by transcript modification time, so the 2-second refresh only re-reads transcripts that changed.
 
+### Dialogs that would swallow a prompt
+
+Two Claude Code screens are not the composer, and text typed into them is lost:
+
+- **Workspace trust.** A folder Claude Code has not seen from this launch opens with
+  its "Quick safety check" dialog. The adapter publishes it as a decision for the
+  phone ("Yes, I trust this folder" / "No, exit"), reports `waitingInput` with
+  "Trust this folder?", and refuses prompts until it is answered. The dialog's
+  option order and default differ by build and launch context (a terminal shows
+  "❯ 1. Yes, I trust this folder" first; under the host's PTY it is "❯ No, exit"
+  first), so the adapter never presses a number or a bare Return: it moves the
+  highlight with Down, reads the redraw back, and confirms only once the highlight
+  sits on the chosen option.
+- **Session held elsewhere.** `claude --resume <id>` exits with status 1 and
+  "Session … is currently running as a background agent … add --fork-session" when
+  another process still holds that session. The adapter then relaunches once with a
+  fresh `--session-id`, keeping the same folder, and says so in the status detail.
+
 ### Host path resolution
 
 `ClaudeCodeAdapter.executableCandidates()` is the single list used for both availability detection and process launch: unqualified `claude` on `$PATH` first, then `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `~/.claude/local/bin`, `~/.cargo/bin`, `~/.bun/bin`, and `~/.npm-global/bin`.
@@ -55,6 +73,20 @@ The installer only modifies the three entries above. Anything else under `hooks`
 
 - Claude Code's hook payload schema is an evolving surface; we currently parse only `kind` + `session` and fall back to "dumb idle" detection if the JSON is missing.
 - A PTY-wrapped Claude Code runs under glasstunnel's env vars. If your terminal profile exports special `CLAUDE_*` env, make sure they are in your login shell profile (`.zshenv`), not just your interactive shell.
+
+## Verification lanes
+
+- `pnpm qa:claude-code` — privacy-safe launch-surface checks (binary, `--resume`,
+  `--session-id`, hook settings shape).
+- `GT_CLAUDE_LIVE=1 swift test --package-path apps/host-macos --filter ClaudeCodeLiveTests`
+  — the adapter drives the real signed-in CLI through one turn in a clean environment
+  with a temporary settings file (one short turn on your account).
+- `pnpm lab:e2e:claude-code` — the phone-driven journey through the Local Test Lab: a
+  mobile Chromium signs in, starts the card (the Mac launches `claude` in a PTY and
+  resumes your newest CLI session), sends a prompt, waits for "Response ready", then
+  interrupts a second prompt from the phone and checks the composer recovers. Needs a
+  signed-in CLI; it spends two short turns. When you run it from inside a Claude Code
+  session, clear the inherited `CLAUDE*`/`ANTHROPIC*` variables first.
 
 ## Implementation compatibility
 

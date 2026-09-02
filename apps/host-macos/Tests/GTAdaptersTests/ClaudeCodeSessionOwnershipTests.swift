@@ -141,6 +141,241 @@ final class ClaudeCodeSessionOwnershipTests: XCTestCase {
         }
     }
 
+    func testTrustDialogBecomesADecisionAndBlocksPromptsUntilAnswered() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        // Prints the dialog Claude Code shows for an unfamiliar folder, then
+        // echoes the first byte it receives so the answering keystroke is visible.
+        // The dialog as the host's PTY sees it: no numbers, and "No, exit"
+        // highlighted by default. Down moves the highlight; Return confirms.
+        let script = """
+        import sys, time, tty
+        tty.setcbreak(sys.stdin.fileno())
+        def show(sel):
+            print('Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open')
+            print('source project, or work from your team). If not, take a moment to review what\\'s in this folder first.')
+            print((' \\u276f ' if sel == 'no' else '   ') + 'No, exit')
+            print((' \\u276f ' if sel == 'yes' else '   ') + 'Yes, I trust this folder')
+            print('Enter to confirm \\u00b7 Esc to cancel')
+            sys.stdout.flush()
+        sel = 'no'
+        show(sel)
+        buf = b''
+        while True:
+            ch = sys.stdin.buffer.read(1)
+            buf += ch
+            if buf.endswith(b'\\x1b[B'):
+                sel = 'yes'; show(sel); buf = b''
+            elif buf.endswith(b'\\x1b[A'):
+                sel = 'no'; show(sel); buf = b''
+            elif ch in (b'\\r', b'\\n'):
+                # cbreak keeps ICRNL, so the adapter's Return arrives as a newline here.
+                print('GT_TRUST_CONFIRMED=' + sel)
+                sys.stdout.flush()
+                time.sleep(2)
+                break
+            elif ch.isdigit():
+                print('GT_TRUST_DIGIT_IGNORED')
+                sys.stdout.flush()
+        """
+        let adapter = ClaudeCodeAdapter(
+            agentID: "claude-code-trust-\(UUID().uuidString)",
+            executable: "/usr/bin/python3",
+            cwd: fixture.directory.path,
+            arguments: ["-c", script],
+            projectsRoot: fixture.projectsRoot,
+            hookRouter: fixture.router,
+            hookInstaller: fixture.installer
+        )
+        defer { Task { await adapter.stop() } }
+        try await adapter.start()
+
+        // The decision is attached as soon as the dialog text arrives; the
+        // status follows on the next idle tick.
+        let waiting = try await waitForSnapshot(adapter, timeoutSeconds: 10) {
+            $0.pendingInputRequest?.requestId == ClaudeCodeAdapter.trustPromptRequestId
+                && $0.status == .waitingInput
+        }
+        XCTAssertEqual(waiting.statusDetail, "Trust this folder?")
+        XCTAssertEqual(
+            waiting.pendingInputRequest?.questions.first?.choices.map(\.label),
+            ["Yes, I trust this folder", "No, exit"]
+        )
+
+        do {
+            try await adapter.sendInput("Reply with a marker", submit: true)
+            XCTFail("A prompt typed over the trust dialog would be dropped, so it must be refused.")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("trust"), error.localizedDescription)
+        }
+
+        try await adapter.respondToInputRequest(AgentInputRequestResponse(
+            agentId: adapter.agentID,
+            requestId: ClaudeCodeAdapter.trustPromptRequestId,
+            answers: [AgentInputRequestAnswer(questionId: ClaudeCodeAdapter.trustPromptQuestionId, choiceIds: [ClaudeCodeAdapter.trustChoiceId])]
+        ))
+
+        let answered: AgentStateSnapshot
+        do {
+            answered = try await waitForSnapshot(adapter, timeoutSeconds: 10) { snapshot in
+                snapshot.recentMessages.contains { $0.text.contains("GT_TRUST_CONFIRMED=yes") }
+            }
+        } catch {
+            XCTFail("No confirmation arrived; output tail: \(adapter.recentOutputTail(maxLength: 600))")
+            throw error
+        }
+        XCTAssertNil(answered.pendingInputRequest, "The answered dialog must not be republished from stale output.")
+        XCTAssertFalse(
+            answered.recentMessages.contains { $0.text.contains("GT_TRUST_DIGIT_IGNORED") },
+            "No number key is pressed; the highlight is moved and confirmed instead."
+        )
+    }
+
+    func testTrustDialogSelectionIsReadFromTheNewestRendering() {
+        XCTAssertEqual(ClaudeCodeAdapter.trustDialogSelection(in: " ❯ No, exit\n   Yes, I trust this folder\n"), .exit)
+        XCTAssertEqual(ClaudeCodeAdapter.trustDialogSelection(in: "   No, exit\n ❯ Yes, I trust this folder\n"), .trust)
+        XCTAssertEqual(ClaudeCodeAdapter.trustDialogSelection(in: " ❯ 1. Yes, I trust this folder\n   2. No, exit\n"), .trust)
+        XCTAssertEqual(ClaudeCodeAdapter.trustDialogSelection(in: "   1. Yes, I trust this folder\n ❯ 2. No, exit\n"), .exit)
+        // A redraw after Down leaves the older highlight earlier in the buffer.
+        XCTAssertEqual(
+            ClaudeCodeAdapter.trustDialogSelection(in: " ❯ No, exit\n   Yes, I trust this folder\n   No, exit\n ❯ Yes, I trust this folder\n"),
+            .trust
+        )
+        XCTAssertNil(ClaudeCodeAdapter.trustDialogSelection(in: "❯ Try \"fix lint errors\""))
+    }
+
+    func testResumeRefusedByAnotherProcessFallsBackToAFreshSession() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        // The newest CLI-owned session gets resumed first; the fake refuses it
+        // the way Claude Code does when a background agent still holds it.
+        try writeSession(fixture, sessionId: "dededede-dede-4ede-8ede-dededededede", entrypoint: "cli", modifiedSecondsAgo: 30)
+        let executable = fixture.directory.appendingPathComponent("bin/held-claude.sh")
+        try """
+        #!/bin/sh
+        case "$*" in
+          *--resume*)
+            echo "Session dededede-dede-4ede-8ede-dededededede is currently running as a background agent (bg). Use \\`claude"
+            echo "agents\\` to find and attach to it, or add --fork-session to branch off a copy."
+            exit 1
+            ;;
+          *)
+            echo "GT_FRESH_OK $*"
+            sleep 5
+            ;;
+        esac
+        """.write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+
+        let adapter = ClaudeCodeAdapter(
+            agentID: "claude-code-held-\(UUID().uuidString)",
+            executable: executable.path,
+            cwd: fixture.directory.path,
+            arguments: ["initial"],
+            projectsRoot: fixture.projectsRoot,
+            hookRouter: fixture.router,
+            hookInstaller: fixture.installer
+        )
+        defer { Task { await adapter.stop() } }
+        try await adapter.start()
+
+        let fresh = try await waitForSnapshot(adapter, timeoutSeconds: 15) { snapshot in
+            snapshot.recentMessages.contains { $0.text.contains("GT_FRESH_OK initial --session-id") }
+        }
+        XCTAssertNotEqual(fresh.status, .error, "The refused resume's exit must not be what the phone sees: \(fresh.statusDetail)")
+        XCTAssertTrue(ClaudeCodeAdapter.isSessionHeldElsewhere(
+            "Session x is currently running as a background agent (bg). Use `claude\nagents` to find and attach to it, or add --fork-session to branch off a copy."
+        ))
+        XCTAssertTrue(ClaudeCodeAdapter.isSessionHeldElsewhere(
+            "Session a149ada3-b404-400c-a96b-f3a6ce31c313 is running as a background session (a149ada3). Run `claude attach a149ada3`\nto open it."
+        ))
+        XCTAssertFalse(ClaudeCodeAdapter.isSessionHeldElsewhere("process exited (1)"))
+    }
+
+    func testResumeThatDiesBeforeTheComposerFallsBackEvenWithoutTheKnownMessage() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        try writeSession(fixture, sessionId: "fafafafa-fafa-4afa-8afa-fafafafafafa", entrypoint: "cli", modifiedSecondsAgo: 30)
+        let executable = fixture.directory.appendingPathComponent("bin/broken-resume.sh")
+        try """
+        #!/bin/sh
+        case "$*" in
+          *--resume*) echo "Could not read that conversation"; exit 2 ;;
+          *) echo "GT_FRESH_OK $*"; sleep 5 ;;
+        esac
+        """.write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+
+        let adapter = ClaudeCodeAdapter(
+            agentID: "claude-code-broken-resume-\(UUID().uuidString)",
+            executable: executable.path,
+            cwd: fixture.directory.path,
+            arguments: ["initial"],
+            projectsRoot: fixture.projectsRoot,
+            hookRouter: fixture.router,
+            hookInstaller: fixture.installer
+        )
+        defer { Task { await adapter.stop() } }
+        try await adapter.start()
+
+        let fresh = try await waitForSnapshot(adapter, timeoutSeconds: 15) { snapshot in
+            snapshot.recentMessages.contains { $0.text.contains("GT_FRESH_OK initial --session-id") }
+        }
+        XCTAssertNotEqual(fresh.status, .error, fresh.statusDetail)
+    }
+
+    func testSilenceBeforeTheComposerHintIsStartingNotReady() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        // Claude Code prints its banner, goes quiet while it loads, then draws
+        // the composer with its hint line.
+        let script = """
+        import sys, time
+        print('Claude Code v2.1.226')
+        sys.stdout.flush()
+        time.sleep(4.5)
+        print('\\u276f Try "fix lint errors"')
+        print('  \\u23f8 manual mode on \\u00b7 ? for shortcuts')
+        sys.stdout.flush()
+        time.sleep(6)
+        """
+        let adapter = ClaudeCodeAdapter(
+            agentID: "claude-code-startup-\(UUID().uuidString)",
+            executable: "/usr/bin/python3",
+            cwd: fixture.directory.path,
+            arguments: ["-c", script],
+            projectsRoot: fixture.projectsRoot,
+            hookRouter: fixture.router,
+            hookInstaller: fixture.installer
+        )
+        defer { Task { await adapter.stop() } }
+        try await adapter.start()
+
+        let starting = try await waitForSnapshot(adapter, timeoutSeconds: 12) { $0.statusDetail == "Starting Claude Code" }
+        XCTAssertEqual(starting.status, .working)
+
+        let ready = try await waitForSnapshot(adapter, timeoutSeconds: 16) { $0.status == .done }
+        XCTAssertTrue(ready.statusDetail.hasPrefix("idle for"), ready.statusDetail)
+        XCTAssertTrue(ClaudeCodeAdapter.showsComposer("  ⏸ manual mode on · ? for shortcuts · ← for agents"))
+        XCTAssertFalse(ClaudeCodeAdapter.showsComposer("❯ 1. Yes, I trust this folder"))
+    }
+
+    func testTrustPromptDetectionSurvivesTerminalWrapping() {
+        let wrapped = """
+         Quick safety check: Is this a project you created or one you
+         trust? (Like your own code, a well-known open source project)
+         ❯ 1. Yes, I trust this folder
+           2. No, exit
+        """
+        XCTAssertTrue(ClaudeCodeAdapter.isTrustPrompt(wrapped))
+        XCTAssertFalse(ClaudeCodeAdapter.isTrustPrompt("❯ Reply with a marker\n"))
+        XCTAssertFalse(ClaudeCodeAdapter.isTrustPrompt("Do you trust the tests in this repository?"))
+
+        let request = ClaudeCodeAdapter.trustPromptInputRequest(cwd: NSHomeDirectory() + "/Projects/demo")
+        XCTAssertEqual(request.questions.first?.question, "Claude Code asks whether to trust ~/Projects/demo before it runs there.")
+        XCTAssertEqual(request.questions.first?.choices.map(\.choiceId), ["trust", "exit"])
+    }
+
     func testExplicitSessionArgumentsAreLeftAlone() {
         XCTAssertTrue(ClaudeCodeAdapter.hasExplicitSessionArgument(["--resume", "abc"]))
         XCTAssertTrue(ClaudeCodeAdapter.hasExplicitSessionArgument(["-c"]))
@@ -240,6 +475,7 @@ final class ClaudeCodeSessionOwnershipTests: XCTestCase {
 
     private func waitForSnapshot(
         _ adapter: ClaudeCodeAdapter,
+        timeoutSeconds: UInt64 = 4,
         matching predicate: @escaping (AgentStateSnapshot) -> Bool
     ) async throws -> AgentStateSnapshot {
         try await withThrowingTaskGroup(of: AgentStateSnapshot.self) { group in
@@ -250,7 +486,7 @@ final class ClaudeCodeSessionOwnershipTests: XCTestCase {
                 throw CancellationError()
             }
             group.addTask {
-                try await Task.sleep(nanoseconds: 4_000_000_000)
+                try await Task.sleep(nanoseconds: timeoutSeconds * 1_000_000_000)
                 throw CancellationError()
             }
             let snapshot = try await group.next()

@@ -13,9 +13,13 @@ protocol ClaudeDesktopUIDriving: Sendable {
     func press(label: String, exact: Bool) throws
     func interrupt() throws
     func open(_ url: URL) -> Bool
-    /// The front window's title, which the Code UI sets to the session title;
-    /// nil when Accessibility cannot read it.
+    /// The front window's title; nil when Accessibility cannot read it. Current
+    /// builds title the window "Claude" regardless of session, so this is only
+    /// a fallback for `currentSessionTitle()`.
     func frontWindowTitle() -> String?
+    /// The name of the session shown in the front window, read from the Code
+    /// UI's "<name>, rename session" control; nil when it is not exposed.
+    func currentSessionTitle() -> String?
 }
 
 /// Adapter for Claude Code sessions hosted by the Claude desktop app.
@@ -38,10 +42,16 @@ public final class ClaudeDesktopAdapter: AgentAdapter, @unchecked Sendable {
     /// specific first.
     static let composerHints = [
         "Ask Claude a question or start a task",
+        "Describe a task or ask a question",
         "Ask Claude",
+        // The composer's accessibility description on build 1.40609.1.
+        "Prompt",
         "Reply",
         "Message",
     ]
+    /// Suffix of the accessibility description the Code UI gives the control
+    /// that renames the session in front ("<name>, rename session").
+    static let renameControlSuffix = ", rename session"
     static let permissionAllowLabels = ["Allow once", "Allow", "Yes", "Approve"]
     static let permissionDenyLabels = ["Deny", "No", "Reject"]
     static let choiceSubmitLabels = ["Submit", "Continue", "Send"]
@@ -184,8 +194,8 @@ public final class ClaudeDesktopAdapter: AgentAdapter, @unchecked Sendable {
         if let selected = selectedSummary() {
             let confirmed = await bringSessionToFront(selected)
             // Typing into the wrong session would be far worse than failing:
-            // refuse whenever the window title is readable and disagrees.
-            if !confirmed, let front = ui.frontWindowTitle(), !front.isEmpty,
+            // refuse whenever the front session is readable and disagrees.
+            if !confirmed, let front = frontSessionTitle(), !front.isEmpty,
                let title = selected.threadName {
                 throw NSError(
                     domain: "ClaudeDesktopAdapter",
@@ -299,25 +309,39 @@ public final class ClaudeDesktopAdapter: AgentAdapter, @unchecked Sendable {
     /// carries its title. Tries the deep link first (accepted only on builds
     /// that enable it), then the session's row through Accessibility.
     private func bringSessionToFront(_ summary: ClaudeCodeSessionSummary) async -> Bool {
-        if Self.windowShowsSession(windowTitle: ui.frontWindowTitle(), sessionTitle: summary.threadName) {
+        if Self.windowShowsSession(windowTitle: frontSessionTitle(), sessionTitle: summary.threadName) {
             return true
         }
         if let url = Self.continueSessionURL(summary.sessionId), ui.open(url) {
             try? await Task.sleep(nanoseconds: 700_000_000)
-            if Self.windowShowsSession(windowTitle: ui.frontWindowTitle(), sessionTitle: summary.threadName) {
+            if Self.windowShowsSession(windowTitle: frontSessionTitle(), sessionTitle: summary.threadName) {
                 return true
             }
         }
         if let title = summary.threadName {
+            // Sidebar entries are titled "<state> <name>" ("Idle …", "Running …",
+            // "Unread response …"), so the exact press only hits untitled
+            // builds; the substring press is the working path.
             if (try? ui.press(label: title, exact: true)) == nil {
                 _ = try? ui.press(label: title, exact: false)
             }
             try? await Task.sleep(nanoseconds: 500_000_000)
         }
-        return Self.windowShowsSession(windowTitle: ui.frontWindowTitle(), sessionTitle: summary.threadName)
+        return Self.windowShowsSession(windowTitle: frontSessionTitle(), sessionTitle: summary.threadName)
     }
 
-    /// True when the window title is the session title, allowing the app's own
+    /// The best available name for the session in front: the rename control's
+    /// name when the Code UI exposes it, else the window title (which current
+    /// builds leave at a generic "Claude", so it never verifies a session).
+    private func frontSessionTitle() -> String? {
+        if let current = ui.currentSessionTitle()?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !current.isEmpty {
+            return current
+        }
+        return ui.frontWindowTitle()
+    }
+
+    /// True when the front title is the session title, allowing the app's own
     /// suffixes; false when either side is unknown.
     static func windowShowsSession(windowTitle: String?, sessionTitle: String?) -> Bool {
         guard
@@ -442,7 +466,7 @@ public final class ClaudeDesktopAdapter: AgentAdapter, @unchecked Sendable {
             owner: .desktop,
             cache: summaryCache
         )
-        let frontWindowTitle = ui.frontWindowTitle()
+        let frontWindowTitle = frontSessionTitle()
 
         lock.lock()
         lastRefreshAt = Date()
@@ -800,6 +824,17 @@ struct ClaudeDesktopAccessibilityDriver: ClaudeDesktopUIDriving {
 
     func frontWindowTitle() -> String? {
         try? accessibility.frontWindowTitle(bundleID: ClaudeDesktopAdapter.bundleID)
+    }
+
+    func currentSessionTitle() -> String? {
+        let suffix = ClaudeDesktopAdapter.renameControlSuffix
+        guard let description = try? accessibility.frontWindowDescription(
+            bundleID: ClaudeDesktopAdapter.bundleID,
+            endingWith: suffix
+        ) else {
+            return nil
+        }
+        return String(description.dropLast(suffix.count))
     }
 
     private func focusComposer() throws {

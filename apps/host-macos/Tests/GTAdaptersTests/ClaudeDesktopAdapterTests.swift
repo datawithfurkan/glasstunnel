@@ -168,6 +168,15 @@ final class ClaudeDesktopAdapterTests: XCTestCase {
         func interrupt() throws { lock.lock(); _interrupts += 1; lock.unlock() }
         func open(_ url: URL) -> Bool { lock.lock(); _opened.append(url); lock.unlock(); return true }
         func frontWindowTitle() -> String? { frontTitle }
+
+        /// nil models a build that does not expose the rename control.
+        private var _currentSession: String?
+        var currentSession: String? {
+            get { lock.lock(); defer { lock.unlock() }; return _currentSession }
+            set { lock.lock(); _currentSession = newValue; lock.unlock() }
+        }
+
+        func currentSessionTitle() -> String? { currentSession }
     }
 
     private struct Fixture {
@@ -421,6 +430,46 @@ final class ClaudeDesktopAdapterTests: XCTestCase {
         XCTAssertEqual(fixture.ui.delivered.map(\.0), ["Ship it"])
         let active = try await waitForSnapshot(fixture.adapter, timeout: 6) { $0.availableTargets?.first?.isActive == true }
         XCTAssertEqual(active.availableTargets?.first?.isActive, true)
+    }
+
+    func testVerifiesTheFrontSessionThroughTheRenameControlWhenTheWindowTitleIsGeneric() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        try writeSession(fixture, sessionId: "efefefef-efef-4fef-8fef-efefefefefef", title: "Target session")
+        // Build 1.40609.1 titles every window "Claude"; only the rename control
+        // names the session in front.
+        fixture.ui.frontTitle = "Claude"
+        fixture.ui.currentSession = "Target session"
+        defer { Task { await fixture.adapter.stop() } }
+        try await fixture.adapter.start()
+        let snapshot = try await waitForSnapshot(fixture.adapter) { $0.status == .done }
+        XCTAssertEqual(snapshot.availableTargets?.first?.isActive, true, "The rename control confirms the session is in front.")
+
+        try await fixture.adapter.sendInput("Ship it", submit: true)
+
+        XCTAssertEqual(fixture.ui.delivered.map(\.0), ["Ship it"])
+        XCTAssertTrue(fixture.ui.opened.isEmpty, "No switch is attempted when the front session already matches.")
+        XCTAssertTrue(fixture.ui.pressed.isEmpty)
+    }
+
+    func testRefusesWhenTheRenameControlNamesAnotherSessionDespiteAGenericWindowTitle() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        try writeSession(fixture, sessionId: "0f0f0f0f-0f0f-4f0f-8f0f-0f0f0f0f0f0f", title: "Target session")
+        fixture.ui.frontTitle = "Claude"
+        fixture.ui.currentSession = "Some other session"
+        defer { Task { await fixture.adapter.stop() } }
+        try await fixture.adapter.start()
+        let snapshot = try await waitForSnapshot(fixture.adapter) { $0.status == .done }
+        XCTAssertEqual(snapshot.availableTargets?.first?.isActive, false)
+
+        do {
+            try await fixture.adapter.sendInput("Ship it", submit: true)
+            XCTFail("A generic window title must not hide that another session is in front.")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("Target session"))
+        }
+        XCTAssertTrue(fixture.ui.delivered.isEmpty)
     }
 
     func testSelectTargetOpensTheDeepLinkAndSwitchesSessions() async throws {

@@ -31,6 +31,7 @@ export type WorkspaceFixtureId =
   | 'workspace-opencode-running'
   | 'workspace-gemini-cli-running'
   | 'workspace-claude-code-running'
+  | 'workspace-claude-code-trust'
   | 'workspace-offline-cached';
 
 const FIXTURE_PARAM = 'gtFixture';
@@ -181,7 +182,7 @@ export function workspaceFixtureState(fixtureId: WorkspaceFixtureId): Partial<Ap
             }),
             terminalApp(),
           ]
-      : fixtureId === 'workspace-claude-code-running'
+      : fixtureId === 'workspace-claude-code-running' || fixtureId === 'workspace-claude-code-trust'
         ? [
             screenApp(),
             codexApp(),
@@ -302,6 +303,43 @@ export function workspaceFixtureState(fixtureId: WorkspaceFixtureId): Partial<Ap
       'Claude Code 2.1.178\nmodel: sonnet\n\nReady to continue coding.',
     );
   }
+  if (fixtureId === 'workspace-claude-code-trust') {
+    // Claude Code's workspace-trust dialog, surfaced by the Mac as a decision.
+    agents['claude-code'] = runningCliSnapshot(
+      'claude-code',
+      'Claude Code',
+      AdapterKind.ClaudeCode,
+      'Quick safety check: Is this a project you created or one you trust?\n ❯ 1. Yes, I trust this folder\n   2. No, exit',
+      {
+        status: AgentStatus.WaitingInput,
+        statusDetail: 'Trust this folder?',
+        pendingInputRequest: {
+          requestId: 'claude-code-trust-prompt',
+          questions: [
+            {
+              questionId: 'claude-code-trust-choice',
+              header: 'Workspace trust',
+              question: 'Claude Code asks whether to trust ~/Projects/demo before it runs there.',
+              choices: [
+                {
+                  choiceId: 'trust',
+                  label: 'Yes, I trust this folder',
+                  description: 'Claude Code can read, edit, and run files there.',
+                  recommended: false,
+                },
+                {
+                  choiceId: 'exit',
+                  label: 'No, exit',
+                  description: 'Stop Claude Code without touching the folder.',
+                  recommended: false,
+                },
+              ],
+            },
+          ],
+        },
+      },
+    );
+  }
 
   return {
     route: 'workspace',
@@ -353,6 +391,7 @@ function isWorkspaceFixtureId(value: string | null): value is WorkspaceFixtureId
     value === 'workspace-opencode-running' ||
     value === 'workspace-gemini-cli-running' ||
     value === 'workspace-claude-code-running' ||
+    value === 'workspace-claude-code-trust' ||
     value === 'workspace-offline-cached'
   );
 }

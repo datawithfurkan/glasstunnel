@@ -67,6 +67,20 @@ export default defineConfig({
       },
     },
     {
+      name: 'local-claude-code-mobile-chromium',
+      grep: /@claude-code-account/,
+      use: {
+        ...devices['Pixel 7'],
+      },
+    },
+    {
+      name: 'local-claude-desktop-mobile-chromium',
+      grep: /@claude-desktop-account/,
+      use: {
+        ...devices['Pixel 7'],
+      },
+    },
+    {
       name: 'fixture-mobile-webkit',
       grep: /@fixture/,
       use: {

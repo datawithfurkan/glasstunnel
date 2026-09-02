@@ -80,6 +80,14 @@ a permission prompt stays visible on the phone until it is answered.
   the running window's composer; run it from a terminal that has Accessibility access.
 - `GT_CLAUDE_REAL_STATE=1 swift test --package-path apps/host-macos --filter testRealDesktopSessionsParse`
   — parses the newest desktop sessions on this Mac and prints their status and titles.
+- `pnpm lab:e2e:claude-desktop` — the phone-driven journey through the Local Test Lab
+  against the real Claude app: a mobile Chromium signs in, switches the card to the
+  session named by `GT_LAB_CLAUDE_SESSION` (default "Glasstunnel live evidence"),
+  sends a prompt that the Mac types into the app, answers a permission prompt and an
+  AskUserQuestion from the phone, and checks that a Claude Code CLI card started
+  alongside never moves. Needs the app open with that session created, an
+  Accessibility-trusted lab process, and a signed-in account; it spends three short
+  turns. Keep your hands off the Claude window while it runs.
 
 ## Implementation compatibility
 

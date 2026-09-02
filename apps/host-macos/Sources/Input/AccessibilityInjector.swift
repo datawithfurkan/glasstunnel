@@ -138,6 +138,22 @@ public final class AccessibilityInjector: @unchecked Sendable {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// The full accessibility description of the first element in the front
+    /// window whose description ends with `suffix`; nil when none does.
+    /// Web-based apps often expose a control such as "Thread title, rename"
+    /// whose description carries state the window title does not.
+    public func frontWindowDescription(bundleID: String, endingWith suffix: String) throws -> String? {
+        guard let runningApp = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first else {
+            throw InjectionError.appNotRunning(bundleID)
+        }
+
+        let app = AXUIElementCreateApplication(runningApp.processIdentifier)
+        guard let window = focusedWindow(of: app) ?? firstWindow(of: app) else {
+            throw InjectionError.noFrontWindow
+        }
+        return findFirstDescription(in: window, endingWith: suffix, depth: 0)
+    }
+
     public func clickFrontWindow(
         bundleID: String,
         xFraction: CGFloat,
@@ -216,6 +232,20 @@ public final class AccessibilityInjector: @unchecked Sendable {
         let nextAncestors = ancestors + [element]
         for child in children(of: element) {
             if let found = findFirstPressMatch(in: child, query: query, exact: exact, ancestors: nextAncestors) {
+                return found
+            }
+        }
+        return nil
+    }
+
+    private func findFirstDescription(in element: AXUIElement, endingWith suffix: String, depth: Int) -> String? {
+        guard depth <= 60 else { return nil }
+        if let description = copyStringAttribute(element, kAXDescriptionAttribute),
+           description.hasSuffix(suffix), description.count > suffix.count {
+            return description
+        }
+        for child in children(of: element) {
+            if let found = findFirstDescription(in: child, endingWith: suffix, depth: depth + 1) {
                 return found
             }
         }
@@ -464,6 +494,7 @@ public final class AccessibilityInjector: @unchecked Sendable {
     }
     public func focusInput(bundleID: String, targetHint: String? = nil, allowFallback: Bool = true) throws {}
     public func frontWindowTitle(bundleID: String) throws -> String? { nil }
+    public func frontWindowDescription(bundleID: String, endingWith suffix: String) throws -> String? { nil }
     public func clickFrontWindow(bundleID: String, xFraction: Double, yFromBottom: Double) throws {}
     public func press(bundleID: String, matching query: String, exact: Bool = true) throws {}
 }

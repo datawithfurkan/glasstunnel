@@ -15,7 +15,7 @@
 set -euo pipefail
 
 BUNDLE_ID="com.anthropic.claudefordesktop"
-COMPOSER_HINT="Ask Claude a question or start a task"
+COMPOSER_HINT="Ask Claude a question or start a task|Describe a task or ask a question|Prompt"
 PROJECTS_ROOT="${GT_CLAUDE_PROJECTS_ROOT:-$HOME/.claude/projects}"
 SETTINGS_FILE="${GT_CLAUDE_SETTINGS_FILE:-$HOME/.claude/settings.json}"
 failures=0
@@ -60,7 +60,10 @@ else
     fail "claude:// scheme" "the app does not register the claude URL scheme"
   fi
 
-  if pgrep -qx "Claude"; then
+  # pgrep cannot always see the Electron process from a sandboxed shell;
+  # matching the executable path in ps output is reliable. grep must drain
+  # the pipe (no -q): under pipefail an early exit fails the whole check.
+  if ps -axo comm= | grep '/Claude\.app/Contents/MacOS/Claude$' >/dev/null; then
     row "Claude running" "pass" "a Claude process is running"
   else
     row "Claude running" "info" "not running; the card launches it on demand"
@@ -166,7 +169,11 @@ import ApplicationServices
 import Foundation
 
 let bundleID = "com.anthropic.claudefordesktop"
-let hint = CommandLine.arguments.count > 1 ? CommandLine.arguments[1].lowercased() : "ask claude"
+// Several vocabularies separated by "|": the placeholder text of older
+// builds, the placeholder of build 1.40609.1, and that build's composer
+// accessibility description.
+let hint = CommandLine.arguments.count > 1 ? CommandLine.arguments[1].lowercased() : "ask claude|describe a task|prompt"
+let hints = hint.split(separator: "|").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
 
 guard AXIsProcessTrusted() else {
     print("blocked: Accessibility is not trusted for this terminal")
@@ -198,7 +205,8 @@ func walk(_ element: AXUIElement, depth: Int) {
         let description = (attribute(element, kAXDescriptionAttribute) as? String) ?? ""
         let label = [placeholder, description].filter { !$0.isEmpty }.joined(separator: " / ")
         candidates.append("\(role) settable=\(settable.boolValue) '\(label.prefix(60))'")
-        if settable.boolValue, (placeholder + " " + description).lowercased().contains(hint) {
+        let haystack = (placeholder + " " + description).lowercased()
+        if settable.boolValue, hints.contains(where: { haystack.contains($0) }) {
             matched = true
             return
         }
