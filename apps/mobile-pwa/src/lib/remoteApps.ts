@@ -132,6 +132,8 @@ function adapterDisplayName(kind: number): string {
       return 'Gemini CLI';
     case 8:
       return 'Cursor Agent';
+    case 9:
+      return 'Claude';
     default:
       return 'Remote app';
   }

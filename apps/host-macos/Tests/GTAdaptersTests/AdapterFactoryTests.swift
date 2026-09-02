@@ -7,9 +7,29 @@ final class AdapterFactoryTests: XCTestCase {
         XCTAssertEqual(AdapterFactory.resolveKind(forBundleID: "com.todesktop.230313mzl4w4u92"), .cursor)
     }
 
-    func testResolveClaudeCode() {
-        XCTAssertEqual(AdapterFactory.resolveKind(forBundleID: "com.anthropic.claudecode"), .claudeCode)
-        XCTAssertEqual(AdapterFactory.resolveKind(forBundleID: "com.anthropic.claudecode.macos"), .claudeCode)
+    func testLegacyGuessedClaudeBundleIDsFallBackToMirror() {
+        // These identifiers never matched a shipping app; the Claude desktop
+        // app is `com.anthropic.claudefordesktop` and the CLI has no bundle.
+        XCTAssertEqual(AdapterFactory.resolveKind(forBundleID: "com.anthropic.claudecode"), .mirror)
+        XCTAssertEqual(AdapterFactory.resolveKind(forBundleID: "com.anthropic.claudecode.macos"), .mirror)
+    }
+
+    func testClaudeDesktopStaysMirrorUntilItsAdapterExists() {
+        XCTAssertEqual(AdapterFactory.resolveKind(forBundleID: "com.anthropic.claudefordesktop"), .mirror)
+    }
+
+    func testClaudeCodeExecutableCandidatesCoverCommonLocalInstalls() {
+        let home = ProcessInfo.processInfo.environment["HOME"] ?? ""
+        let candidates = ClaudeCodeAdapter.executableCandidates()
+
+        XCTAssertEqual(candidates.first, "claude")
+        XCTAssertTrue(candidates.contains("/opt/homebrew/bin/claude"))
+        XCTAssertTrue(candidates.contains("/usr/local/bin/claude"))
+        XCTAssertTrue(candidates.contains("\(home)/.local/bin/claude"))
+        XCTAssertTrue(candidates.contains("\(home)/.claude/local/bin/claude"))
+        XCTAssertTrue(candidates.contains("\(home)/.cargo/bin/claude"))
+        XCTAssertTrue(candidates.contains("\(home)/.bun/bin/claude"))
+        XCTAssertTrue(candidates.contains("\(home)/.npm-global/bin/claude"))
     }
 
     func testResolveCodexDesktopFallsBackToMirror() {

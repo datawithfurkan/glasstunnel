@@ -7,7 +7,7 @@
  * of the repo buildable and match the proto schema one-to-one.
  */
 
-export const PROTOCOL_VERSION = '0.2.0';
+export const PROTOCOL_VERSION = '0.2.1';
 
 export type DeviceId = string;
 export type AgentId = string;
@@ -33,6 +33,7 @@ export enum AdapterKind {
   Terminal = 6,
   GeminiCli = 7,
   CursorAgent = 8,
+  ClaudeDesktop = 9,
 }
 
 export enum ChatRole {

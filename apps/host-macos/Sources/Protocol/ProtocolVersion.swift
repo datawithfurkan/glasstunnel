@@ -1,7 +1,7 @@
 import Foundation
 
 public enum GlasstunnelProtocol {
-    public static let version = "0.2.0"
+    public static let version = "0.2.1"
     public static let signalingPath = "/signal"
     /// Wire protocol version. Even = stable, odd = development.
     /// Bumped on breaking schema changes.

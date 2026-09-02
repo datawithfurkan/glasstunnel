@@ -62,7 +62,7 @@ EOF
 }
 
 output="$(run_audit)"
-assert_contains "$output" "| Claude Code | missing: - | missing: - | do not publish |"
+assert_contains "$output" "| Claude Code | - | missing: - | do not publish |"
 assert_contains "$output" "| Gemini CLI | - | missing: - | do not publish |"
 assert_contains "$output" "| OpenCode | missing: - | missing: - | do not publish |"
 
@@ -75,10 +75,11 @@ EOF
 output="$(run_nsworkspace_audit "$SHIPIT_CURSOR")"
 assert_contains "$output" "| Cursor | missing: - | - | do not publish unless a Cursor window is detected |"
 
-write_app_info_plist "Claude" "com.example.not-claude"
+write_app_info_plist "Claude" "com.anthropic.claudefordesktop"
 write_app_info_plist "OpenCode" "com.example.not-opencode"
 output="$(run_audit)"
-assert_contains "$output" "| Claude Code | present: $APP_DIR/Claude.app (bundle ID mismatch: com.example.not-claude; expected com.anthropic.claudecode,com.anthropic.claudecode.macos) | missing: - | do not publish; bundle ID mismatch |"
+# An installed Claude desktop app never makes the CLI card publishable.
+assert_contains "$output" "| Claude Code | - | missing: - | do not publish |"
 assert_contains "$output" "| OpenCode | present: $APP_DIR/OpenCode.app (bundle ID mismatch: com.example.not-opencode; expected ai.opencode.app,ai.opencode.desktop,dev.opencode.cli) | missing: - | do not publish; bundle ID mismatch |"
 
 rm -rf "$APP_DIR/Claude.app" "$APP_DIR/OpenCode.app"
@@ -88,7 +89,7 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$BIN_DIR/opencode"
 chmod +x "$BIN_DIR/claude" "$BIN_DIR/gemini" "$BIN_DIR/opencode"
 
 output="$(run_audit)"
-assert_contains "$output" "| Claude Code | missing: - | present: $BIN_DIR/claude | publish; available only when CLI exists |"
+assert_contains "$output" "| Claude Code | - | present: $BIN_DIR/claude | publish as available |"
 assert_contains "$output" "| Gemini CLI | - | present: $BIN_DIR/gemini | publish as available |"
 assert_contains "$output" "| OpenCode | missing: - | present: $BIN_DIR/opencode | publish; available only when CLI exists |"
 

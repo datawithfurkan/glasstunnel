@@ -960,9 +960,7 @@ public final class Session {
             hostVersion: GlasstunnelProtocol.version,
             hostOsVersion: hostOSVersion(),
             hostDeviceLabel: deviceLabel,
-            supportedAdapters: AdapterKind.allCases
-                .filter { $0 != .unspecified }
-                .map { $0.displayName },
+            supportedAdapters: AdapterKind.advertisedDisplayNames,
             currentLayout: currentLayout,
             remoteApps: currentRemoteApps
         )
