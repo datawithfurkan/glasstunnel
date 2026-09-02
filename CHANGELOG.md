@@ -19,7 +19,12 @@ versioning after the first public beta; pre-release compatibility may still chan
 - Decisions raised by CLI cards (Codex's update prompt, Claude Code's trust check)
   now render their choices on the phone; before, only the terminal text showed.
 - Phone-driven Local Test Lab lanes for both Claude cards: `pnpm lab:e2e:claude-code`
-  and `pnpm lab:e2e:claude-desktop`.
+  and `pnpm lab:e2e:claude-desktop`, each with a mobile WebKit variant
+  (`pnpm lab:e2e:claude-code:safari`, `pnpm lab:e2e:claude-desktop:safari`).
+  The desktop lane now also switches its dedicated session to the app's
+  Manual permission mode for a file-write step, so the permission dialog is
+  answered from the phone, and interrupts a running turn from the phone
+  through the app's own Stop control.
 
 ### Changed
 
