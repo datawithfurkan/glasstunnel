@@ -43,7 +43,10 @@ pnpm worker:build
 
 `worker:test` uses Cloudflare's Vitest pool and a test-specific Wrangler
 configuration. It runs in real `workerd` without loading `.dev.vars` or cloud
-credentials. `worker:build` is a dry run and does not deploy.
+credentials. Tests never reach the network: `test/setup.ts` fails any outbound
+`fetch` fast, and tests that exercise account or relay auth stub `fetch` with a
+fake Supabase (see `test/relayHub.test.ts`). `worker:build` is a dry run and
+does not deploy.
 
 Use manual `wrangler dev` only for Worker-only debugging. Prefer the lab for
 account, PWA, relay, or host behavior.

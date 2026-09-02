@@ -311,6 +311,33 @@ function asAttachmentSocket(ws: WebSocket): WebSocketWithAttachment {
   return ws as WebSocketWithAttachment;
 }
 
+function isSocketOpen(ws: WebSocket): boolean {
+  return ws.readyState === WebSocket.READY_STATE_OPEN;
+}
+
+/**
+ * Sends a frame to a socket that may have closed while the caller was awaiting
+ * (a peer close, or the hub closing a replaced connection). Returns false instead of
+ * throwing when the socket is no longer open, so the caller can drop the frame and
+ * forget the socket rather than failing the whole event handler. A send that fails on
+ * a socket that is still open is a payload problem, not a dead peer: it is logged and
+ * the socket stays usable.
+ */
+function sendToOpenSocket(ws: WebSocket, raw: string): boolean {
+  if (!isSocketOpen(ws)) return false;
+  try {
+    ws.send(raw);
+  } catch (error) {
+    if (!isSocketOpen(ws)) return false;
+    console.error("WebSocket send failed on an open socket", error);
+  }
+  return true;
+}
+
+function sendJsonToOpenSocket(ws: WebSocket, value: Record<string, unknown>): boolean {
+  return sendToOpenSocket(ws, JSON.stringify(value));
+}
+
 function base64FromBytes(bytes: Uint8Array): string {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
@@ -969,6 +996,12 @@ export class SignalingHub extends DurableObject<Env> {
       return;
     }
 
+    // The signature check yielded; a socket that closed meanwhile must not be registered.
+    if (!isSocketOpen(ws)) {
+      this.unregisterPeer(ws);
+      return;
+    }
+
     const updated: SessionAttachment = {
       authenticated: true,
       deviceId,
@@ -988,15 +1021,17 @@ export class SignalingHub extends DurableObject<Env> {
     asAttachmentSocket(ws).serializeAttachment(updated);
     this.peers.set(deviceId, ws);
 
-    ws.send(
-      JSON.stringify({
-        type: "auth_ok",
-        device_id: deviceId,
-        at: Date.now(),
-      }),
-    );
+    if (!sendJsonToOpenSocket(ws, { type: "auth_ok", device_id: deviceId, at: Date.now() })) {
+      this.unregisterPeer(ws);
+      return;
+    }
 
     await this.touchAuthenticatedDevice(updated, true);
+    if (!isSocketOpen(ws)) {
+      // Closed, or replaced by a newer connection, while last-seen was being persisted.
+      this.unregisterPeer(ws);
+      return;
+    }
     if (role === "host") {
       await this.sendHostIdentity(ws, deviceId);
       await this.pushPendingApprovals(ws, deviceId);
@@ -1164,14 +1199,15 @@ export class SignalingHub extends DurableObject<Env> {
 
     const hostSocket = this.peers.get(linkCode.host_device_id);
     if (hostSocket) {
-      hostSocket.send(JSON.stringify({
+      const notified = sendJsonToOpenSocket(hostSocket, {
         type: "host_identity",
         linked: true,
         user_id: user.id,
         email: profile?.email ?? user.email ?? "",
         display_name: profile?.display_name ?? userDisplayName(user),
         avatar_url: profile?.avatar_url ?? "",
-      }));
+      });
+      if (!notified) this.unregisterPeer(hostSocket);
     }
 
     const relayPresence = await relayPresenceForHost(this.env, linkCode.host_device_id);
@@ -1342,7 +1378,7 @@ export class SignalingHub extends DurableObject<Env> {
         return;
       }
       case "ping":
-        ws.send(JSON.stringify({ type: "pong", at: Date.now() }));
+        if (!sendJsonToOpenSocket(ws, { type: "pong", at: Date.now() })) this.unregisterPeer(ws);
         return;
       default:
         return;
@@ -1383,21 +1419,21 @@ export class SignalingHub extends DurableObject<Env> {
             expires_at: futureIso(HOST_LINK_CODE_TTL_MS),
           }),
         });
-        ws.send(JSON.stringify({
+        sendJsonToOpenSocket(ws, {
           type: "link_code_created",
           code,
           expires_at: futureIso(HOST_LINK_CODE_TTL_MS),
-        }));
+        });
         return;
       } catch (error) {
         lastError = error;
       }
     }
 
-    ws.send(JSON.stringify({
+    sendJsonToOpenSocket(ws, {
       type: "link_code_error",
       reason: lastError instanceof Error ? lastError.message : "could not create code",
-    }));
+    });
   }
 
   private async recordApprovalDecision(
@@ -1414,13 +1450,13 @@ export class SignalingHub extends DurableObject<Env> {
 
     const host = await findDeviceByDeviceId(this.env, deviceId);
     if (!host || host.kind !== "host" || host.revoked_at) {
-      ws.send(JSON.stringify({ type: "approval_recorded", request_id: requestId, ok: false, reason: "host not linked" }));
+      sendJsonToOpenSocket(ws, { type: "approval_recorded", request_id: requestId, ok: false, reason: "host not linked" });
       return;
     }
 
     const approval = await findApprovalById(this.env, requestId);
     if (!approval || approval.host_device_uuid !== host.id || approval.status !== "pending") {
-      ws.send(JSON.stringify({ type: "approval_recorded", request_id: requestId, ok: false, reason: "approval request not found" }));
+      sendJsonToOpenSocket(ws, { type: "approval_recorded", request_id: requestId, ok: false, reason: "approval request not found" });
       return;
     }
 
@@ -1435,12 +1471,12 @@ export class SignalingHub extends DurableObject<Env> {
       await markApprovalStatus(this.env, requestId, "rejected");
     }
 
-    ws.send(JSON.stringify({
+    sendJsonToOpenSocket(ws, {
       type: "approval_recorded",
       request_id: requestId,
       ok: true,
       status: approved ? "approved" : "rejected",
-    }));
+    });
   }
 
   private async unlinkHost(
@@ -1453,8 +1489,8 @@ export class SignalingHub extends DurableObject<Env> {
     try {
       const host = await findDeviceByDeviceId(this.env, deviceId);
       if (!host || host.kind !== "host" || host.revoked_at) {
-        ws.send(JSON.stringify({ type: "host_unlinked", ok: true, linked: false }));
-        ws.send(JSON.stringify({ type: "host_identity", linked: false }));
+        sendJsonToOpenSocket(ws, { type: "host_unlinked", ok: true, linked: false });
+        sendJsonToOpenSocket(ws, { type: "host_identity", linked: false });
         return;
       }
 
@@ -1475,14 +1511,14 @@ export class SignalingHub extends DurableObject<Env> {
           headers: { Prefer: "return=minimal" },
         },
       );
-      ws.send(JSON.stringify({ type: "host_unlinked", ok: true, linked: false }));
-      ws.send(JSON.stringify({ type: "host_identity", linked: false }));
+      sendJsonToOpenSocket(ws, { type: "host_unlinked", ok: true, linked: false });
+      sendJsonToOpenSocket(ws, { type: "host_identity", linked: false });
     } catch (error) {
-      ws.send(JSON.stringify({
+      sendJsonToOpenSocket(ws, {
         type: "host_unlinked",
         ok: false,
         reason: error instanceof Error ? error.message : "could not unlink host",
-      }));
+      });
     }
   }
 
@@ -1501,8 +1537,10 @@ export class SignalingHub extends DurableObject<Env> {
     if (destination) {
       const authorized = await this.authorizeAccountEnvelopeToHost(session, destination, parsed);
       if (!authorized) return;
-      destination.send(raw);
-      return;
+      if (sendToOpenSocket(destination, raw)) return;
+      // The destination closed while authorization was in flight; queue the envelope
+      // for its next connection like any other offline peer.
+      this.unregisterPeer(destination);
     }
 
     const queue = this.offlineQueues.get(parsed.toDeviceId) ?? [];
@@ -1574,13 +1612,13 @@ export class SignalingHub extends DurableObject<Env> {
     hostSocket: WebSocket,
     authorization: AccountAuthorizationCacheEntry,
   ): void {
-    hostSocket.send(JSON.stringify({
+    sendJsonToOpenSocket(hostSocket, {
       type: "account_device_authorized",
       requester_device_id: authorization.requesterDeviceId,
       requester_public_key_b64: authorization.requesterPublicKeyB64,
       requester_label: authorization.requesterLabel,
       paired_at: authorization.pairedAt,
-    }));
+    });
   }
 
   private unregisterPeer(ws: WebSocket): void {
@@ -1606,10 +1644,17 @@ export class SignalingHub extends DurableObject<Env> {
       return;
     }
 
-    for (const entry of queued) {
-      destination.send(entry.raw);
+    let delivered = 0;
+    while (delivered < queued.length && sendToOpenSocket(destination, queued[delivered].raw)) {
+      delivered += 1;
     }
-    this.offlineQueues.delete(deviceId);
+    if (delivered < queued.length) {
+      // The peer went away mid-flush; keep the undelivered rest for its next connection.
+      this.unregisterPeer(destination);
+      this.offlineQueues.set(deviceId, queued.slice(delivered));
+    } else {
+      this.offlineQueues.delete(deviceId);
+    }
     await this.persistOfflineQueues();
   }
 
@@ -1617,20 +1662,20 @@ export class SignalingHub extends DurableObject<Env> {
     try {
       const host = await findDeviceByDeviceId(this.env, deviceId);
       if (!host || host.kind !== "host" || host.revoked_at) {
-        ws.send(JSON.stringify({ type: "host_identity", linked: false }));
+        sendJsonToOpenSocket(ws, { type: "host_identity", linked: false });
         return;
       }
       const profile = await findProfileByUserId(this.env, host.user_id);
-      ws.send(JSON.stringify({
+      sendJsonToOpenSocket(ws, {
         type: "host_identity",
         linked: true,
         user_id: host.user_id,
         email: profile?.email ?? "",
         display_name: profile?.display_name ?? "",
         avatar_url: profile?.avatar_url ?? "",
-      }));
+      });
     } catch {
-      ws.send(JSON.stringify({ type: "host_identity", linked: false }));
+      sendJsonToOpenSocket(ws, { type: "host_identity", linked: false });
     }
   }
 
@@ -1648,14 +1693,16 @@ export class SignalingHub extends DurableObject<Env> {
         await markApprovalStatus(this.env, approval.id, "expired");
         continue;
       }
-      ws.send(JSON.stringify({
+      const pushed = sendJsonToOpenSocket(ws, {
         type: "approval_requested",
         request_id: approval.id,
         requester_device_id: approval.requester_device_id,
         requester_public_key_b64: approval.requester_public_key_b64,
         requester_label: approval.requester_label,
         requested_at: approval.created_at,
-      }));
+      });
+      // Still-pending approvals are pushed again on the host's next connection.
+      if (!pushed) return;
     }
   }
 
@@ -1665,14 +1712,15 @@ export class SignalingHub extends DurableObject<Env> {
   ): Promise<void> {
     const hostSocket = this.peers.get(hostDeviceId);
     if (!hostSocket) return;
-    hostSocket.send(JSON.stringify({
+    const pushed = sendJsonToOpenSocket(hostSocket, {
       type: "approval_requested",
       request_id: approval.id,
       requester_device_id: approval.requester_device_id,
       requester_public_key_b64: approval.requester_public_key_b64,
       requester_label: approval.requester_label,
       requested_at: approval.created_at,
-    }));
+    });
+    if (!pushed) this.unregisterPeer(hostSocket);
   }
 
   private async loadState(): Promise<void> {
@@ -1817,7 +1865,9 @@ export class RelayHub extends DurableObject<Env> {
       if (session.role === "host") {
         await this.markHostSeen();
       }
-      ws.send(JSON.stringify({ type: "relay_pong", at: Date.now() }));
+      if (!sendJsonToOpenSocket(ws, { type: "relay_pong", at: Date.now() })) {
+        await this.unregisterRelaySocket(ws);
+      }
       return;
     }
 
@@ -1929,6 +1979,14 @@ export class RelayHub extends DurableObject<Env> {
       userId = user.id;
     }
 
+    // The Supabase checks above can take long enough for the socket to close, or for a
+    // quick reconnect to replace it. A socket that is no longer open must never become
+    // the registered host or client; its close callback may already have run.
+    if (!isSocketOpen(ws)) {
+      await this.unregisterRelaySocket(ws);
+      return;
+    }
+
     const updated: RelaySessionAttachment = {
       ...session,
       authenticated: true,
@@ -1941,14 +1999,24 @@ export class RelayHub extends DurableObject<Env> {
     asAttachmentSocket(ws).serializeAttachment(updated);
 
     if (role === "host") {
-      if (this.hostSocket && this.hostSocket !== ws) {
-        this.hostSocket.close(1000, "replaced by newer host relay");
-        await this.unregisterRelaySocket(this.hostSocket);
+      const previousHost = this.hostSocket;
+      if (previousHost && previousHost !== ws) {
+        previousHost.close(1000, "replaced by newer host relay");
+        await this.unregisterRelaySocket(previousHost);
+      }
+      if (!isSocketOpen(ws)) {
+        await this.unregisterRelaySocket(ws);
+        return;
       }
       this.hostSocket = ws;
       await this.markHostSeen(true);
       await touchDeviceLastSeen(this.env, deviceId);
-      ws.send(JSON.stringify({ type: "auth_ok", device_id: deviceId, at: Date.now() }));
+      if (!sendJsonToOpenSocket(ws, { type: "auth_ok", device_id: deviceId, at: Date.now() })) {
+        // Closed while presence was being persisted, or replaced by a newer host relay
+        // that has already taken over this.hostSocket.
+        await this.unregisterRelaySocket(ws);
+        return;
+      }
       this.broadcastPresence(true);
       return;
     }
@@ -1958,9 +2026,17 @@ export class RelayHub extends DurableObject<Env> {
       previous.close(1000, "replaced by newer relay connection");
       await this.unregisterRelaySocket(previous);
     }
+    if (!isSocketOpen(ws)) {
+      await this.unregisterRelaySocket(ws);
+      return;
+    }
     this.clientSockets.set(deviceId, ws);
-    ws.send(JSON.stringify({ type: "auth_ok", device_id: deviceId, at: Date.now() }));
-    this.replayCachedState(ws);
+    if (
+      !sendJsonToOpenSocket(ws, { type: "auth_ok", device_id: deviceId, at: Date.now() }) ||
+      !this.replayCachedState(ws)
+    ) {
+      await this.unregisterRelaySocket(ws);
+    }
   }
 
   private async handleHostRelayMessage(parsed: Record<string, unknown>): Promise<void> {
@@ -2002,50 +2078,60 @@ export class RelayHub extends DurableObject<Env> {
   ): Promise<void> {
     if (parsed.type !== "relay_command") return;
     const host = this.hostSocket;
-    if (!host) {
-      ws.send(JSON.stringify({
-        type: "relay_error",
-        code: "host_offline",
-        message: "Mac relay is offline.",
+    if (host) {
+      const command = parsed.command as RelayCommandMessage | undefined;
+      if (!command || typeof command !== "object") return;
+      const forwarded = sendJsonToOpenSocket(host, {
+        type: "relay_command",
+        client_device_id: session.deviceId,
+        command,
         at: Date.now(),
-      }));
-      return;
+      });
+      if (forwarded) {
+        const acknowledged = sendJsonToOpenSocket(ws, {
+          type: "relay_ack",
+          message_id: typeof command.messageId === "string" ? command.messageId : "",
+          at: Date.now(),
+        });
+        if (!acknowledged) await this.unregisterRelaySocket(ws);
+        return;
+      }
+      // The host socket closed before its close callback ran; treat the host as offline.
+      await this.unregisterRelaySocket(host);
     }
 
-    const command = parsed.command as RelayCommandMessage | undefined;
-    if (!command || typeof command !== "object") return;
-    host.send(JSON.stringify({
-      type: "relay_command",
-      client_device_id: session.deviceId,
-      command,
+    const informed = sendJsonToOpenSocket(ws, {
+      type: "relay_error",
+      code: "host_offline",
+      message: "Mac relay is offline.",
       at: Date.now(),
-    }));
-    ws.send(JSON.stringify({
-      type: "relay_ack",
-      message_id: typeof command.messageId === "string" ? command.messageId : "",
-      at: Date.now(),
-    }));
+    });
+    if (!informed) await this.unregisterRelaySocket(ws);
   }
 
-  private replayCachedState(ws: WebSocket): void {
-    ws.send(JSON.stringify({
-      type: "relay_presence",
-      online: this.hostSocket != null,
-      last_seen_at: this.lastHostSeenAt,
-    }));
+  /** Replays cached host state to a freshly authenticated client; false if it closed midway. */
+  private replayCachedState(ws: WebSocket): boolean {
+    const frames: Record<string, unknown>[] = [
+      {
+        type: "relay_presence",
+        online: this.hostSocket != null,
+        last_seen_at: this.lastHostSeenAt,
+      },
+    ];
     if (this.latestHello) {
-      ws.send(JSON.stringify({ type: "relay_hello", hello: this.latestHello, cached: true }));
+      frames.push({ type: "relay_hello", hello: this.latestHello, cached: true });
     }
     if (this.latestRemoteApps) {
-      ws.send(JSON.stringify({
+      frames.push({
         type: "relay_remote_apps",
         remoteApps: this.latestRemoteApps,
         cached: true,
-      }));
+      });
     }
     for (const snapshot of this.latestAgentSnapshots.values()) {
-      ws.send(JSON.stringify({ type: "relay_agent_state", snapshot, cached: true }));
+      frames.push({ type: "relay_agent_state", snapshot, cached: true });
     }
+    return frames.every((frame) => sendJsonToOpenSocket(ws, frame));
   }
 
   private broadcastPresence(online: boolean): void {
@@ -2059,11 +2145,8 @@ export class RelayHub extends DurableObject<Env> {
   private broadcastToClients(value: Record<string, unknown>): void {
     const raw = JSON.stringify(value);
     for (const ws of this.clientSockets.values()) {
-      try {
-        ws.send(raw);
-      } catch {
-        // Dead sockets are removed by close/error callbacks.
-      }
+      // Closed sockets are skipped here and removed by their close/error callbacks.
+      sendToOpenSocket(ws, raw);
     }
   }
 
