@@ -29,10 +29,15 @@ versioning after the first public beta; pre-release compatibility may still chan
   notification type, so idle prompts no longer read as input requests.
 - Claude transcripts render tool output as tool output, show "Stopped" for
   interrupted turns, and use the session's title records.
-- The Claude Code CLI card is now Preview: the adapter has recorded evidence of a
-  real prompt/result round trip with the signed-in CLI. The Claude desktop card
-  stays Experimental because the app's `claude://code` links are gated off and the
-  Accessibility path is not yet verified on a real window.
+- Both Claude cards are now Preview. The CLI card has a recorded phone-driven run
+  (trust decision, session fallback, prompt, interrupt), and the desktop card has
+  one too: session switching and prompts through Accessibility on the real app,
+  and an AskUserQuestion answered from the phone. The app's `claude://code` links
+  stay gated off, so switching relies on Accessibility.
+- The Claude desktop card no longer flips a finished turn back to "working" when
+  the app reports its background work as a subagent finishing, and its dialog
+  presses stay inside the session pane (a question option once matched the
+  sidebar's "Dispatch Beta" button by substring and navigated the app away).
 
 ### Fixed
 

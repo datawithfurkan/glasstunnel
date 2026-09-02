@@ -1,10 +1,10 @@
 # Agent App Release Evidence
 
-- Date: 2026-09-02T12:13:12Z
+- Date: 2026-09-02T15:29:24Z
 - App: Terminal
 - Result: pass
 - Environment: local PTY and shared-screen-session regression coverage
-- Glasstunnel commit: 95c792bf
+- Glasstunnel commit: afa93663
 - Artifact: artifacts/terminal-public-baseline.txt
 - Privacy review: pass
 
