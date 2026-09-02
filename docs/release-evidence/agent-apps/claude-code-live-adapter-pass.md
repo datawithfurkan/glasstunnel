@@ -4,7 +4,7 @@
 - App: Claude Code
 - Result: pass
 - Environment: Mac host adapter driving the signed-in Claude Code CLI 2.1.226 in a real PTY
-- Glasstunnel commit: 2c4d343e
+- Glasstunnel commit: 44ccf8e3
 - Artifact: artifacts/claude-code-live-adapter.txt
 - Privacy review: pass
 

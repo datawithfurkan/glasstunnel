@@ -1,6 +1,6 @@
 Privacy-reviewed summary artifact.
 Date: 2026-09-02.
-Commit: 2c4d343e.
+Commit: 44ccf8e3.
 Scope: Claude desktop app local contracts and store parsing: bundle id, claude:// scheme, desktop-owned transcripts, installed hooks, CLI flags, and the adapter's parse of real desktop sessions (title, model, turn state).
 Result: pass for the scoped checks.
 Evidence commands: pnpm qa:claude-desktop; GT_CLAUDE_REAL_STATE=1 swift test --package-path apps/host-macos --filter "testRealDesktopSessionsParse|testRealClaudeStoreOwnerAudit".

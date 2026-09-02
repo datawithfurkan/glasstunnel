@@ -1,6 +1,6 @@
 Privacy-reviewed summary artifact.
 Date: 2026-09-02.
-Commit: 2c4d343e.
+Commit: 44ccf8e3.
 Scope: Claude Code CLI driven through ClaudeCodeAdapter on the Mac host: PTY launch pinned to a fresh session id, hooks loaded from a temporary settings file, prompt delivery, Stop hook, transcript parse.
 Result: pass.
 Evidence commands: GT_CLAUDE_LIVE=1 swift test --package-path apps/host-macos --filter ClaudeCodeLiveTests (signed-in Claude Code CLI 2.1.226); pnpm qa:claude-code.

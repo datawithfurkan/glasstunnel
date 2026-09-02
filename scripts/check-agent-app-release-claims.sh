@@ -104,6 +104,7 @@ normalized_lowercase() {
 is_agent_evidence_neutral_path() {
   case "$1" in
     Casks/glasstunnel.rb|\
+CHANGELOG.md|\
 README.md|\
 docs/*|\
 scripts/agent-app-release-claims-smoke.sh|\
