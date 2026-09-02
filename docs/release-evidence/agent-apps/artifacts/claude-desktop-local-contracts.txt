@@ -1,10 +1,10 @@
 Privacy-reviewed summary artifact.
 Date: 2026-09-02.
-Commit: 44ccf8e3.
-Scope: Claude desktop app local contracts and store parsing: bundle id, claude:// scheme, desktop-owned transcripts, installed hooks, CLI flags, and the adapter's parse of real desktop sessions (title, model, turn state).
+Commit: ee897343.
+Scope: Claude desktop app local contracts, store parsing, and a read-only Accessibility probe: bundle id, claude:// scheme, running app, desktop-owned transcripts, installed hooks, CLI flags, the adapter's parse of real desktop sessions (title, model, turn state), and the composer/rename controls the app exposes.
 Result: pass for the scoped checks.
-Evidence commands: pnpm qa:claude-desktop; GT_CLAUDE_REAL_STATE=1 swift test --package-path apps/host-macos --filter "testRealDesktopSessionsParse|testRealClaudeStoreOwnerAudit".
-Observed: /Applications/Claude.app is com.anthropic.claudefordesktop and registers the claude:// scheme; 7 desktop-owned and 3 other sessions were classified correctly; the parser reported the running desktop session as working and finished sessions as ready, with their titles and models.
-Also observed: every claude://code deep-link form (continue?session=…, needs-input, path form) is answered with "deep link gated off" in the app's own log on this build, which is why the adapter verifies the front window title and falls back to Accessibility.
-Not covered: Accessibility prompt delivery and permission-dialog control on a real window (needs an Accessibility-trusted process), and the phone-driven flow through the mobile browser.
+Evidence commands: pnpm qa:claude-desktop:live-ax; GT_CLAUDE_REAL_STATE=1 swift test --package-path apps/host-macos --filter "testRealDesktopSessionsParse|testRealClaudeStoreOwnerAudit".
+Observed: /Applications/Claude.app is com.anthropic.claudefordesktop, registers the claude:// scheme, and was running; 9 desktop-owned and 4 other sessions were classified correctly; the parser reported running sessions as working and finished sessions as ready, with their titles and models; the Glasstunnel hooks were installed; the composer is an editable text area described as "Prompt" and the session in front is named by a "<name>, rename session" control (the window title is always "Claude").
+Also observed: every claude://code deep-link form (continue?session=…, needs-input, path form) is answered with "deep link gated off" in the app's own log on this build, which is why the adapter verifies the front session and falls back to Accessibility navigation.
+Not covered: prompt delivery, session switching, permission-dialog control, and AskUserQuestion answers on a real window (pnpm lab:e2e:claude-desktop is ready and needs a dedicated app session with the window left alone).
 Raw logs, transcripts, and account details are intentionally not retained in Git.
