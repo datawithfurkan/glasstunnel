@@ -33,7 +33,7 @@ public final class ClaudeCodeAdapter: PTYAdapterBase, @unchecked Sendable {
     private let hookRouter: ClaudeHookRouter
     private var hookSubscription: UUID?
     private let projectsRoot: URL
-    private let summaryCache = ClaudeCodeSessionSummaryCache()
+    private let summaryCache: ClaudeCodeSessionSummaryCache
     private let sessionLock = NSLock()
     private let runtimeLock = NSLock()
     private let initialArguments: [String]
@@ -60,6 +60,7 @@ public final class ClaudeCodeAdapter: PTYAdapterBase, @unchecked Sendable {
         self.hookInstaller = hookInstaller
         self.hookRouter = hookRouter
         self.projectsRoot = projectsRoot ?? ClaudeCodeSessionStore.defaultProjectsRoot()
+        self.summaryCache = ClaudeCodeSessionSummaryCache.shared(for: self.projectsRoot)
         self.initialArguments = arguments
         super.init(
             agentID: agentID,
@@ -208,10 +209,7 @@ public final class ClaudeCodeAdapter: PTYAdapterBase, @unchecked Sendable {
 
     public override func selectTarget(_ targetID: String) async throws {
         refreshClaudeSessions()
-        sessionLock.lock()
-        let target = sessionSummaries.first { $0.sessionId == targetID }
-        sessionLock.unlock()
-        guard let target else {
+        guard let target = summary(forSessionId: targetID) else {
             throw NSError(
                 domain: "ClaudeCodeAdapter",
                 code: -1,
@@ -267,11 +265,16 @@ public final class ClaudeCodeAdapter: PTYAdapterBase, @unchecked Sendable {
         refreshClaudeSessions()
         // A hook marks the end of a turn or a prompt for input; the transcript
         // has new content even when status and detail repeat, so always emit.
+        // Stop payloads carry no message, so the summary is the raw event name.
         switch event.kind {
         case .stop:
-            transitionTo(.done, detail: event.summary, forceEmit: true)
+            transitionTo(.done, detail: event.summary == "Stop" ? "Response ready" : event.summary, forceEmit: true)
         case .subagentStop:
-            transitionTo(.working, detail: "subagent finished: \(event.summary)", forceEmit: true)
+            transitionTo(.working, detail: "Claude is working", forceEmit: true)
+        case .notification where event.notificationType == ClaudeCodeHookListener.idlePromptNotification:
+            // Claude is merely idle after a finished turn; the turn's own
+            // Stop already set the status, so only publish the fresh transcript.
+            emitSnapshotKeepingDetail()
         case .notification:
             transitionTo(.waitingInput, detail: event.summary, forceEmit: true)
         }
@@ -479,6 +482,12 @@ public final class ClaudeCodeAdapter: PTYAdapterBase, @unchecked Sendable {
         sessionLock.lock()
         defer { sessionLock.unlock() }
         return sessionSummaries.first { $0.sessionId == selectedSessionId }
+    }
+
+    private func summary(forSessionId sessionId: String) -> ClaudeCodeSessionSummary? {
+        sessionLock.lock()
+        defer { sessionLock.unlock() }
+        return sessionSummaries.first { $0.sessionId == sessionId }
     }
 
     private func liveSessionId() -> String? {

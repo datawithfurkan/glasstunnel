@@ -105,7 +105,9 @@ final class ClaudeCodeSessionOwnershipTests: XCTestCase {
 
         let recorder = HookSnapshotRecorder()
         let collecting = Task {
-            for await snapshot in adapter.observeState() where snapshot.statusDetail == "Stop" {
+            // A Stop hook carries no message, so its summary is the raw event
+            // name and the adapter publishes it as "Response ready".
+            for await snapshot in adapter.observeState() where snapshot.statusDetail == "Response ready" {
                 await recorder.append(snapshot)
             }
         }

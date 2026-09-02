@@ -95,7 +95,7 @@ NOTES="${GT_AGENT_APP_NOTES:-None.}"
 PRIVACY_REVIEW="${GT_AGENT_APP_PRIVACY_REVIEW:-pending}"
 
 case "$APP" in
-  "Mac Screen"|"Codex desktop"|"Codex CLI"|"Cursor"|"Cursor Agent"|"Claude Code"|"Gemini CLI"|"OpenCode"|"Terminal") ;;
+  "Mac Screen"|"Codex desktop"|"Codex CLI"|"Cursor"|"Cursor Agent"|"Claude desktop"|"Claude Code"|"Gemini CLI"|"OpenCode"|"Terminal") ;;
   *)
     echo "GT_AGENT_APP_NAME must match a supported app row in docs/agent-app-support-matrix.md." >&2
     exit 1

@@ -79,6 +79,7 @@ export function workspaceFixtureState(fixtureId: WorkspaceFixtureId): Partial<Ap
       ? [
           screenApp(),
           codexApp(),
+          claudeDesktopApp(),
           claudeCodeApp(),
           cursorApp(),
           cursorAgentApp(),
@@ -218,6 +219,7 @@ export function workspaceFixtureState(fixtureId: WorkspaceFixtureId): Partial<Ap
     agents.cursor = cursorSnapshot();
   }
   if (fixtureId === 'workspace-all-apps') {
+    agents['claude-desktop'] = claudeDesktopSnapshot();
     agents['claude-code'] = cliSnapshot('claude-code', 'Claude Code', AdapterKind.ClaudeCode);
     agents.cursor = cursorSnapshot();
     agents['cursor-agent'] = cliSnapshot('cursor-agent', 'Cursor Agent', AdapterKind.CursorAgent);
@@ -517,6 +519,23 @@ function claudeCodeApp(overrides: Partial<RemoteApp> = {}): RemoteApp {
   return cliApp('claude-code', 'Claude Code', AdapterKind.ClaudeCode, 'Ready', overrides);
 }
 
+function claudeDesktopApp(overrides: Partial<RemoteApp> = {}): RemoteApp {
+  return {
+    remoteAppId: 'claude-desktop',
+    displayName: 'Claude',
+    adapterKind: AdapterKind.ClaudeDesktop,
+    agentId: 'claude-desktop',
+    enabled: true,
+    available: true,
+    status: AgentStatus.Done,
+    statusDetail: 'Response ready',
+    windowTitle: 'Claude',
+    applicationBundleId: 'com.anthropic.claudefordesktop',
+    hasVideo: false,
+    ...overrides,
+  };
+}
+
 function openCodeApp(overrides: Partial<RemoteApp> = {}): RemoteApp {
   return cliApp('opencode', 'OpenCode', AdapterKind.OpenCode, 'Ready', overrides);
 }
@@ -630,6 +649,68 @@ function codexSnapshot(): AgentStateSnapshot {
         threadLabel: 'Loose chat',
         targetKind: 'thread',
         lastActivityUnixMs: 1_781_311_900_000,
+      },
+    ],
+  };
+}
+
+function claudeDesktopSnapshot(): AgentStateSnapshot {
+  return {
+    agentId: 'claude-desktop',
+    agentLabel: 'Settings screen',
+    adapterKind: AdapterKind.ClaudeDesktop,
+    status: AgentStatus.Done,
+    statusDetail: 'Response ready',
+    recentMessages: [
+      {
+        messageId: 'fixture-claude-desktop-user',
+        role: ChatRole.User,
+        text: 'Add a settings screen',
+        atUnixMs: 1_781_312_050_000,
+        redacted: false,
+        pendingToolCalls: [],
+      },
+      {
+        messageId: 'fixture-claude-desktop-assistant',
+        role: ChatRole.Assistant,
+        text: 'Added SettingsView and wired it into the tab bar.',
+        atUnixMs: 1_781_312_100_000,
+        redacted: false,
+        pendingToolCalls: [],
+      },
+    ],
+    lastActivityUnixMs: 1_781_312_100_000,
+    position: { row: 0, col: 0, rowSpan: 1, colSpan: 1 },
+    hasVideoTrack: false,
+    remoteAppId: 'claude-desktop',
+    availableTargets: [
+      {
+        targetId: 'fixture-claude-session-settings',
+        label: 'Settings screen',
+        subtitle: '~/Documents/GitHub2/glasstunnel',
+        selected: true,
+        projectId: '/Users/developer/Documents/GitHub2/glasstunnel',
+        projectLabel: 'glasstunnel',
+        projectPath: '/Users/developer/Documents/GitHub2/glasstunnel',
+        threadId: 'fixture-claude-session-settings',
+        threadLabel: 'Settings screen',
+        targetKind: 'thread',
+        lastActivityUnixMs: 1_781_312_100_000,
+        isActive: true,
+      },
+      {
+        targetId: 'fixture-claude-session-landing',
+        label: 'Landing page copy',
+        subtitle: '~/Documents/GitHub2/landing-site',
+        selected: false,
+        projectId: '/Users/developer/Documents/GitHub2/landing-site',
+        projectLabel: 'landing-site',
+        projectPath: '/Users/developer/Documents/GitHub2/landing-site',
+        threadId: 'fixture-claude-session-landing',
+        threadLabel: 'Landing page copy',
+        targetKind: 'thread',
+        lastActivityUnixMs: 1_781_311_900_000,
+        isActive: false,
       },
     ],
   };

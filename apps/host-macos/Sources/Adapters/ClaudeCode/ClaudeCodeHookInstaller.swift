@@ -93,7 +93,8 @@ public final class ClaudeCodeHookInstaller: @unchecked Sendable {
         event = payload.get("hook_event_name") or payload.get("event") or payload.get("kind") or ""
         session = payload.get("session_id") or payload.get("sessionId") or payload.get("session") or ""
         summary = payload.get("message") or payload.get("notification") or event
-        out = json.dumps({"kind": event, "session": session, "summary": summary}, separators=(",", ":")) + "\\n"
+        notification_type = payload.get("notification_type") or ""
+        out = json.dumps({"kind": event, "session": session, "summary": summary, "notificationType": notification_type}, separators=(",", ":")) + "\\n"
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(1)
         sock.connect("\(escapedSocket)")

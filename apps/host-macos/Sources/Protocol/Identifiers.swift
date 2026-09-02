@@ -65,11 +65,10 @@ public enum AdapterKind: Int, Codable, Sendable, Hashable, CaseIterable {
         }
     }
 
-    /// Display names advertised in the handshake. A kind is advertised only
-    /// once an adapter can actually start for it.
+    /// Display names advertised in the handshake.
     public static var advertisedDisplayNames: [String] {
         allCases
-            .filter { $0 != .unspecified && $0 != .claudeDesktop }
+            .filter { $0 != .unspecified }
             .map(\.displayName)
     }
 

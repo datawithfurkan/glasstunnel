@@ -29,10 +29,27 @@ struct ClaudeCodeSessionSummary: Equatable {
 /// Memoizes summary previews by transcript path + modification date so a
 /// periodic store scan only re-reads transcripts that actually changed.
 final class ClaudeCodeSessionSummaryCache: @unchecked Sendable {
+    private static let registryLock = NSLock()
+    private static var registry: [String: ClaudeCodeSessionSummaryCache] = [:]
+
     private let lock = NSLock()
     private var entries: [String: (modifiedAt: Date, summary: ClaudeCodeSessionSummary?)] = [:]
+    private var pathsBySessionId: [String: String] = [:]
 
     init() {}
+
+    /// One cache per projects root, so every adapter reading the same store
+    /// parses a changed transcript once rather than once per adapter.
+    static func shared(for projectsRoot: URL) -> ClaudeCodeSessionSummaryCache {
+        registryLock.lock()
+        defer { registryLock.unlock() }
+        if let existing = registry[projectsRoot.path] {
+            return existing
+        }
+        let cache = ClaudeCodeSessionSummaryCache()
+        registry[projectsRoot.path] = cache
+        return cache
+    }
 
     func summary(
         for url: URL,
@@ -49,13 +66,25 @@ final class ClaudeCodeSessionSummaryCache: @unchecked Sendable {
         let parsed = parse()
         lock.lock()
         entries[url.path] = (modifiedAt, parsed)
+        if let parsed {
+            pathsBySessionId[parsed.sessionId] = url.path
+        }
         lock.unlock()
         return parsed
+    }
+
+    /// Any transcript already seen by a scan, regardless of owner.
+    func cachedSummary(forSessionId sessionId: String) -> ClaudeCodeSessionSummary? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let path = pathsBySessionId[sessionId] else { return nil }
+        return entries[path]?.summary
     }
 
     func retain(onlyPaths paths: Set<String>) {
         lock.lock()
         entries = entries.filter { paths.contains($0.key) }
+        pathsBySessionId = pathsBySessionId.filter { paths.contains($0.value) }
         lock.unlock()
     }
 }
@@ -95,9 +124,10 @@ enum ClaudeCodeSessionStore {
 
     /// Targeted owner lookup. Session transcripts are named `<sessionId>.jsonl`
     /// inside one project directory, so this avoids scanning every transcript
-    /// and reads only the metadata head. Returns nil when the session has no
-    /// transcript yet or no record in the head carries an `entrypoint`, i.e.
-    /// when the owner is genuinely unknown — callers must not guess.
+    /// and reads the same head+tail window a summary scan uses. Returns nil
+    /// when the session has no transcript yet or no record in that window
+    /// carries an `entrypoint`, i.e. when the owner is genuinely unknown —
+    /// callers must not guess.
     static func owner(
         ofSessionId sessionId: String,
         projectsRoot: URL = defaultProjectsRoot()
@@ -152,64 +182,123 @@ enum ClaudeCodeSessionParser {
         let threadName: String?
         let entrypoint: String?
         let messages: [AgentChatMessage]
+        /// Turn state derived from the transcript: an assistant record with
+        /// `stop_reason == end_turn` ends a turn, `tool_use` and tool results
+        /// mean Claude is still working, and an unanswered `AskUserQuestion`
+        /// means Claude is waiting on the user.
+        let status: AgentStatus
+        let statusDetail: String
+        let pendingInputRequest: AgentInputRequest?
+        /// Model stamped on the newest assistant record.
+        let model: String?
+        let lastActivityUnixMs: Int64?
+        /// True when `threadName` came from a title record rather than the
+        /// first prompt, so a tail-only parse can be trusted over the head.
+        let titleIsExplicit: Bool
     }
 
     private struct ParsedMetadata {
         let sessionId: String?
         let workspaceRoot: String?
-        let threadName: String?
+        /// `custom-title` / `ai-title`, newest record wins.
+        let explicitTitle: String?
+        let firstPrompt: String?
         let entrypoint: String?
+
+        var threadName: String? { explicitTitle ?? firstPrompt }
     }
+
+    private struct ExtractedContent {
+        var text: String
+        var tools: [PendingToolCall]
+        var toolResultIds: [String]
+        var hasHumanText: Bool
+    }
+
+    static let interruptedMarkerPrefix = "[Request interrupted by user"
+    static let askUserQuestionToolName = "AskUserQuestion"
+    /// Local slash commands (`/model`, `/clear`, …) are logged as user records
+    /// but never start a turn.
+    private static let localCommandPrefixes = ["<command-", "<local-command-"]
 
     private static let metadataPreviewByteCount = 256 * 1024
     private static let recentMessagesTailByteCount = AgentHistoryLimits.jsonlTailByteCount
+    /// Titles and the latest activity live at the end of a transcript, so a
+    /// summary needs a small tail read in addition to the metadata head.
+    private static let summaryTailByteCount = 64 * 1024
+    private static let toolResultTextLimit = 4000
 
-    static func parseRecentFile(at url: URL, agentID: AgentID, maxMessages: Int) -> ParsedSession? {
+    /// The metadata head of a transcript plus, for files too large to read
+    /// whole, its most recent bytes. `tail` is nil when `head` is the whole file.
+    private struct TranscriptChunks {
+        let head: String
+        let tail: String?
+    }
+
+    private static func readChunks(at url: URL, tailByteCount: Int) -> TranscriptChunks? {
         guard let fileSize = fileSize(at: url) else { return nil }
 
-        if fileSize <= UInt64(metadataPreviewByteCount + recentMessagesTailByteCount),
-           let jsonl = readChunk(at: url, offset: 0, length: Int(fileSize)) {
-            return parse(jsonl: jsonl, agentID: agentID, maxMessages: maxMessages)
+        if fileSize <= UInt64(metadataPreviewByteCount + tailByteCount) {
+            guard let whole = readChunk(at: url, offset: 0, length: Int(fileSize)) else { return nil }
+            return TranscriptChunks(head: whole, tail: nil)
         }
 
         let head = readChunk(at: url, offset: 0, length: metadataPreviewByteCount) ?? ""
-        let tailOffset = fileSize > UInt64(recentMessagesTailByteCount)
-            ? fileSize - UInt64(recentMessagesTailByteCount)
-            : 0
-        let tail = readChunk(at: url, offset: tailOffset, length: recentMessagesTailByteCount) ?? ""
-
+        let tail = readChunk(at: url, offset: fileSize - UInt64(tailByteCount), length: tailByteCount) ?? ""
         guard !head.isEmpty || !tail.isEmpty else { return nil }
+        return TranscriptChunks(head: head, tail: tail)
+    }
 
-        let metadata = parseMetadata(jsonl: head + "\n" + tail)
+    static func parseRecentFile(at url: URL, agentID: AgentID, maxMessages: Int) -> ParsedSession? {
+        guard let chunks = readChunks(at: url, tailByteCount: recentMessagesTailByteCount) else { return nil }
+        guard let tail = chunks.tail else {
+            return parse(jsonl: chunks.head, agentID: agentID, maxMessages: maxMessages)
+        }
+
+        // The head carries identity and the first prompt; the tail carries the
+        // newest title records, which outrank anything in the head.
+        let headMetadata = parseMetadata(jsonl: chunks.head)
         let recent = parse(jsonl: tail, agentID: agentID, maxMessages: maxMessages)
+        let threadName = recent.titleIsExplicit
+            ? recent.threadName
+            : headMetadata.threadName ?? recent.threadName
         return ParsedSession(
-            sessionId: metadata.sessionId ?? recent.sessionId,
-            workspaceRoot: metadata.workspaceRoot ?? recent.workspaceRoot,
-            threadName: metadata.threadName ?? recent.threadName,
-            entrypoint: metadata.entrypoint ?? recent.entrypoint,
-            messages: recent.messages
+            sessionId: headMetadata.sessionId ?? recent.sessionId,
+            workspaceRoot: headMetadata.workspaceRoot ?? recent.workspaceRoot,
+            threadName: threadName,
+            entrypoint: headMetadata.entrypoint ?? recent.entrypoint,
+            messages: recent.messages,
+            status: recent.status,
+            statusDetail: recent.statusDetail,
+            pendingInputRequest: recent.pendingInputRequest,
+            model: recent.model,
+            lastActivityUnixMs: recent.lastActivityUnixMs,
+            titleIsExplicit: recent.titleIsExplicit || headMetadata.explicitTitle != nil
         )
     }
 
     static func parseSummaryPreview(at url: URL, path: String, modifiedAt: Date) -> ClaudeCodeSessionSummary? {
-        guard let jsonl = readChunk(at: url, offset: 0, length: metadataPreviewByteCount) else {
-            return nil
-        }
+        guard let chunks = readChunks(at: url, tailByteCount: summaryTailByteCount) else { return nil }
+        let jsonl = chunks.tail.map { chunks.head + "\n" + $0 } ?? chunks.head
         return parseSummary(jsonl: jsonl, path: path, modifiedAt: modifiedAt)
     }
 
-    /// Reads only the metadata head to answer "which client wrote this
-    /// transcript?" without requiring a workspace root or extracting messages.
+    /// Answers "which client wrote this transcript?" from the same window a
+    /// summary scan reads, so the two can never disagree about an owner.
     static func parseEntrypointPreview(at url: URL) -> String? {
-        guard let jsonl = readChunk(at: url, offset: 0, length: metadataPreviewByteCount) else {
-            return nil
-        }
+        guard let chunks = readChunks(at: url, tailByteCount: summaryTailByteCount) else { return nil }
+        let jsonl = chunks.tail.map { chunks.head + "\n" + $0 } ?? chunks.head
         return parseMetadata(jsonl: jsonl).entrypoint
     }
 
     static func parse(jsonl: String, agentID: AgentID, maxMessages: Int) -> ParsedSession {
         let metadata = parseMetadata(jsonl: jsonl)
         var messages: [AgentChatMessage] = []
+        var status: AgentStatus = .idle
+        var statusDetail = ""
+        var pendingInputRequest: AgentInputRequest?
+        var model: String?
+        var lastActivityUnixMs: Int64?
 
         for (index, line) in jsonl.split(whereSeparator: \.isNewline).enumerated() {
             guard
@@ -219,19 +308,78 @@ enum ClaudeCodeSessionParser {
             else {
                 continue
             }
-
+            // Sidechain records belong to subagent turns rendered elsewhere.
+            if raw["isSidechain"] as? Bool == true { continue }
             guard let role = role(for: recordType) else { continue }
-            let contentSource = (raw["message"] as? [String: Any])?["content"] ?? raw["content"]
-            let extracted = extractTextAndTools(from: contentSource)
+            let recordAt = parseTimestamp(raw["timestamp"])
+            let message = raw["message"] as? [String: Any]
+            let contentSource = message?["content"] ?? raw["content"]
+            let extracted = extractContent(from: contentSource)
             let text = extracted.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if text.isEmpty, extracted.tools.isEmpty { continue }
 
+            // Housekeeping records carry no conversation progress; only
+            // user/assistant/system records move the activity clock.
+            if let recordAt {
+                lastActivityUnixMs = recordAt
+            }
+
+            switch recordType {
+            case "user":
+                if text.hasPrefix(interruptedMarkerPrefix) {
+                    status = .idle
+                    statusDetail = "Stopped"
+                    pendingInputRequest = nil
+                    messages.append(AgentChatMessage(
+                        messageId: "\(agentID)-claude-\(index)",
+                        role: .system,
+                        text: "Stopped",
+                        atUnixMs: recordAt ?? Int64(Date().timeIntervalSince1970 * 1000)
+                    ))
+                    continue
+                }
+                if raw["isMeta"] as? Bool == true || localCommandPrefixes.contains(where: { text.hasPrefix($0) }) {
+                    continue
+                }
+                status = .working
+                statusDetail = "Claude is working"
+                // The answer clears the question; so does moving on without one.
+                if pendingInputRequest != nil,
+                   extracted.hasHumanText || extracted.toolResultIds.contains(pendingInputRequest!.requestId) {
+                    pendingInputRequest = nil
+                }
+            case "assistant":
+                // A newer assistant record means any earlier question was
+                // abandoned or answered outside the transcript.
+                pendingInputRequest = nil
+                // Placeholder records stamp "<synthetic>" rather than a model.
+                if let stampedModel = message?["model"] as? String, !stampedModel.isEmpty, !stampedModel.hasPrefix("<") {
+                    model = stampedModel
+                }
+                if let question = askUserQuestion(in: contentSource) {
+                    pendingInputRequest = question
+                }
+                switch message?["stop_reason"] as? String {
+                case "end_turn", "stop_sequence", "max_tokens":
+                    status = .done
+                    statusDetail = "Response ready"
+                case "tool_use":
+                    status = .working
+                    statusDetail = "Claude is working"
+                default:
+                    break
+                }
+            default:
+                break
+            }
+
+            if text.isEmpty, extracted.tools.isEmpty { continue }
+            let isToolOutput = role == .user && !extracted.toolResultIds.isEmpty
             messages.append(
                 AgentChatMessage(
                     messageId: "\(agentID)-claude-\(index)",
-                    role: text.isEmpty ? .tool : role,
+                    role: text.isEmpty || isToolOutput ? .tool : role,
                     text: text.isEmpty ? extracted.tools.map(\.summary).joined(separator: "\n") : text,
-                    atUnixMs: parseTimestamp(raw["timestamp"]),
+                    atUnixMs: recordAt ?? Int64(Date().timeIntervalSince1970 * 1000),
                     pendingToolCalls: extracted.tools
                 )
             )
@@ -241,18 +389,29 @@ enum ClaudeCodeSessionParser {
             messages = Array(messages.suffix(maxMessages))
         }
 
+        if pendingInputRequest != nil {
+            status = .waitingInput
+            statusDetail = "Waiting for your answer"
+        }
+
         return ParsedSession(
             sessionId: metadata.sessionId,
             workspaceRoot: metadata.workspaceRoot,
             threadName: metadata.threadName,
             entrypoint: metadata.entrypoint,
-            messages: messages
+            messages: messages,
+            status: status,
+            statusDetail: statusDetail,
+            pendingInputRequest: pendingInputRequest,
+            model: model,
+            lastActivityUnixMs: lastActivityUnixMs,
+            titleIsExplicit: metadata.explicitTitle != nil
         )
     }
 
     static func parseSummary(jsonl: String, path: String, modifiedAt: Date) -> ClaudeCodeSessionSummary? {
-        let parsed = parse(jsonl: jsonl, agentID: "claude-code", maxMessages: 8)
-        guard let sessionId = parsed.sessionId, let workspaceRoot = parsed.workspaceRoot else {
+        let metadata = parseMetadata(jsonl: jsonl)
+        guard let sessionId = metadata.sessionId, let workspaceRoot = metadata.workspaceRoot else {
             return nil
         }
         return ClaudeCodeSessionSummary(
@@ -260,8 +419,8 @@ enum ClaudeCodeSessionParser {
             sessionId: sessionId,
             modifiedAt: modifiedAt,
             workspaceRoot: workspaceRoot,
-            threadName: parsed.threadName,
-            owner: ClaudeCodeSessionOwner(entrypoint: parsed.entrypoint)
+            threadName: metadata.threadName,
+            owner: ClaudeCodeSessionOwner(entrypoint: metadata.entrypoint)
         )
     }
 
@@ -270,6 +429,8 @@ enum ClaudeCodeSessionParser {
         var workspaceRoot: String?
         var firstUserMessage: String?
         var entrypoint: String?
+        var customTitle: String?
+        var aiTitle: String?
 
         for line in jsonl.split(whereSeparator: \.isNewline) {
             guard
@@ -289,58 +450,137 @@ enum ClaudeCodeSessionParser {
             if entrypoint == nil, let rawEntrypoint = raw["entrypoint"] as? String, !rawEntrypoint.isEmpty {
                 entrypoint = rawEntrypoint
             }
-            if firstUserMessage == nil, recordType == "user" {
+            // Title records are appended after every turn. Within a type the
+            // newest wins; a user-set custom title outranks any AI title.
+            switch recordType {
+            case "custom-title":
+                if let title = raw["customTitle"] as? String, !title.isEmpty { customTitle = title }
+            case "ai-title":
+                if let title = raw["aiTitle"] as? String, !title.isEmpty { aiTitle = title }
+            case "user" where firstUserMessage == nil:
                 let contentSource = (raw["message"] as? [String: Any])?["content"] ?? raw["content"]
-                let text = extractTextAndTools(from: contentSource)
-                    .text
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if !text.isEmpty {
+                let extracted = extractContent(from: contentSource)
+                let text = extracted.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if extracted.hasHumanText, !text.isEmpty, !text.hasPrefix(interruptedMarkerPrefix) {
                     firstUserMessage = makeTitle(text)
                 }
+            default:
+                break
             }
         }
 
         return ParsedMetadata(
             sessionId: sessionId,
             workspaceRoot: workspaceRoot,
-            threadName: firstUserMessage,
+            explicitTitle: customTitle ?? aiTitle,
+            firstPrompt: firstUserMessage,
             entrypoint: entrypoint
         )
     }
 
-    private static func extractTextAndTools(from rawContent: Any?) -> (text: String, tools: [PendingToolCall]) {
+    private static func extractContent(from rawContent: Any?) -> ExtractedContent {
         if let text = rawContent as? String {
-            return (text, [])
+            return ExtractedContent(text: text, tools: [], toolResultIds: [], hasHumanText: !text.isEmpty)
         }
 
         guard let parts = rawContent as? [[String: Any]] else {
-            return ("", [])
+            return ExtractedContent(text: "", tools: [], toolResultIds: [], hasHumanText: false)
         }
 
         var texts: [String] = []
         var tools: [PendingToolCall] = []
+        var toolResultIds: [String] = []
+        var hasHumanText = false
 
         for part in parts {
             guard let type = part["type"] as? String else { continue }
             switch type {
             case "text":
-                if let text = part["text"] as? String, !text.isEmpty {
+                // Injected context blocks ride along with tool results and
+                // prompts; they are not something the person typed.
+                if let text = part["text"] as? String, !text.isEmpty, !text.hasPrefix("<system-reminder>") {
                     texts.append(text)
+                    hasHumanText = true
                 }
             case "tool_use":
                 let name = part["name"] as? String ?? "tool"
                 let id = part["id"] as? String ?? "\(name)-\(tools.count + 1)"
                 tools.append(PendingToolCall(toolName: name, toolCallId: id, summary: "Using \(name)"))
             case "tool_result":
-                if let text = part["content"] as? String, !text.isEmpty {
-                    texts.append(text)
+                if let id = part["tool_use_id"] as? String, !id.isEmpty {
+                    toolResultIds.append(id)
+                }
+                let resultText = toolResultText(part["content"])
+                if !resultText.isEmpty {
+                    texts.append(String(resultText.prefix(toolResultTextLimit)))
                 }
             default:
                 continue
             }
         }
 
-        return (texts.joined(separator: "\n\n"), tools)
+        return ExtractedContent(
+            text: texts.joined(separator: "\n\n"),
+            tools: tools,
+            toolResultIds: toolResultIds,
+            hasHumanText: hasHumanText
+        )
+    }
+
+    private static func toolResultText(_ rawContent: Any?) -> String {
+        if let text = rawContent as? String { return text }
+        guard let parts = rawContent as? [[String: Any]] else { return "" }
+        return parts
+            .compactMap { part -> String? in
+                guard part["type"] as? String == "text" else { return nil }
+                return part["text"] as? String
+            }
+            .joined(separator: "\n")
+    }
+
+    /// Claude's `AskUserQuestion` tool call is a structured choice request;
+    /// its answer arrives as the matching `tool_result`.
+    private static func askUserQuestion(in rawContent: Any?) -> AgentInputRequest? {
+        guard let parts = rawContent as? [[String: Any]] else { return nil }
+        for part in parts {
+            guard
+                part["type"] as? String == "tool_use",
+                part["name"] as? String == askUserQuestionToolName,
+                let requestId = part["id"] as? String,
+                let input = part["input"] as? [String: Any],
+                let rawQuestions = input["questions"] as? [[String: Any]]
+            else {
+                continue
+            }
+
+            let questions = rawQuestions.enumerated().compactMap { questionIndex, rawQuestion -> AgentInputRequestQuestion? in
+                let question = (rawQuestion["question"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard !question.isEmpty else { return nil }
+                let header = (rawQuestion["header"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let choices = (rawQuestion["options"] as? [[String: Any]] ?? []).enumerated().compactMap {
+                    optionIndex,
+                    rawChoice -> AgentInputRequestChoice? in
+                    let label = (rawChoice["label"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    guard !label.isEmpty else { return nil }
+                    return AgentInputRequestChoice(
+                        choiceId: "\(optionIndex + 1)",
+                        label: label,
+                        description: (rawChoice["description"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+                        recommended: label.localizedCaseInsensitiveContains("(Recommended)")
+                    )
+                }
+                guard !choices.isEmpty else { return nil }
+                return AgentInputRequestQuestion(
+                    questionId: header.isEmpty ? "question-\(questionIndex + 1)" : header,
+                    header: header.isEmpty ? "Question \(questionIndex + 1)" : header,
+                    question: question,
+                    choices: choices
+                )
+            }
+            guard !questions.isEmpty else { continue }
+            return AgentInputRequest(requestId: requestId, questions: questions)
+        }
+        return nil
     }
 
     private static func role(for recordType: String) -> ChatRole? {
@@ -365,16 +605,81 @@ enum ClaudeCodeSessionParser {
         return String(singleLine.prefix(69)) + "..."
     }
 
-    private static func parseTimestamp(_ raw: Any?) -> Int64 {
-        guard let rawString = raw as? String else {
-            return Int64(Date().timeIntervalSince1970 * 1000)
+    private static func parseTimestamp(_ raw: Any?) -> Int64? {
+        guard let rawString = raw as? String else { return nil }
+        if let fast = parseUTCTimestamp(rawString) {
+            return fast
         }
         let iso8601 = ISO8601DateFormatter()
         iso8601.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         if let date = iso8601.date(from: rawString) {
             return Int64(date.timeIntervalSince1970 * 1000)
         }
-        return Int64(Date().timeIntervalSince1970 * 1000)
+        iso8601.formatOptions = [.withInternetDateTime]
+        if let date = iso8601.date(from: rawString) {
+            return Int64(date.timeIntervalSince1970 * 1000)
+        }
+        return nil
+    }
+
+    /// Transcripts stamp every record as `YYYY-MM-DDTHH:MM:SS[.fff]Z`. A
+    /// transcript tail holds thousands of records, and `ISO8601DateFormatter`
+    /// costs roughly a hundred microseconds per call, so the fixed layout is
+    /// decoded by hand and the formatter is only a fallback.
+    static func parseUTCTimestamp(_ text: String) -> Int64? {
+        let bytes = Array(text.utf8)
+        let zero = UInt8(ascii: "0")
+        guard
+            bytes.count >= 20,
+            bytes[4] == UInt8(ascii: "-"), bytes[7] == UInt8(ascii: "-"),
+            bytes[10] == UInt8(ascii: "T"), bytes[13] == UInt8(ascii: ":"), bytes[16] == UInt8(ascii: ":"),
+            bytes[bytes.count - 1] == UInt8(ascii: "Z")
+        else {
+            return nil
+        }
+
+        func number(_ range: Range<Int>) -> Int? {
+            var value = 0
+            for index in range {
+                let byte = bytes[index]
+                guard byte >= zero, byte <= zero + 9 else { return nil }
+                value = value * 10 + Int(byte - zero)
+            }
+            return value
+        }
+
+        guard
+            let year = number(0..<4), let month = number(5..<7), let day = number(8..<10),
+            let hour = number(11..<13), let minute = number(14..<16), let second = number(17..<19),
+            (1...12).contains(month), (1...31).contains(day), hour < 24, minute < 60, second < 61
+        else {
+            return nil
+        }
+
+        var millis = 0
+        if bytes.count > 20 {
+            guard bytes[19] == UInt8(ascii: ".") else { return nil }
+            var scale = 100
+            for index in 20..<(bytes.count - 1) {
+                let byte = bytes[index]
+                guard byte >= zero, byte <= zero + 9 else { return nil }
+                if scale > 0 {
+                    millis += Int(byte - zero) * scale
+                    scale /= 10
+                }
+            }
+        }
+
+        // Days since 1970-01-01 for a proleptic Gregorian civil date.
+        let shiftedYear = month <= 2 ? year - 1 : year
+        let era = (shiftedYear >= 0 ? shiftedYear : shiftedYear - 399) / 400
+        let yearOfEra = shiftedYear - era * 400
+        let dayOfYear = (153 * ((month + 9) % 12) + 2) / 5 + day - 1
+        let dayOfEra = yearOfEra * 365 + yearOfEra / 4 - yearOfEra / 100 + dayOfYear
+        let days = era * 146_097 + dayOfEra - 719_468
+
+        let seconds = Int64(days) * 86_400 + Int64(hour * 3_600 + minute * 60 + second)
+        return seconds * 1_000 + Int64(millis)
     }
 
     private static func fileSize(at url: URL) -> UInt64? {

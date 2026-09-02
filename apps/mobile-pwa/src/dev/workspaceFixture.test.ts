@@ -58,6 +58,7 @@ describe('workspace mobile fixtures', () => {
       'all',
       'screen',
       'codex',
+      'claude-desktop',
       'claude-code',
       'cursor',
       'cursor-agent',
@@ -68,6 +69,7 @@ describe('workspace mobile fixtures', () => {
     ]);
     expect(Object.keys(state.agents ?? {}).sort()).toEqual([
       'claude-code',
+      'claude-desktop',
       'codex',
       'codex-cli',
       'cursor',
@@ -78,6 +80,7 @@ describe('workspace mobile fixtures', () => {
     expect(state.hostHello?.supportedAdapters).toEqual([
       'screen',
       'codex',
+      'claude-desktop',
       'claude-code',
       'cursor',
       'cursor-agent',

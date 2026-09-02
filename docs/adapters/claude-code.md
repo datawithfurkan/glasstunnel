@@ -36,11 +36,16 @@ The adapter always knows which session its PTY is driving: it launches `claude -
 
 ## Status mapping
 
-| Hook            | AgentStatus               |
-| --------------- | ------------------------- |
-| `Stop`          | `done`                    |
-| `SubagentStop`  | `working` (not terminal)  |
-| `Notification`  | `waitingInput`            |
+| Hook                                  | AgentStatus               |
+| ------------------------------------- | ------------------------- |
+| `Stop`                                | `done`                    |
+| `SubagentStop`                        | `working` (not terminal)  |
+| `Notification` (`permission_prompt`, `elicitation_dialog`, other) | `waitingInput` |
+| `Notification` (`idle_prompt`)        | unchanged — Claude is merely idle after a finished turn |
+
+Session titles come from the transcript's `custom-title` / `ai-title` records (a user-set
+title outranks any AI title; within a type the newest wins), falling back to the first
+prompt. Tool results render as tool output, and an interrupted turn shows as "Stopped".
 
 ## Preserving your hooks
 

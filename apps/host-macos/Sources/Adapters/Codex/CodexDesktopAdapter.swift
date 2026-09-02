@@ -185,7 +185,11 @@ public final class CodexDesktopAdapter: AgentAdapter, @unchecked Sendable {
             )
         }
 
-        let answerByQuestion = Dictionary(uniqueKeysWithValues: response.answers.map { ($0.questionId, $0.choiceIds) })
+        // Answers come from the phone; a repeated question id must not trap.
+        let answerByQuestion = Dictionary(
+            response.answers.map { ($0.questionId, $0.choiceIds) },
+            uniquingKeysWith: { first, _ in first }
+        )
         let pid = try currentCodexPID()
         keyboard.focusApplication(pid: pid)
 
@@ -228,7 +232,10 @@ public final class CodexDesktopAdapter: AgentAdapter, @unchecked Sendable {
             return "Submitted planning choices"
         }
 
-        let answerByQuestion = Dictionary(uniqueKeysWithValues: response.answers.map { ($0.questionId, $0.choiceIds) })
+        let answerByQuestion = Dictionary(
+            response.answers.map { ($0.questionId, $0.choiceIds) },
+            uniquingKeysWith: { first, _ in first }
+        )
         let lines = request.questions.compactMap { question -> String? in
             guard let selectedChoiceId = answerByQuestion[question.questionId]?.first,
                   let choice = question.choices.first(where: { $0.choiceId == selectedChoiceId }) else {

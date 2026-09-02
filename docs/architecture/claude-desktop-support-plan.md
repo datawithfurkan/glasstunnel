@@ -136,26 +136,31 @@ detects a `~/.claude/local/bin`-only install.
 
 ## Stage 1 — ClaudeDesktopAdapter
 
-Spikes first (each ≤ half a day; findings land in the draft of
-`docs/adapters/claude-desktop.md`):
+Spike findings (all three done; details in `docs/adapters/claude-desktop.md`):
 
-- [ ] **S1.a AX inventory.** With Claude.app open, capture composer role,
-  placeholder/description strings, send control, sidebar rows, and window-title format.
-  Provenance check: `AccessibilityInjector.isPlaceholderValue` (:382-396) hardcodes
-  "Plan, Build, / for skills, @ for context" and "Send follow-up" — Claude-flavored
-  strings in shared code. It is `private` and only consulted when verifying an
-  intended-empty composer, so relocating it to per-adapter config is an API change that
-  ripples through `CursorInputDelivering` (`CursorAdapter.swift:6-15`) — fold into T1.3
-  rather than a blind "move it".
-- [ ] **S1.b Deep-link probe.** Does `claude://` accept a session/project route? If not,
-  target switching is pure AX (T1.4 fallback is grounded either way).
-- [ ] **S1.c Desktop JSONL status semantics.** Map turn start/end from desktop-session
-  records (assistant cadence, `queue-operation`, hook events) → working/done/
-  waitingInput rules.
+- [x] **S1.a AX inventory.** Live AX inspection needs an Accessibility-trusted process,
+  so the inventory came from the app's own Code UI bundle (`Contents/Resources/ion-dist`,
+  string table `i18n/en-US.json`): composer placeholder "Ask Claude a question or start a
+  task…"; permission buttons "Allow once" / "Allow" / "Always allow" / "Deny"; question
+  controls "Submit" / "Continue" / "Send"; "Stop" / "Interrupt". The strings hardcoded in
+  `AccessibilityInjector.isPlaceholderValue` do not occur in the Claude app at all, so
+  they were left alone.
+- [x] **S1.b Deep-link probe.** The app's URL handler (in `app.asar`) accepts
+  `claude://code/continue?session=<uuid|last>` (opens that session),
+  `claude://code/needs-input?session=<uuid>` (the session waiting longest for a
+  permission answer), `claude://code/new?folder=<path>`, and
+  `claude://resume?session=<uuid>` (imports a CLI session). The adapter uses
+  `code/continue` for switching and before every prompt.
+- [x] **S1.c Desktop JSONL status semantics.** `assistant.stop_reason` `tool_use` →
+  working, `end_turn` → done; a `[Request interrupted by user…]` user record → stopped;
+  an `AskUserQuestion` tool call with no `tool_result` → waiting for an answer.
+  Permission prompts leave no record, so they come from the `Notification` hook
+  (`notification_type: permission_prompt`), and `idle_prompt` notifications are ignored.
+  Titles: `custom-title` (user) outranks `ai-title`; newest wins within a type.
 
 Tasks:
 
-- [ ] **T1.1 Adapter skeleton** (M) —
+- [x] **T1.1 Adapter skeleton** (M) —
   `Sources/Adapters/ClaudeCode/ClaudeDesktopAdapter.swift`, following
   `CodexDesktopAdapter`: no second process; targetPID from the matched window,
   re-resolved per action; 1s poll throttled to 2s, catalog at 5s; optimistic echo.
@@ -166,7 +171,7 @@ Tasks:
     `.mirror` in both places (:27, :636).
   - Don't copy the 24-message optimistic-echo cap (`applyOptimisticMessage`,
     :659-661) that momentarily truncates the 250-message history.
-- [ ] **T1.2 Desktop session parsing** (M) — extend `ClaudeCodeSessionParser` (the CLI
+- [x] **T1.2 Desktop session parsing** (M) — extend `ClaudeCodeSessionParser` (the CLI
   and desktop rightly share one parser; Codex's split exists because its CLI adapter is
   pure PTY). Concretely:
   - Filter summaries by `entrypoint == "claude-desktop"` + skip `isSidechain` — the
@@ -179,30 +184,34 @@ Tasks:
     `parseSummaryPreview` (:106-111) reads **only the head** — late-appended
     `custom-title`/`ai-title` records are invisible to target listings until it gains
     the tail read (Codex's preview reads both, :1112-1127).
-- [ ] **T1.3 Prompt injection** (M) — `AccessibilityInjector.deliver` with Claude
-  composer hints from S1.a; Codex-style fallback chain (focus-click → keystrokes →
-  pasteboard) with a Claude-tuned click anchor; synthetic Return on submit. Note
-  `deliver` **throws** on write-verification failure (it never returns
-  `verified: false`) — handle the throw, as Cursor does.
-- [ ] **T1.4 Targets & switching** (M) — `AgentTargetOption` per desktop session (kind
-  "thread", project grouping by cwd, mtime as lastActivity); isActive via front-window
-  title; `selectTarget` via deep link (S1.b) or AX press with exact-then-substring
-  fallbacks.
-- [ ] **T1.5 Status wiring** (S) — hook-router subscription scoped to desktop-owned
-  sessions (Stop→done, Notification→waitingInput), JSONL polling as fallback;
-  interrupt = focus + Escape initially.
-- [ ] **T1.6 Registration** (S) — `RemoteAppDefinition` entry `claude-desktop`
-  (adapterKind `.claudeDesktop`, bundleIDs `["com.anthropic.claudefordesktop"]`,
-  `requiresWindow: true` [the init default], `hasVideo: false`, `symbolName`, openHint
-  "Open Claude on this Mac"); `startAdapter` case; default-enabled set unchanged.
-- [ ] **T1.7 Runtime controls** (S) — read-only per D4.
-- [ ] **T1.8 Tests** (M) — fixture-driven parser/status/catalog tests in
-  `apps/host-macos/Tests/GTAdaptersTests/`, mirroring `CodexDesktopAdapterTests`;
-  opt-in real-state audit gated on `GT_CLAUDE_DESKTOP_REAL_STATE=1` (Codex pattern,
-  :569-572).
-- [ ] **T1.9 Adapter doc** (S) — `docs/adapters/claude-desktop.md` per the de-facto
-  template (source paths, mechanism, status mapping, limitations, compatibility table
-  deferring to the support matrix).
+- [x] **T1.3 Prompt injection** (M) — done in `ClaudeDesktopAccessibilityDriver`
+  (behind the `ClaudeDesktopUIDriving` protocol so tests inject a fake):
+  `AccessibilityInjector.deliver` with the Code UI's composer hints, then the Codex-style
+  focus-click → keystrokes fallback; the deep link brings the selected session to the
+  front before every prompt.
+- [x] **T1.4 Targets & switching** (M) — one `AgentTargetOption` per desktop session
+  (kind "thread", grouped by cwd, title from the transcript); `selectTarget` opens
+  `claude://code/continue?session=<id>` and re-reads the transcript.
+- [x] **T1.5 Status wiring** (S) — transcript-derived status, overridden by hook events
+  for the selected session (Stop → done, `permission_prompt` → an Allow/Deny question,
+  `idle_prompt` ignored) until the transcript changes again; interrupt presses
+  "Stop"/"Interrupt" or sends Escape. The adapter installs the hooks itself, so either
+  Claude card can be the first one enabled.
+- [x] **T1.6 Registration** (S) — `claude-desktop` RemoteAppDefinition (kind
+  `.claudeDesktop`, bundle `com.anthropic.claudefordesktop`, window required, no video);
+  `startAdapter` case; bundle → kind mapping in `AdapterFactory`; kind advertised.
+- [x] **T1.7 Runtime controls** (S) — read-only model from the newest assistant record
+  ("Managed in Claude").
+- [x] **T1.8 Tests** (M) — `ClaudeDesktopAdapterTests` (parser semantics, adapter
+  behavior with a fake UI driver and hook source) and the opt-in
+  `GT_CLAUDE_REAL_STATE=1` audit `testRealDesktopSessionsParse`, which on the
+  development Mac reports this very session as "working" with its title and model.
+- [x] **T1.9 Adapter doc** (S) — `docs/adapters/claude-desktop.md`.
+
+Review-driven changes beyond the plan: the transcript parser is shared with the CLI
+adapter, so both cards gained tool-output rendering, "Stopped" markers, title records,
+a hand-rolled timestamp fast path (the formatter cost ~1 s per 8 MB tail), and one
+summary cache per store root shared by both adapters.
 
 **Acceptance:** from the PWA, see desktop threads with real titles, send a prompt into
 the live app, watch working→done, answer a permission request, switch threads — with
@@ -210,37 +219,28 @@ the CLI adapter running untouched alongside.
 
 ## Stage 2 — Mobile PWA
 
-- [ ] **T2.1 Registry entries** (S): `AppFilterId` union (`AgentCarousel.tsx:11-21`) +
-  `APP_FILTERS` (:72-83); `adapterDisplayName` (`remoteApps.ts:119-138`); `AppGlyph` →
-  reuse `ClaudeGlyph` (:1711-1720). Free side effect: `?app=claude-desktop` deep link
-  starts working (`workspaceInitialAppIdFromSearch`, :1443-1448) — verify in T2.5.
-- [ ] **T2.2 Classification** (S): `claude-desktop` must NOT be CLI-backed (guaranteed
-  by kind 9 vs `isCliBackedApp`, `AgentCard.tsx:1409-1422`); add it to
-  `shouldShowCommandTargetSwitcher` (:1427-1434); keep it out of `isDirectCliApp`
-  (:1635-1643, stall detection); decide whether it needs the codex-style isActive
-  re-request special case (`shouldRequestTargetSelection`, :1436-1441).
-- [ ] **T2.3 CLI session picker** (S — cheaper than expected): the in-card switcher
-  renders from `snapshot.availableTargets` (`AgentCard.tsx:569`) and the CLI adapter
-  already publishes full targets + `selectTarget`/`--resume`
-  (`ClaudeCodeAdapter.swift:190-216, 166-178`). The **only** change is adding
-  `'claude-code'` to `shouldShowCommandTargetSwitcher` — do NOT touch
-  `DIRECT_REMOTE_APP_IDS` (removal has side effects in the All view and start-panel
-  logic; `opencode` proves direct + switcher coexist).
-- [ ] **T2.4 Composer polish** (S): placeholder/notice strings, attachments flag.
-- [ ] **T2.5 Contract compliance**: emitted statusDetail strings match mobile gating;
-  product language only; Mac UI + web UI in the same commit
-  (`docs/agent-ui-contract.md`); update membership tests
-  (`AgentCarousel.test.tsx:562-569`, `AgentCard.test.ts:60-67`);
-  `pnpm --filter @glasstunnel/mobile-pwa build` green.
+- [x] **T2.1 Registry entries** (S): `AppFilterId` + `APP_FILTERS` ("Claude"; the CLI
+  chip's short label became "Code"), `adapterDisplayName` case 9, `AppGlyph` reuses
+  `ClaudeGlyph`; `?app=claude-desktop` works via the filter list; the
+  `workspace-all-apps` dev fixture includes the card.
+- [x] **T2.2 Classification** (S): not CLI-backed (kind 9), in
+  `shouldShowCommandTargetSwitcher`, out of `isDirectCliApp`; no isActive re-request
+  special case needed because the adapter reports `isActive == selected`.
+- [x] **T2.3 CLI session picker** (S): `'claude-code'` added to
+  `shouldShowCommandTargetSwitcher`; `DIRECT_REMOTE_APP_IDS` untouched.
+- [x] **T2.4 Composer polish** (S): the desktop card is a chat surface like Codex, so
+  the standard composer applies; no CLI notice.
+- [x] **T2.5 Contract compliance**: Mac grid-editor accent for `claude-desktop`;
+  membership and fixture tests updated; PWA typecheck, lint, tests, and build green;
+  the card was rendered from the dev fixture on a mobile viewport.
 
 ## Stage 3 — Evidence & promotion
 
 - [ ] **T3.1 QA lanes** (M): extend `scripts/claude-code-smoke.sh` (already wired as
   `qa:claude-code`); new claude-desktop smoke (app installed, window visible, AX
   injection dry-run).
-- [ ] **T3.2 Release evidence** (M): add a Claude-desktop entry to the
-  `GT_AGENT_APP_NAME` allowlist in `scripts/record-agent-app-evidence.sh:98` (it lists
-  'Claude Code' but no desktop variant), then record
+- [ ] **T3.2 Release evidence** (M): the `GT_AGENT_APP_NAME` allowlist in
+  `scripts/record-agent-app-evidence.sh` now accepts "Claude desktop"; record
   prompt/result/stop/recovery/relaunch/mobile-browser evidence for the CLI first, then
   desktop → `docs/release-evidence/agent-apps/`.
 - [ ] **T3.3 Status updates** (S): support matrix rows
