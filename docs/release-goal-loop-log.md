@@ -83,3 +83,19 @@ changes or a blocker is materially narrowed.
 - Next action: Push the consolidated release commit, inspect one CI/deploy run, create `v0.1.6`, upload both immutable and stable DMG assets, then verify the public download URL.
 - End commit: The final release documentation and cask commit is the result of record.
 - CI/deploy: Pending the final consolidated push for this release slice.
+
+## 2026-09-02 19:40 - Claude cards Preview release
+
+- Start commit: dbf8a90d
+- Release gate: Ship the Claude desktop and Claude Code cards as Preview with recorded real-app evidence, the relay authentication fix, and the Mac Screen reconnect fix.
+- Why chosen: The installed public beta (`0.1.6`) predates every Claude change; the cards, their phone-driven evidence, and the Worker fix only existed on `main`.
+- Files changed: Claude desktop adapter and card, Claude Code CLI adapter hardening, PTY output handling, signaling and relay Worker socket guard, Local Test Lab lanes for both Claude cards, release docs, cask metadata.
+- Validation: CI (five checks) on every merged PR; `pnpm release:readiness`; agent-app evidence at `214b053c` for Claude desktop, Claude Code, Terminal, and Mac Screen; Developer ID signing, Apple notarization, stapling, Gatekeeper assessment, isolated install/reinstall and 0.1.6 → 0.1.7 upgrade smoke; cask metadata validation.
+- Manual testing: The notarized `0.1.7` DMG was installed over the running `0.1.6` app on the development Mac by dragging it into Applications: the app showed version 0.1.7, stayed signed in, kept Screen Recording and Accessibility without any new prompt, and the Claude card appeared in the Mac app and in the production web app on the phone.
+- Evidence recorded: The DMG is tied to source commit `dbf8a90d`; SHA-256 is `17420e334e9e280212c7aa4db550c953a43b0b20b7057d1d6d2fa1c5d75bb334`; Apple submission ID is `f4e69512-a7db-4a85-861b-ea69177b9e69`.
+- Outcome: passed
+- Uncertainty: The Claude desktop card depends on the app exposing its session through Accessibility; a future app build can change the composer or rename control and needs the smoke to be re-run.
+- Stale-loop risk: Low; one notarization submission, one tag, one release, and one consolidated docs/cask push are used.
+- Next action: Deploy the web surfaces from `main`, create `v0.1.7`, upload the immutable and stable DMG assets, then verify the public download URL and a Homebrew upgrade.
+- End commit: The final release documentation and cask commit is the result of record.
+- CI/deploy: CI is green on `dbf8a90d`; Deploy run 33670831232 from `dbf8a90d` succeeded for the web surfaces and the Signaling Worker; the release documentation and cask commit is checked by one CI run before `v0.1.7` is tagged.
