@@ -92,9 +92,6 @@ public enum AdapterFactory {
         switch bundleID {
         case "com.todesktop.230313mzl4w4u92": // Cursor
             return .cursor
-        case "com.anthropic.claudecode",
-             "com.anthropic.claudecode.macos":
-            return .claudeCode
         case "com.openai.codex.cli":
             return .codexCli
         case "com.google.gemini.cli",

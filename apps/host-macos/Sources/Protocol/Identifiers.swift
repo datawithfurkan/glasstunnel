@@ -48,6 +48,7 @@ public enum AdapterKind: Int, Codable, Sendable, Hashable, CaseIterable {
     case terminal = 6
     case geminiCli = 7
     case cursorAgent = 8
+    case claudeDesktop = 9
 
     public var displayName: String {
         switch self {
@@ -59,8 +60,17 @@ public enum AdapterKind: Int, Codable, Sendable, Hashable, CaseIterable {
         case .terminal: return "Terminal"
         case .geminiCli: return "Gemini CLI"
         case .cursorAgent: return "Cursor Agent"
+        case .claudeDesktop: return "Claude"
         case .unspecified: return ""
         }
+    }
+
+    /// Display names advertised in the handshake. A kind is advertised only
+    /// once an adapter can actually start for it.
+    public static var advertisedDisplayNames: [String] {
+        allCases
+            .filter { $0 != .unspecified && $0 != .claudeDesktop }
+            .map(\.displayName)
     }
 
     public var icon: String {
@@ -73,6 +83,7 @@ public enum AdapterKind: Int, Codable, Sendable, Hashable, CaseIterable {
         case .terminal: return "terminal.fill"
         case .geminiCli: return "terminal"
         case .cursorAgent: return "terminal"
+        case .claudeDesktop: return "macwindow"
         case .unspecified: return "questionmark"
         }
     }

@@ -22,11 +22,17 @@ On `start()` the adapter calls `ClaudeCodeHookInstaller.installIfNeeded()`, whic
    - `Notification` — fires when Claude Code asks for user confirmation.
 4. Writes `~/.claude/settings.json` back.
 
-Each hook is configured to run a tiny shell command that emits one JSON line to a Unix-domain socket at `~/Library/Application Support/Glasstunnel/cc.sock`. The adapter listens on that socket and converts the events into `AgentStatus` transitions on the wire.
+Each hook is configured to run a tiny shell command that emits one JSON line to a Unix-domain socket at `~/Library/Application Support/Glasstunnel/cc.sock`. Because these hooks live in the user-global `~/.claude/settings.json`, they fire for every Claude Code session by **any** client — the CLI and the Claude desktop app alike — so the socket is owned by a single process-wide `ClaudeHookRouter`. Adapters subscribe to the router with a session-ownership predicate; this adapter only receives events for CLI-owned sessions (plus session-less events from older Claude Code builds), and events for sessions no adapter owns are dropped.
+
+### Session ownership
+
+Claude Code stores every session as `~/.claude/projects/**/<sessionId>.jsonl`, shared across clients. The `entrypoint` field on user/assistant records identifies the client (`claude-desktop` for the desktop app; CLI builds stamp their own values, and legacy transcripts may have none — those count as CLI). This adapter lists and resumes CLI-owned sessions only.
+
+The adapter always knows which session its PTY is driving: it launches `claude --resume <id>` for an existing session or `claude --session-id <uuid>` for a fresh one (unless you passed your own `--resume`/`--continue`/`--session-id` arguments). Hook events are matched against that id, so neither a desktop-app session nor a separate `claude` you run in Terminal can move this adapter's status or selection. Session listings are memoized by transcript modification time, so the 2-second refresh only re-reads transcripts that changed.
 
 ### Host path resolution
 
-We try `/opt/homebrew/bin/claude`, `/usr/local/bin/claude`, `~/.local/bin/claude`, and `~/.claude/local/bin/claude` in that order, falling back to the unqualified `claude` on `$PATH`.
+`ClaudeCodeAdapter.executableCandidates()` is the single list used for both availability detection and process launch: unqualified `claude` on `$PATH` first, then `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `~/.claude/local/bin`, `~/.cargo/bin`, `~/.bun/bin`, and `~/.npm-global/bin`.
 
 ## Status mapping
 
@@ -50,7 +56,7 @@ The installer only modifies the three entries above. Anything else under `hooks`
 | Glasstunnel host | Claude Code version | Implementation status |
 | ---------------- | ------------------- | --------------------- |
 | 0.1.x            | 1.0+ (hooks system) | adapter implemented   |
-| 0.1.x            | < 1.0               | mirror fallback       |
+| 0.1.x            | < 1.0               | hooks never fire; the adapter degrades to PTY idle-detection heuristics |
 
 This table is not a release-readiness claim. Use
 `docs/agent-app-support-matrix.md` for public support status and real mobile

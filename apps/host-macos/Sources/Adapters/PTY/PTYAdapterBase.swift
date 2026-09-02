@@ -298,6 +298,9 @@ open class PTYAdapterBase: AgentAdapter, @unchecked Sendable {
         lock.lock()
         let buffer = outputBuffer
         let status = currentStatus
+        // The detail on the wire is the detail the surface reasons about
+        // (for example "settings updated"), so it is also the detail we keep.
+        currentStatusDetail = detail
         lastSnapshotAt = Date()
         lock.unlock()
 
@@ -314,6 +317,16 @@ open class PTYAdapterBase: AgentAdapter, @unchecked Sendable {
             runtimeControls: runtimeControls()
         )
         stateStream.yield(snap)
+    }
+
+    /// Emit a fresh snapshot with the last published status detail. Use for
+    /// background refreshes: the web/mobile surface keys behavior off details
+    /// like "settings updated", which a periodic refresh must not overwrite.
+    public func emitSnapshotKeepingDetail() {
+        lock.lock()
+        let detail = currentStatusDetail
+        lock.unlock()
+        emitSnapshot(detail: detail)
     }
 
     open func submittedInputFragments(_ text: String) -> [String] {

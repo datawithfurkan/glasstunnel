@@ -106,12 +106,12 @@ public struct RemoteAppDefinition: Sendable, Hashable, Identifiable {
             remoteAppId: "claude-code",
             displayName: "Claude Code",
             adapterKind: .claudeCode,
-            bundleIDs: ["com.anthropic.claudecode", "com.anthropic.claudecode.macos"],
+            bundleIDs: [],
             agentId: "claude-code",
             symbolName: "terminal",
             openHint: "Install Claude Code CLI on this Mac",
             requiresWindow: false,
-            executableCandidates: executableCandidates(named: "claude"),
+            executableCandidates: ClaudeCodeAdapter.executableCandidates(),
             hasVideo: false
         ),
         RemoteAppDefinition(
@@ -170,19 +170,6 @@ public struct RemoteAppDefinition: Sendable, Hashable, Identifiable {
 
     public static func definition(for window: CapturableWindow) -> RemoteAppDefinition? {
         supported.first { $0.bundleIDs.contains(window.applicationBundleID) }
-    }
-
-    private static func executableCandidates(named executable: String) -> [String] {
-        let home = ProcessInfo.processInfo.environment["HOME"] ?? ""
-        return [
-            executable,
-            "/opt/homebrew/bin/\(executable)",
-            "/usr/local/bin/\(executable)",
-            "\(home)/.local/bin/\(executable)",
-            "\(home)/.cargo/bin/\(executable)",
-            "\(home)/.bun/bin/\(executable)",
-            "\(home)/.npm-global/bin/\(executable)",
-        ]
     }
 
     private static func terminalExecutableCandidates() -> [String] {

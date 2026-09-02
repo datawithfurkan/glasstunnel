@@ -217,7 +217,7 @@ public final class SessionManager {
             hostVersion: GlasstunnelProtocol.version,
             hostOsVersion: hostOSVersion(),
             hostDeviceLabel: hostDeviceLabel,
-            supportedAdapters: AdapterKind.allCases.filter { $0 != .unspecified }.map { $0.displayName },
+            supportedAdapters: AdapterKind.advertisedDisplayNames,
             currentLayout: remoteAppController.deprecatedLayout(),
             remoteApps: currentRemoteApps
         )

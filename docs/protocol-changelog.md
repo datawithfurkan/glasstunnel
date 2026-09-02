@@ -2,6 +2,10 @@
 
 Every user-visible change to `packages/protocol/schema/glasstunnel.proto` goes here. Breaking changes bump the minor version of `PROTOCOL_VERSION`; additive changes bump the patch.
 
+## 0.2.1 - additive
+
+- Added `ADAPTER_KIND_CLAUDE_DESKTOP` for the Claude desktop app adapter, distinct from the CLI-backed `ADAPTER_KIND_CLAUDE_CODE`.
+
 ## 0.2.0 - breaking
 
 - Removed direct device-link handshake messages. Account sign-in and host-linking are now the only supported onboarding path.

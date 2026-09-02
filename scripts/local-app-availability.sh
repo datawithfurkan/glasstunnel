@@ -160,7 +160,6 @@ detail() {
 
 codex_app="$(check_bundle_path "Codex" "com.openai.codex" || true)"
 cursor_app="$(check_bundle_path "Cursor" "com.todesktop.230313mzl4w4u92" || true)"
-claude_app="$(check_bundle_path "Claude" "com.anthropic.claudecode,com.anthropic.claudecode.macos" || true)"
 opencode_app="$(check_bundle_path "OpenCode" "ai.opencode.app,ai.opencode.desktop,dev.opencode.cli" || true)"
 
 codex_cli="$(check_command "codex")"
@@ -187,7 +186,9 @@ printf '| --- | --- | --- | --- |\n'
 printf '| Codex desktop | %s: %s | - | %s |\n' "$(status "$codex_app")" "$(app_detail "$codex_app" "com.openai.codex")" "$(app_publish_state "$codex_app" "com.openai.codex" "publish for launch; available when a Codex window is detected" "do not publish unless a Codex window is detected")"
 printf '| Cursor | %s: %s | - | %s |\n' "$(status "$cursor_app")" "$(app_detail "$cursor_app" "com.todesktop.230313mzl4w4u92")" "$(app_publish_state "$cursor_app" "com.todesktop.230313mzl4w4u92" "publish for launch; available when a Cursor window is detected" "do not publish unless a Cursor window is detected")"
 printf '| Codex CLI | - | %s: %s | %s |\n' "$(status "$codex_cli")" "$(detail "$codex_cli")" "$(if [[ -n "$codex_cli" ]]; then printf 'publish as available'; else printf 'do not publish'; fi)"
-printf '| Claude Code | %s: %s | %s: %s | %s |\n' "$(status "$claude_app")" "$(app_detail "$claude_app" "com.anthropic.claudecode,com.anthropic.claudecode.macos")" "$(status "$claude_cli")" "$(detail "$claude_cli")" "$(if [[ -n "$claude_cli" ]]; then printf 'publish; available only when CLI exists'; elif [[ -n "$claude_app" ]]; then app_publish_state "$claude_app" "com.anthropic.claudecode,com.anthropic.claudecode.macos" "publish; install CLI to make available" "do not publish"; else printf 'do not publish'; fi)"
+# The Claude Code card is CLI-only: the host publishes it on the `claude`
+# executable alone and never consults an app bundle.
+printf '| Claude Code | - | %s: %s | %s |\n' "$(status "$claude_cli")" "$(detail "$claude_cli")" "$(if [[ -n "$claude_cli" ]]; then printf 'publish as available'; else printf 'do not publish'; fi)"
 printf '| Gemini CLI | - | %s: %s | %s |\n' "$(status "$gemini_cli")" "$(detail "$gemini_cli")" "$(if [[ -n "$gemini_cli" ]]; then printf 'publish as available'; else printf 'do not publish'; fi)"
 printf '| OpenCode | %s: %s | %s: %s | %s |\n' "$(status "$opencode_app")" "$(app_detail "$opencode_app" "ai.opencode.app,ai.opencode.desktop,dev.opencode.cli")" "$(status "$opencode_cli")" "$(detail "$opencode_cli")" "$(if [[ -n "$opencode_cli" ]]; then printf 'publish; available only when CLI exists'; elif [[ -n "$opencode_app" ]]; then app_publish_state "$opencode_app" "ai.opencode.app,ai.opencode.desktop,dev.opencode.cli" "publish; available only when CLI exists" "do not publish"; else printf 'do not publish'; fi)"
 printf '| Terminal | - | %s: %s | %s |\n' "$(status "$terminal_shell")" "$(detail "$terminal_shell")" "$(if [[ -n "$terminal_shell" ]]; then printf 'publish as available'; else printf 'do not publish'; fi)"

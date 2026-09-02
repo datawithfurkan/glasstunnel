@@ -457,7 +457,7 @@ public final class OpenCodeAdapter: PTYAdapterBase, @unchecked Sendable {
                 }
                 guard let self else { return }
                 self.refreshOpenCodeSessions()
-                self.emitSnapshot(detail: "OpenCode context synced")
+                self.emitSnapshotKeepingDetail()
             }
         }
     }
