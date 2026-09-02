@@ -45,7 +45,7 @@ The public-beta support tiers are:
 
 - **Supported:** Mac Screen and the scoped Terminal shell path.
 - **Preview:** Codex desktop, Codex CLI, Cursor, Cursor Agent, Gemini CLI, and OpenCode.
-- **Experimental:** Claude Code and generic window mirroring.
+- **Experimental:** Claude desktop, Claude Code, and generic window mirroring.
 
 Preview and Experimental paths are included for testing and contribution, not
 promised as release-ready. Codex is the next candidate for Supported status.

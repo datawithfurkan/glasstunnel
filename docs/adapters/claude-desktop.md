@@ -60,6 +60,15 @@ a permission prompt stays visible on the phone until it is answered.
 - The desktop app must already be running with a window; the card launches it, but a
   fresh install still needs its onboarding completed by hand.
 
+## Verification lanes
+
+- `pnpm qa:claude-desktop` — privacy-safe local contracts (bundle id, `claude://`
+  scheme, desktop-owned transcripts, installed hooks, CLI flags).
+- `pnpm qa:claude-desktop:live-ax` — the same plus a read-only Accessibility probe of
+  the running window's composer; run it from a terminal that has Accessibility access.
+- `GT_CLAUDE_REAL_STATE=1 swift test --package-path apps/host-macos --filter testRealDesktopSessionsParse`
+  — parses the newest desktop sessions on this Mac and prints their status and titles.
+
 ## Implementation compatibility
 
 | Glasstunnel host | Claude desktop app                 | Implementation status |

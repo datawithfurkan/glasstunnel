@@ -106,6 +106,8 @@
     "qa:codex-cli:ios-safari-prompt": "bash scripts/codex-cli-ios-safari-prompt-smoke.sh",
     "qa:claude-code": "bash scripts/claude-code-smoke.sh",
     "qa:claude-code:terminal-app-onboarding-tui": "bash scripts/claude-code-terminal-app-onboarding-tui-smoke.sh",
+    "qa:claude-desktop": "bash scripts/claude-desktop-smoke.sh",
+    "qa:claude-desktop:live-ax": "GT_CLAUDE_DESKTOP_LIVE_AX_PROBE=1 bash scripts/claude-desktop-smoke.sh",
     "qa:gemini-cli": "bash scripts/gemini-cli-smoke.sh",
     "qa:gemini-cli:terminal-app-auth-tui": "bash scripts/gemini-cli-terminal-app-auth-tui-smoke.sh",
     "qa:gemini-cli:hosted-chrome": "bash scripts/gemini-cli-hosted-chrome-smoke.sh",

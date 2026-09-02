@@ -13,6 +13,10 @@ disclosures, not hidden implementation details.
   continuity. It is not a general-purpose terminal emulator, and full-screen TUIs
   may not render faithfully in the mobile transcript.
 - Generic mirroring exposes no app-specific project, model, progress, or result state.
+- The Claude desktop card drives the real app window through Accessibility, which is
+  best-effort on Electron apps; it offers no window video, its runtime controls are
+  read-only, and permission prompts reach the phone only through the Claude Code hooks
+  Glasstunnel installs in `~/.claude/settings.json`.
 
 ## Mobile and network
 

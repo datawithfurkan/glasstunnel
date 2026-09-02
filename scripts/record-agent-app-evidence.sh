@@ -18,7 +18,7 @@ Review and redact the result before manually creating a concise public summary
 under docs/release-evidence. Never commit this script's raw output directly.
 
 Required environment:
-  GT_AGENT_APP_NAME       One of: Mac Screen, Codex desktop, Codex CLI, Cursor, Cursor Agent, Claude Code, Gemini CLI, OpenCode, Terminal
+  GT_AGENT_APP_NAME       One of: Mac Screen, Codex desktop, Codex CLI, Cursor, Cursor Agent, Claude desktop, Claude Code, Gemini CLI, OpenCode, Terminal
   GT_AGENT_APP_RESULT     pass or fail
   GT_AGENT_APP_MAC        Redacted Mac label, for example "test Mac"
   GT_AGENT_APP_MACOS      Mac OS version, for example "macOS 15.5"

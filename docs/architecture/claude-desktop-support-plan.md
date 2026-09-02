@@ -236,18 +236,36 @@ the CLI adapter running untouched alongside.
 
 ## Stage 3 — Evidence & promotion
 
-- [ ] **T3.1 QA lanes** (M): extend `scripts/claude-code-smoke.sh` (already wired as
-  `qa:claude-code`); new claude-desktop smoke (app installed, window visible, AX
-  injection dry-run).
-- [ ] **T3.2 Release evidence** (M): the `GT_AGENT_APP_NAME` allowlist in
-  `scripts/record-agent-app-evidence.sh` now accepts "Claude desktop"; record
+- [x] **T3.1 QA lanes** (M): `pnpm qa:claude-desktop` (new `scripts/claude-desktop-smoke.sh`:
+  bundle id, `claude://` scheme, desktop-owned transcripts, installed hooks, CLI
+  flags; `pnpm qa:claude-desktop:live-ax` adds a read-only composer probe that needs
+  an Accessibility-trusted terminal) and `pnpm qa:claude-code` now also checks
+  `--session-id`.
+- [ ] **T3.2 Release evidence** (M) — needs a live run, see below. The
+  `GT_AGENT_APP_NAME` allowlist accepts "Claude desktop"; record
   prompt/result/stop/recovery/relaunch/mobile-browser evidence for the CLI first, then
   desktop → `docs/release-evidence/agent-apps/`.
-- [ ] **T3.3 Status updates** (S): support matrix rows
-  (`docs/agent-app-support-matrix.md:25`; CLI → Preview when evidence lands;
-  claude-desktop enters Experimental → Preview), README status lines,
-  known-limitations, release notes. Promotion procedure: `pnpm qa:agent-app:record`,
+- [x] **T3.3 Status updates** (S): support-matrix rows describe the implemented
+  capability without a tier change (both Claude rows stay Experimental until live
+  evidence exists); README tiers, known-limitations, and the Unreleased changelog are
+  updated. Promotion procedure once evidence lands: `pnpm qa:agent-app:record`,
   `pnpm qa:agent-app-claims`, `pnpm release:readiness`.
+
+### Live evidence checklist (the one part that needs a person at the Mac)
+
+1. Build and run the host from this branch (Local Test Lab per `docs/dev-runbook.md`),
+   grant Accessibility, sign in, and pair a phone.
+2. Terminal (Accessibility-trusted): `pnpm qa:claude-desktop:live-ax` — expect the
+   composer probe to pass while a Claude Code session is open in the app.
+3. Enable the **Claude** card. From the phone: pick a session, send a prompt, watch
+   working → "Response ready", trigger a tool that needs permission and answer
+   Allow/Deny from the phone, let Claude ask a question and answer it, switch sessions.
+4. Enable the **Claude Code** card alongside it and repeat a prompt on each; confirm
+   neither card's status moves when the other works.
+5. `GT_AGENT_APP_NAME="Claude desktop" … pnpm qa:agent-app:record` (and again for
+   "Claude Code"), review the raw record, write the concise public summary, flip the
+   matrix rows to Preview, then `pnpm qa:agent-app-claims` and
+   `pnpm release:readiness`.
 
 ## Risks
 
