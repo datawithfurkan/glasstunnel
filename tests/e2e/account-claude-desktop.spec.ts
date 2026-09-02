@@ -186,12 +186,12 @@ test('@claude-desktop-account prompts, answers permission and question dialogs, 
   //    the question itself follows once that is allowed.
   await sendPrompt(
     page,
-    'Use your AskUserQuestion tool to ask me one question with exactly two options labelled Alpha and Beta. After I answer, reply with only the label I picked followed by _PICKED.',
+    `Use your AskUserQuestion tool to ask me one question with exactly two options labelled Alpha and Beta. After I answer, reply with only the label I picked followed by _PICKED_${marker}.`,
   );
   let questionAnswered = false;
   let toolPermissionAnswered = false;
   const questionDeadline = Date.now() + 240_000;
-  while (Date.now() < questionDeadline && (await occurrences(page, 'Beta_PICKED')) < 1) {
+  while (Date.now() < questionDeadline && (await occurrences(page, `Beta_PICKED_${marker}`)) < 1) {
     const card = page.getByText('Claude needs a decision', { exact: true }).filter({ visible: true });
     if (await card.isVisible().catch(() => false)) {
       const beta = page.getByRole('button', { name: /\bBeta\b/ }).filter({ visible: true }).first();
@@ -218,7 +218,7 @@ test('@claude-desktop-account prompts, answers permission and question dialogs, 
       ? 'tool permission allowed from the phone, then the question answered from the phone'
       : 'question answered from the phone (no tool permission dialog)',
   });
-  await turnFinished(page, 'Beta_PICKED', 1);
+  await turnFinished(page, `Beta_PICKED_${marker}`, 1);
 
   // 4. The CLI card owns a different session, so none of the above moved it.
   await openTab(page, 'Code');
