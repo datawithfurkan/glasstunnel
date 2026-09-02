@@ -5,6 +5,23 @@ versioning after the first public beta; pre-release compatibility may still chan
 
 ## Unreleased
 
+### Added
+
+- Experimental "Claude" card for Claude Code sessions hosted by the Claude desktop
+  app: session discovery and switching, prompts delivered into the real window,
+  Allow/Deny for permission prompts, structured answers to Claude's questions, and
+  a read-only model display.
+- The Claude Code CLI card now offers its session switcher on the phone.
+
+### Changed
+
+- The Claude Code CLI card pins the session it drives (`--resume`/`--session-id`),
+  so Claude desktop sessions and other `claude` processes never move its status.
+- Claude Code hooks are routed through one shared listener and forward the
+  notification type, so idle prompts no longer read as input requests.
+- Claude transcripts render tool output as tool output, show "Stopped" for
+  interrupted turns, and use the session's title records.
+
 ## 0.1.5 - Codex compatibility and Mac hardening
 
 ### Added
