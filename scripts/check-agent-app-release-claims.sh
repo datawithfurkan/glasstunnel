@@ -101,12 +101,15 @@ normalized_lowercase() {
   printf '%s' "$1" | tr '\n' ' ' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//; s/[[:space:]]+/ /g' | tr '[:upper:]' '[:lower:]'
 }
 
+# Paths that cannot change what ships: docs, release metadata, this check's own
+# tooling, and the Mac host's unit tests (they never reach the binary).
 is_agent_evidence_neutral_path() {
   case "$1" in
     Casks/glasstunnel.rb|\
 CHANGELOG.md|\
 README.md|\
 docs/*|\
+apps/host-macos/Tests/*|\
 scripts/agent-app-release-claims-smoke.sh|\
 scripts/build-app.sh|\
 scripts/check-agent-app-release-claims.sh|\
