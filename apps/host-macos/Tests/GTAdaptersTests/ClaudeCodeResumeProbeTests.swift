@@ -15,8 +15,8 @@ final class ClaudeCodeResumeProbeTests: XCTestCase {
         let adapter = ClaudeCodeAdapter(cwd: cwd)
         defer { Task { await adapter.stop() } }
 
-        var lastDetail = ""
         let observer = Task {
+            var lastDetail = ""
             for await snapshot in adapter.observeState() {
                 let detail = "\(snapshot.status) \(snapshot.statusDetail) pending=\(snapshot.pendingInputRequest?.requestId ?? "-")"
                 if detail != lastDetail {
