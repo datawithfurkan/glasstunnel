@@ -137,6 +137,15 @@ final class ClaudeDesktopAdapterTests: XCTestCase {
         private var _opened: [URL] = []
         private var _interrupts = 0
         var pressableLabels: Set<String> = ["Allow once", "Deny", "Wedding site (Recommended)", "Submit", "Stop"]
+        /// nil models a window whose title Accessibility cannot read.
+        private var _frontTitle: String?
+        /// When true, pressing a session title "navigates" the fake window to it.
+        var navigatesOnPress = false
+
+        var frontTitle: String? {
+            get { lock.lock(); defer { lock.unlock() }; return _frontTitle }
+            set { lock.lock(); _frontTitle = newValue; lock.unlock() }
+        }
 
         var delivered: [(String, Bool)] { lock.lock(); defer { lock.unlock() }; return _delivered }
         var pressed: [String] { lock.lock(); defer { lock.unlock() }; return _pressed }
@@ -150,11 +159,15 @@ final class ClaudeDesktopAdapterTests: XCTestCase {
         func press(label: String, exact: Bool) throws {
             let matches = pressableLabels.contains { exact ? $0 == label : $0.localizedCaseInsensitiveContains(label) }
             guard matches else { throw NSError(domain: "FakeDesktopUI", code: 404) }
-            lock.lock(); _pressed.append(label); lock.unlock()
+            lock.lock()
+            _pressed.append(label)
+            if navigatesOnPress { _frontTitle = label }
+            lock.unlock()
         }
 
         func interrupt() throws { lock.lock(); _interrupts += 1; lock.unlock() }
         func open(_ url: URL) -> Bool { lock.lock(); _opened.append(url); lock.unlock(); return true }
+        func frontWindowTitle() -> String? { frontTitle }
     }
 
     private struct Fixture {
@@ -370,6 +383,46 @@ final class ClaudeDesktopAdapterTests: XCTestCase {
         XCTAssertEqual(snapshot.recentMessages.last?.role, .user)
     }
 
+    func testRefusesToTypeIntoAWindowShowingAnotherSession() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        try writeSession(fixture, sessionId: "abababab-abab-4bab-8bab-abababababab", title: "Target session")
+        fixture.ui.frontTitle = "Some other session"
+        defer { Task { await fixture.adapter.stop() } }
+        try await fixture.adapter.start()
+        let snapshot = try await waitForSnapshot(fixture.adapter) { $0.status == .done }
+        XCTAssertEqual(snapshot.availableTargets?.first?.isActive, false, "A readable, mismatching title means the session is not active.")
+
+        do {
+            try await fixture.adapter.sendInput("Ship it", submit: true)
+            XCTFail("Typing into a window that shows another session must be refused.")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("Target session"))
+        }
+        XCTAssertTrue(fixture.ui.delivered.isEmpty)
+        XCTAssertEqual(fixture.ui.opened.count, 1, "The deep link is still attempted first.")
+        XCTAssertEqual(fixture.ui.pressed, [], "No session row was exposed to press.")
+    }
+
+    func testFallsBackToPressingTheSessionRowWhenDeepLinksAreGated() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        try writeSession(fixture, sessionId: "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd", title: "Target session")
+        fixture.ui.frontTitle = "Some other session"
+        fixture.ui.pressableLabels.insert("Target session")
+        fixture.ui.navigatesOnPress = true
+        defer { Task { await fixture.adapter.stop() } }
+        try await fixture.adapter.start()
+        _ = try await waitForSnapshot(fixture.adapter) { $0.status == .done }
+
+        try await fixture.adapter.sendInput("Ship it", submit: true)
+
+        XCTAssertEqual(fixture.ui.pressed, ["Target session"], "The session row is pressed when the deep link does not switch.")
+        XCTAssertEqual(fixture.ui.delivered.map(\.0), ["Ship it"])
+        let active = try await waitForSnapshot(fixture.adapter, timeout: 6) { $0.availableTargets?.first?.isActive == true }
+        XCTAssertEqual(active.availableTargets?.first?.isActive, true)
+    }
+
     func testSelectTargetOpensTheDeepLinkAndSwitchesSessions() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -445,6 +498,10 @@ final class ClaudeDesktopAdapterTests: XCTestCase {
         XCTAssertEqual(ClaudeDesktopAdapter.modelLabel("claude-fable-5"), "Fable 5")
         XCTAssertEqual(ClaudeDesktopAdapter.modelLabel("custom"), "custom")
         XCTAssertNil(ClaudeDesktopAdapter.continueSessionURL("not-a-uuid"))
+        XCTAssertTrue(ClaudeDesktopAdapter.windowShowsSession(windowTitle: "Settings screen — Claude", sessionTitle: "settings screen"))
+        XCTAssertFalse(ClaudeDesktopAdapter.windowShowsSession(windowTitle: "Claude", sessionTitle: "Settings screen"))
+        XCTAssertFalse(ClaudeDesktopAdapter.windowShowsSession(windowTitle: nil, sessionTitle: "Settings screen"))
+        XCTAssertFalse(ClaudeDesktopAdapter.windowShowsSession(windowTitle: "Settings screen", sessionTitle: nil))
         let permission = ClaudeDesktopAdapter.makePermissionRequest(message: "Claude needs your permission to use Bash")
         XCTAssertTrue(permission.requestId.hasPrefix(ClaudeDesktopAdapter.permissionRequestPrefix))
         XCTAssertEqual(permission.questions.first?.question, "Claude needs your permission to use Bash")

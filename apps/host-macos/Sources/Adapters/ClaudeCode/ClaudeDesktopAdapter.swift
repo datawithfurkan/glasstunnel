@@ -13,6 +13,9 @@ protocol ClaudeDesktopUIDriving: Sendable {
     func press(label: String, exact: Bool) throws
     func interrupt() throws
     func open(_ url: URL) -> Bool
+    /// The front window's title, which the Code UI sets to the session title;
+    /// nil when Accessibility cannot read it.
+    func frontWindowTitle() -> String?
 }
 
 /// Adapter for Claude Code sessions hosted by the Claude desktop app.
@@ -23,8 +26,11 @@ protocol ClaudeDesktopUIDriving: Sendable {
 ///   (entrypoint `claude-desktop`) for history, status, titles, and choices
 /// - receives Claude Code hook events through the shared router for turn and
 ///   permission signals that the transcript cannot show
-/// - types prompts into the real composer via Accessibility
-/// - switches sessions with the app's `claude://code/continue?session=<id>` link
+/// - types prompts into the real composer via Accessibility, only after the
+///   front window is confirmed to show the selected session
+/// - switches sessions with the app's `claude://code/continue` link when the
+///   build accepts it (current builds gate those links off), else by pressing
+///   the session's row through Accessibility
 public final class ClaudeDesktopAdapter: AgentAdapter, @unchecked Sendable {
     public static let bundleID = "com.anthropic.claudefordesktop"
 
@@ -66,6 +72,7 @@ public final class ClaudeDesktopAdapter: AgentAdapter, @unchecked Sendable {
     private var currentDetail = ""
     private var currentPendingInputRequest: AgentInputRequest?
     private var currentThreadName: String?
+    private var currentFrontWindowTitle: String?
     private var currentModel: String?
     private var lastActivityUnixMs = Int64(Date().timeIntervalSince1970 * 1000)
     private var parsedTranscript: (path: String, modifiedAt: Date)?
@@ -174,10 +181,18 @@ public final class ClaudeDesktopAdapter: AgentAdapter, @unchecked Sendable {
     }
 
     public func sendInput(_ text: String, submit: Bool) async throws {
-        if let selectedSessionId = currentSelectedSessionId(),
-           let url = Self.continueSessionURL(selectedSessionId) {
-            _ = ui.open(url)
-            try? await Task.sleep(nanoseconds: 450_000_000)
+        if let selected = selectedSummary() {
+            let confirmed = await bringSessionToFront(selected)
+            // Typing into the wrong session would be far worse than failing:
+            // refuse whenever the window title is readable and disagrees.
+            if !confirmed, let front = ui.frontWindowTitle(), !front.isEmpty,
+               let title = selected.threadName {
+                throw NSError(
+                    domain: "ClaudeDesktopAdapter",
+                    code: 409,
+                    userInfo: [NSLocalizedDescriptionKey: "Switch Claude to “\(title)” before sending this prompt."]
+                )
+            }
         }
         try ui.deliver(text: text, submit: submit)
 
@@ -271,17 +286,49 @@ public final class ClaudeDesktopAdapter: AgentAdapter, @unchecked Sendable {
         beginSelection(of: target.sessionId, label: targetLabel)
         emitCurrentSnapshot()
 
-        guard let url = Self.continueSessionURL(target.sessionId), ui.open(url) else {
-            setStatus(.error, detail: "couldn't open \(targetLabel)")
-            emitCurrentSnapshot()
-            throw NSError(
-                domain: "ClaudeDesktopAdapter",
-                code: 503,
-                userInfo: [NSLocalizedDescriptionKey: "Could not open \(targetLabel) in Claude"]
-            )
+        let confirmed = await bringSessionToFront(target)
+        refresh(force: false)
+        if !confirmed, ui.frontWindowTitle() != nil {
+            // The phone keeps the selection and retries until the app shows it.
+            setDetail("open “\(targetLabel)” in Claude to continue")
         }
-        try? await Task.sleep(nanoseconds: 700_000_000)
-        refresh(force: true)
+        emitCurrentSnapshot()
+    }
+
+    /// Makes the app show `summary` and reports whether the front window now
+    /// carries its title. Tries the deep link first (accepted only on builds
+    /// that enable it), then the session's row through Accessibility.
+    private func bringSessionToFront(_ summary: ClaudeCodeSessionSummary) async -> Bool {
+        if Self.windowShowsSession(windowTitle: ui.frontWindowTitle(), sessionTitle: summary.threadName) {
+            return true
+        }
+        if let url = Self.continueSessionURL(summary.sessionId), ui.open(url) {
+            try? await Task.sleep(nanoseconds: 700_000_000)
+            if Self.windowShowsSession(windowTitle: ui.frontWindowTitle(), sessionTitle: summary.threadName) {
+                return true
+            }
+        }
+        if let title = summary.threadName {
+            if (try? ui.press(label: title, exact: true)) == nil {
+                _ = try? ui.press(label: title, exact: false)
+            }
+            try? await Task.sleep(nanoseconds: 500_000_000)
+        }
+        return Self.windowShowsSession(windowTitle: ui.frontWindowTitle(), sessionTitle: summary.threadName)
+    }
+
+    /// True when the window title is the session title, allowing the app's own
+    /// suffixes; false when either side is unknown.
+    static func windowShowsSession(windowTitle: String?, sessionTitle: String?) -> Bool {
+        guard
+            let window = windowTitle?.trimmingCharacters(in: .whitespacesAndNewlines), !window.isEmpty,
+            let session = sessionTitle?.trimmingCharacters(in: .whitespacesAndNewlines), !session.isEmpty
+        else {
+            return false
+        }
+        let normalizedWindow = window.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+        let normalizedSession = session.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+        return normalizedWindow == normalizedSession || normalizedWindow.contains(normalizedSession)
     }
 
     // MARK: - Hooks
@@ -388,15 +435,21 @@ public final class ClaudeDesktopAdapter: AgentAdapter, @unchecked Sendable {
     private func refresh(force: Bool) {
         refreshLock.lock()
         defer { refreshLock.unlock() }
+        var changedFrontWindow = false
 
         let summaries = ClaudeCodeSessionStore.loadSummaries(
             projectsRoot: projectsRoot,
             owner: .desktop,
             cache: summaryCache
         )
+        let frontWindowTitle = ui.frontWindowTitle()
 
         lock.lock()
         lastRefreshAt = Date()
+        if currentFrontWindowTitle != frontWindowTitle {
+            currentFrontWindowTitle = frontWindowTitle
+            changedFrontWindow = true
+        }
         let selected = summaries.first { $0.sessionId == selectedSessionId } ?? summaries.first
         let selectionChanged = selected?.sessionId != selectedSessionId
         var changed = summaries != sessionSummaries || selectionChanged
@@ -451,7 +504,7 @@ public final class ClaudeDesktopAdapter: AgentAdapter, @unchecked Sendable {
             changed = true
         }
 
-        if changed || force {
+        if changed || changedFrontWindow || force {
             emitCurrentSnapshot()
         }
     }
@@ -510,6 +563,12 @@ public final class ClaudeDesktopAdapter: AgentAdapter, @unchecked Sendable {
             let projectLabel = URL(fileURLWithPath: summary.workspaceRoot).lastPathComponent
             let threadLabel = summary.threadName ?? projectLabel
             let selected = summary.sessionId == selectedSessionId
+            // Active means the app is confirmed to be showing this session; a
+            // selected-but-inactive target tells the phone to retry the switch.
+            let active = selected && (
+                currentFrontWindowTitle == nil
+                    || Self.windowShowsSession(windowTitle: currentFrontWindowTitle, sessionTitle: summary.threadName)
+            )
             return AgentTargetOption(
                 targetId: summary.sessionId,
                 label: threadLabel,
@@ -522,10 +581,16 @@ public final class ClaudeDesktopAdapter: AgentAdapter, @unchecked Sendable {
                 threadLabel: threadLabel,
                 targetKind: "thread",
                 lastActivityUnixMs: Int64(summary.modifiedAt.timeIntervalSince1970 * 1000),
-                isActive: selected,
+                isActive: active,
                 supportsNewThread: false
             )
         }
+    }
+
+    private func selectedSummary() -> ClaudeCodeSessionSummary? {
+        lock.lock()
+        defer { lock.unlock() }
+        return sessionSummaries.first { $0.sessionId == selectedSessionId }
     }
 
     private func selectedWorkspaceRootLocked() -> String? {
@@ -554,6 +619,12 @@ public final class ClaudeDesktopAdapter: AgentAdapter, @unchecked Sendable {
     private func setStatus(_ status: AgentStatus, detail: String) {
         lock.lock()
         currentStatus = status
+        currentDetail = detail
+        lock.unlock()
+    }
+
+    private func setDetail(_ detail: String) {
+        lock.lock()
         currentDetail = detail
         lock.unlock()
     }
@@ -725,6 +796,10 @@ struct ClaudeDesktopAccessibilityDriver: ClaudeDesktopUIDriving {
         #else
         return false
         #endif
+    }
+
+    func frontWindowTitle() -> String? {
+        try? accessibility.frontWindowTitle(bundleID: ClaudeDesktopAdapter.bundleID)
     }
 
     private func focusComposer() throws {

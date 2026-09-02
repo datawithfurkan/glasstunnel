@@ -1441,7 +1441,10 @@ export function shouldRequestTargetSelection(
   app: Pick<RemoteApp, 'remoteAppId'>,
   target: Pick<AgentTargetOption, 'selected' | 'isActive'>,
 ): boolean {
-  return !target.selected || (app.remoteAppId === 'codex' && target.isActive === false);
+  return (
+    !target.selected ||
+    ((app.remoteAppId === 'codex' || app.remoteAppId === 'claude-desktop') && target.isActive === false)
+  );
 }
 
 export function workspaceInitialAppIdFromSearch(search: string): AppFilterId | null {

@@ -28,12 +28,21 @@ a permission prompt stays visible on the phone until it is answered.
 
 ## Driving the app
 
-- **Prompts** — the adapter opens `claude://code/continue?session=<id>` so the selected
-  session is frontmost, then writes into the composer via Accessibility (placeholder
-  hint "Ask Claude a question or start a task"), falling back to a click on the composer
-  strip plus synthetic keystrokes, and posts Return to submit.
-- **Switching sessions** — the same deep link, which is the app's own entry point for a
-  session; the adapter then re-reads the transcript.
+- **Bringing a session to the front** — the adapter compares the front window's title
+  (the Code UI sets it to the session title) with the selected session's title. If they
+  differ it tries `claude://code/continue?session=<id>`, then presses the session's row
+  through Accessibility, and re-checks. Current Claude builds answer every `claude://code`
+  link with "deep link gated off" in their own log, so the Accessibility path is the one
+  that matters today; the link stays in place for builds that enable it.
+- **Prompts** — only once the front window is confirmed to show the selected session
+  (or when the title cannot be read at all), the adapter writes into the composer via
+  Accessibility (placeholder hint "Ask Claude a question or start a task"), falling
+  back to a click on the composer strip plus synthetic keystrokes, and posts Return to
+  submit. If the window verifiably shows another session, the prompt is refused with
+  "Switch Claude to “<title>” before sending this prompt" rather than typed into the
+  wrong conversation.
+- **Switching sessions** — the same bring-to-front sequence; a selected session the app
+  is not yet showing is published with `isActive: false` so the phone retries.
 - **Permission prompts** — the phone shows Allow / Deny as a structured question; the
   answer presses the dialog's "Allow once" / "Allow" or "Deny" button. Typed text always
   goes to the composer.
@@ -53,6 +62,9 @@ a permission prompt stays visible on the phone until it is answered.
 
 ## Known limitations
 
+- The app's `claude://code/…` deep links are feature-gated off on current builds
+  (verified against the app's `~/Library/Logs/Claude/main.log`), so session switching
+  depends on Accessibility exposing the session rows.
 - Accessibility on Electron is best-effort; if the composer is not exposed, the click
   fallback assumes the composer sits near the bottom of the window.
 - Transcript-derived status trails the app by about two seconds (the poll interval);

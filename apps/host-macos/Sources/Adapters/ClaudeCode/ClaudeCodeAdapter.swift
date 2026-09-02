@@ -74,10 +74,20 @@ public final class ClaudeCodeAdapter: PTYAdapterBase, @unchecked Sendable {
         )
     }
 
+    /// Claude Code's TUI treats text and Return arriving in one burst as a
+    /// paste and keeps the prompt in the composer; a short pause makes Return
+    /// a submit.
+    public override var submittedInputSettleNanoseconds: UInt64 { 120_000_000 }
+
     public override func start() async throws {
-        refreshClaudeSessions()
+        // Pin an explicitly requested session before the first scan, so the
+        // scan never selects (and briefly publishes) some other session.
         if let explicitId = Self.explicitSessionId(in: initialArguments) {
             setLiveSession(LiveSession(id: explicitId, arguments: initialArguments, cwd: cwd))
+        }
+        refreshClaudeSessions()
+        if liveSessionId() != nil {
+            // Already pinned above.
         } else if let selected = selectedSession() {
             setLiveSession(LiveSession(
                 id: selected.sessionId,

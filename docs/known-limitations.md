@@ -16,7 +16,9 @@ disclosures, not hidden implementation details.
 - The Claude desktop card drives the real app window through Accessibility, which is
   best-effort on Electron apps; it offers no window video, its runtime controls are
   read-only, and permission prompts reach the phone only through the Claude Code hooks
-  Glasstunnel installs in `~/.claude/settings.json`.
+  Glasstunnel installs in `~/.claude/settings.json`. Current Claude builds keep their
+  `claude://code` deep links gated off, so switching sessions from the phone relies on
+  Accessibility, and a prompt is refused when the app verifiably shows another session.
 
 ## Mobile and network
 
