@@ -15,6 +15,11 @@ versioning after the first public beta; pre-release compatibility may still chan
   connection or the relay. Older phones and Macs keep working: the fields are
   optional and the old wording is still sent.
 - The Codex card shows the shell and tool calls Codex runs, as the same rows.
+- Transcript polish: running tool rows show their elapsed time, activity blocks
+  show their total time, unified diffs in output are coloured, terminal colour
+  codes are stripped, and output blocks and code blocks have a Copy button.
+  New messages no longer yank the view to the bottom while you are reading
+  earlier ones; a "New messages" chip offers the jump instead.
 
 ### Fixed
 

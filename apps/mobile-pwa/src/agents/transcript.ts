@@ -204,7 +204,46 @@ export function activitySummary(rows: ToolRow[]): string {
   const calls = rows.filter((row) => row.toolName).length || rows.length;
   const pending = rows.some((row) => row.pending);
   const label = calls === 1 ? '1 tool call' : `${calls} tool calls`;
-  return pending ? `${label} · running` : label;
+  if (pending) return `${label} · running`;
+  const total = rows.reduce((sum, row) => sum + row.durationMs, 0);
+  return total >= 1000 ? `${label} · ${formatSeconds(total)} s` : label;
+}
+
+/** Elapsed time for a running row: seconds, then minutes, nothing past an hour. */
+export function formatElapsed(durationMs: number): string {
+  if (!Number.isFinite(durationMs) || durationMs < 0) return '';
+  if (durationMs < 60_000) return `${Math.floor(durationMs / 1000)} s`;
+  if (durationMs < 3_600_000) return `${Math.floor(durationMs / 60_000)} min`;
+  return '';
+}
+
+/** Removes terminal colour and cursor sequences from tool output. */
+export function stripAnsi(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, '').replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '');
+}
+
+export type DiffLineKind = 'add' | 'del' | 'hunk' | 'meta' | 'ctx';
+
+/** A unified diff has hunk headers or a pair of file headers. */
+export function looksLikeDiff(text: string): boolean {
+  const lines = text.split('\n');
+  if (lines.some((line) => line.startsWith('@@'))) return true;
+  return lines.some((line) => line.startsWith('+++ ')) && lines.some((line) => line.startsWith('--- '));
+}
+
+export function diffLineKind(line: string): DiffLineKind {
+  if (line.startsWith('@@')) return 'hunk';
+  if (line.startsWith('+++ ') || line.startsWith('--- ') || line.startsWith('diff ') || line.startsWith('index ')) return 'meta';
+  if (line.startsWith('+')) return 'add';
+  if (line.startsWith('-')) return 'del';
+  return 'ctx';
+}
+
+/** Keep following new messages only while the reader is near the bottom. */
+export const AUTO_SCROLL_SLACK_PX = 120;
+export function shouldAutoScroll(distanceFromBottomPx: number): boolean {
+  return distanceFromBottomPx <= AUTO_SCROLL_SLACK_PX;
 }
 
 /** Folds a long prompt so a pasted wall of text does not push the reply away. */

@@ -4,9 +4,14 @@ import {
   activitySummary,
   buildTranscript,
   countLines,
+  diffLineKind,
   firstMeaningfulLine,
   foldUserPrompt,
+  formatElapsed,
+  looksLikeDiff,
   readStoredDensity,
+  shouldAutoScroll,
+  stripAnsi,
   toolRowLabel,
   writeStoredDensity,
 } from './transcript';
@@ -222,5 +227,40 @@ describe('structured rows from a Mac that sends titles and previews', () => {
     const activity = items[0];
     if (activity.kind !== 'activity') throw new Error('expected activity');
     expect(activity.rows[0]).toMatchObject({ toolName: 'Bash', pending: false, lineCount: 1, toolCallId: 'toolu_9' });
+  });
+});
+
+describe('polish helpers', () => {
+  it('sums a block\'s time once every row finished', () => {
+    const base = { id: 'r', toolName: 'Bash', title: '', output: '', detail: '', atUnixMs: T0, redacted: false, truncated: false, isError: false, lineCount: 1, pending: false };
+    expect(activitySummary([{ ...base, durationMs: 20_000 }, { ...base, id: 'r2', durationMs: 21_400 }])).toBe('2 tool calls · 41 s');
+    expect(activitySummary([{ ...base, durationMs: 300 }])).toBe('1 tool call');
+    expect(activitySummary([{ ...base, durationMs: 300 }, { ...base, id: 'r2', durationMs: 0, pending: true }])).toBe('2 tool calls · running');
+  });
+
+  it('formats a running row\'s elapsed time', () => {
+    expect(formatElapsed(12_400)).toBe('12 s');
+    expect(formatElapsed(3 * 60_000 + 5_000)).toBe('3 min');
+    expect(formatElapsed(2 * 3_600_000)).toBe('');
+    expect(formatElapsed(-5)).toBe('');
+  });
+
+  it('strips terminal colour sequences', () => {
+    expect(stripAnsi('\u001b[32mok\u001b[0m 12 tests \u001b[1;31mfailed\u001b[m')).toBe('ok 12 tests failed');
+    expect(stripAnsi('\u001b]0;title\u0007plain')).toBe('plain');
+    expect(stripAnsi('no codes')).toBe('no codes');
+  });
+
+  it('recognises unified diffs and classifies their lines', () => {
+    const diff = 'diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1,2 +1,2 @@\n-old\n+new\n same';
+    expect(looksLikeDiff(diff)).toBe(true);
+    expect(looksLikeDiff('-1\n+2')).toBe(false);
+    expect(diff.split('\n').map(diffLineKind)).toEqual(['meta', 'meta', 'meta', 'hunk', 'del', 'add', 'ctx']);
+  });
+
+  it('follows new messages only near the bottom', () => {
+    expect(shouldAutoScroll(0)).toBe(true);
+    expect(shouldAutoScroll(120)).toBe(true);
+    expect(shouldAutoScroll(400)).toBe(false);
   });
 });
