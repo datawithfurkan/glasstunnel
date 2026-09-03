@@ -268,6 +268,8 @@ working → done from hooks, see the reply and tool rows, interrupt a long reply
 
 ## Status (2026-09-03)
 
+Draft PR: https://github.com/datawithfurkan/glasstunnel/pull/22.
+
 Stages 0–2 and the phone changes are implemented and unit-tested (`swift test`
 412 green, `pnpm --filter=@glasstunnel/mobile-pwa test` 202 green); the two lanes are
 written and wired but have not run live: the CLI lane waits for `cursor-agent login`,
