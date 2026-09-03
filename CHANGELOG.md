@@ -3,6 +3,19 @@
 Notable user-facing changes are recorded here. Glasstunnel follows semantic
 versioning after the first public beta; pre-release compatibility may still change.
 
+## Unreleased
+
+### Changed
+
+- Chat-style cards (Claude, Codex, Cursor) render their transcripts for reading
+  instead of as raw records: replies are rendered Markdown in the app's sans
+  face, tool calls fold into one-line rows grouped per turn with their output
+  behind a tap, system events become thin dividers, one time stamp marks each
+  cluster, and long prompts fold after six lines. A Focus/Full switch on the
+  first activity block (remembered per device) keeps every output open when
+  wanted. The open card's heading now names the session first and its project
+  second instead of the folder path.
+
 ## 0.1.7 - Claude cards in Preview
 
 ### Added

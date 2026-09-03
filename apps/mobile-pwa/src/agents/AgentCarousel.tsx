@@ -84,6 +84,40 @@ const APP_FILTERS: AppFilter[] = [
   { id: 'terminal', label: 'Terminal' },
 ];
 
+
+/**
+ * Heading of an open card. The session's own name comes first (a thread
+ * label, or the live session name the Mac reports); the project it belongs
+ * to is the subtitle, and the absolute path only when nothing shorter exists.
+ */
+export function focusedChatHeading(input: {
+  threadLabel?: string;
+  targetLabel?: string;
+  agentLabel?: string;
+  groupLabel?: string;
+  displayName?: string;
+  projectLabel?: string;
+  projectPath?: string;
+  targetSubtitle?: string;
+  terminalSessionLabel?: string | null;
+  groupPath?: string;
+  statusDetail?: string;
+}): { title: string | undefined; subtitle: string | undefined } {
+  const title =
+    input.threadLabel || input.targetLabel || input.agentLabel || input.groupLabel || input.displayName || undefined;
+  const candidates = [
+    input.terminalSessionLabel,
+    input.projectLabel,
+    input.groupLabel,
+    input.projectPath,
+    input.targetSubtitle,
+    input.groupPath,
+    input.statusDetail,
+  ];
+  const subtitle = candidates.find((candidate) => candidate && candidate !== title) || undefined;
+  return { title, subtitle };
+}
+
 export function AgentCarousel() {
   const remoteApps = useAppStore((s) => s.remoteApps);
   const agents = useAppStore((s) => s.agents);
@@ -145,19 +179,20 @@ export function AgentCarousel() {
         group.threads.some((thread) => thread.targetId === selectedChat?.targetId),
       )
     : undefined;
-  const selectedTitle =
-    selectedTarget?.threadLabel ||
-    selectedTarget?.label ||
-    selectedGroup?.label ||
-    selectedSnapshot?.agentLabel ||
-    selectedApp?.displayName;
-  const selectedSubtitle =
-    selectedTarget?.projectPath ||
-    selectedTarget?.subtitle ||
-    (selectedApp?.remoteAppId === 'terminal' ? selectedTerminalSessionLabel(selectedSnapshot) : null) ||
-    selectedGroup?.path ||
-    selectedSnapshot?.statusDetail ||
-    selectedApp?.statusDetail;
+  const { title: selectedTitle, subtitle: selectedSubtitle } = focusedChatHeading({
+    threadLabel: selectedTarget?.threadLabel,
+    targetLabel: selectedTarget?.label,
+    agentLabel: selectedSnapshot?.agentLabel,
+    groupLabel: selectedGroup?.label,
+    displayName: selectedApp?.displayName,
+    projectLabel: selectedTarget?.projectLabel,
+    projectPath: selectedTarget?.projectPath,
+    targetSubtitle: selectedTarget?.subtitle,
+    terminalSessionLabel:
+      selectedApp?.remoteAppId === 'terminal' ? selectedTerminalSessionLabel(selectedSnapshot) : null,
+    groupPath: selectedGroup?.path,
+    statusDetail: selectedSnapshot?.statusDetail || selectedApp?.statusDetail,
+  });
 
   useEffect(() => {
     if (!shouldResetAppFilter(appFilter, remoteApps.length, appAvailability)) return;

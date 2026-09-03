@@ -6,6 +6,7 @@ import {
   appStatusDotClass,
   buildProjectGroups,
   directCliStartTimedOut,
+  focusedChatHeading,
   projectEmptyStateCopy,
   projectEmptyStateTitle,
   remoteAppActionTimedOut,
@@ -730,3 +731,48 @@ function snapshot(): AgentStateSnapshot {
     hasVideoTrack: false,
   };
 }
+
+describe('focusedChatHeading', () => {
+  it('names the session first and the project second, never the same thing twice', () => {
+    expect(
+      focusedChatHeading({
+        agentLabel: 'glasstunnel 1',
+        groupLabel: 'how-are-you-25115d',
+        groupPath: '/Users/dev/Workspace/glasstunnel/.claude/worktrees/how-are-you-25115d',
+        displayName: 'Claude',
+        statusDetail: 'Response ready',
+      }),
+    ).toEqual({ title: 'glasstunnel 1', subtitle: 'how-are-you-25115d' });
+    expect(
+      focusedChatHeading({
+        groupLabel: 'glasstunnel',
+        groupPath: '/Users/dev/Workspace/glasstunnel',
+        displayName: 'Codex',
+      }),
+    ).toEqual({ title: 'glasstunnel', subtitle: '/Users/dev/Workspace/glasstunnel' });
+  });
+
+  it('prefers a thread label and the project label of its target', () => {
+    expect(
+      focusedChatHeading({
+        threadLabel: 'Settings screen',
+        targetLabel: 'Settings screen',
+        projectLabel: 'glasstunnel',
+        projectPath: '/Users/dev/Documents/GitHub2/glasstunnel',
+        agentLabel: 'Settings screen',
+        displayName: 'Claude',
+      }),
+    ).toEqual({ title: 'Settings screen', subtitle: 'glasstunnel' });
+  });
+
+  it('keeps the Terminal session name as the subtitle', () => {
+    expect(
+      focusedChatHeading({
+        agentLabel: 'Terminal',
+        terminalSessionLabel: 'build',
+        groupLabel: 'Terminal',
+        displayName: 'Terminal',
+      }),
+    ).toEqual({ title: 'Terminal', subtitle: 'build' });
+  });
+});
