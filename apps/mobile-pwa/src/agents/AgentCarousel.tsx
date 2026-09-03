@@ -5,6 +5,7 @@ import { useAppStore } from '../lib/store';
 import { isDirectRemoteApp, isProjectRemoteApp } from '../lib/remoteApps';
 import { currentWorkspaceFixtureInitialAppId } from '../dev/workspaceFixture';
 import { HorizontalScrollStrip } from '../ui/HorizontalScrollStrip';
+import { useDesktopLayout } from '../ui/useDesktopLayout';
 import { AgentCard, selectedTerminalSessionLabel } from './AgentCard';
 import { ScreenRemotePanel } from './ScreenRemotePanel';
 
@@ -128,6 +129,7 @@ export function AgentCarousel() {
   const selectTarget = useAppStore((s) => s.selectTarget);
   const renameTarget = useAppStore((s) => s.renameTarget);
   const requestRemoteAppAction = useAppStore((s) => s.requestRemoteAppAction);
+  const desktopLayout = useDesktopLayout();
   const fixtureInitialAppId = currentWorkspaceFixtureInitialAppId();
   const deepLinkInitialAppId = fixtureInitialAppId ?? currentWorkspaceInitialAppId();
 
@@ -387,9 +389,12 @@ export function AgentCarousel() {
     );
   }
 
-  return (
-    <div className="h-full min-h-0 bg-surface-0">
-      <div className="md:hidden h-full min-h-0">
+  // Exactly one layout is mounted. Rendering both trees and hiding one with
+  // CSS mounted every panel twice: two screen video sinks, two start requests,
+  // and a hidden copy that restarted the visible stream on every focus.
+  if (!desktopLayout) {
+    return (
+      <div className="h-full min-h-0 bg-surface-0">
         {mobileMode === 'chat' && selectedApp ? (
           <FocusedChat
             app={selectedApp}
@@ -436,7 +441,12 @@ export function AgentCarousel() {
           />
         )}
       </div>
-      <div className="hidden h-full min-h-0 md:grid md:grid-cols-[minmax(320px,420px)_minmax(0,1fr)]">
+    );
+  }
+
+  return (
+    <div className="h-full min-h-0 bg-surface-0">
+      <div className="grid h-full min-h-0 grid-cols-[minmax(320px,420px)_minmax(0,1fr)]">
         <ProjectHome
           appFilter={appFilter}
           appAvailability={appAvailability}

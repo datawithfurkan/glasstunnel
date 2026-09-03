@@ -44,6 +44,7 @@ import { PeerFlowAbortRegistry } from '../transport/PeerFlowAbortRegistry';
 import { hasSupabaseAuth, supabase } from './supabase';
 import {
   fallbackRemoteAppsFromLayout,
+  isScreenSharingOn,
   isScreenStreamAvailable,
   remoteAppsForCachedWorkspace,
   remoteAppsWithScreenSharingOff,
@@ -93,6 +94,16 @@ interface RecoverConnectionOptions {
   reason?: string;
   forceRestart?: boolean;
   refreshHosts?: boolean;
+  /**
+   * Keep a live screen video peer while the relay reconnects. The video peer
+   * does not depend on the relay socket, so relay blips and lifecycle events
+   * should not restart a picture that is still rendering.
+   */
+  keepVideoPeer?: boolean;
+}
+
+interface StartPeerOptions {
+  keepVideoPeer?: boolean;
 }
 
 export interface AppState {
@@ -126,9 +137,11 @@ export interface AppState {
   setReadOnly: (readOnly: boolean) => void;
   forgetCurrentMac: () => Promise<void>;
   disconnectPeer: () => void;
-  startPeer: () => Promise<void>;
+  startPeer: (options?: StartPeerOptions) => Promise<void>;
   startVideoPeer: () => Promise<void>;
   stopVideoPeer: (agentId?: string) => void;
+  /** Restart screen video after the page was hidden or a flow failed, if it is still wanted. */
+  resumeVideoPeerIfNeeded: () => void;
   clearVideoStream: (agentId: string) => void;
   clearRelayScreenFrame: (agentId: string) => void;
   setScreenShareQuality: (quality: ScreenShareQuality) => void;
@@ -183,6 +196,10 @@ let refreshHostsInFlight: Promise<void> | null = null;
 let lastRefreshHostsCompletedAt = 0;
 let peerStartGeneration = 0;
 let videoPeerStartGeneration = 0;
+/** True between startVideoPeer and stopVideoPeer: the screen panel wants video. */
+let videoPeerWanted = false;
+let videoRetryTimer: number | null = null;
+let videoRetryAttempt = 0;
 const peerFlowAbortRegistry = new PeerFlowAbortRegistry();
 let reconnectTimer: number | null = null;
 let reconnectAttempt = 0;
@@ -195,6 +212,7 @@ let screenStopConfirmationTimer: number | null = null;
 const REFRESH_HOSTS_MIN_INTERVAL_MS = 5_000;
 const RECOVER_HOST_REFRESH_INTERVAL_MS = 30_000;
 const RECONNECT_BACKOFF_MS = [1_500, 3_000, 5_000, 10_000, 20_000, 30_000];
+export const VIDEO_RETRY_BACKOFF_MS = [2_000, 4_000, 8_000, 16_000, 30_000];
 const USER_INITIATED_RECOVERY_REASONS = new Set([
   'workspace-retry',
   'remote-app-retry',
@@ -305,6 +323,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     videoPeerStartGeneration += 1;
     peerFlowAbortRegistry.cancelAll();
     clearReconnectTimer();
+    forgetVideoPeer();
     const pairedHost = get().pairedHost;
     if (pairedHost) {
       localStorage.removeItem(`gt.webauthn.enrolled.${pairedHost.deviceId}`);
@@ -337,6 +356,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     videoPeerStartGeneration += 1;
     peerFlowAbortRegistry.cancelAll();
     clearReconnectTimer();
+    forgetVideoPeer();
     get().peer?.close();
     get().signaling?.disconnect();
     get().relay?.disconnect();
@@ -356,32 +376,44 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
-  async startPeer() {
+  async startPeer(options) {
     const { phoneKeypair, pairedHost } = get();
     if (!phoneKeypair || !pairedHost) return;
     const generation = ++peerStartGeneration;
     const isCurrent = () => generation === peerStartGeneration;
-    videoPeerStartGeneration += 1;
-    peerFlowAbortRegistry.cancelAll();
+    // A rendering screen stream is independent of the relay socket: keep it
+    // across relay reconnects and lifecycle recoveries unless the caller asks
+    // for a full restart. A video flow that has not produced a stream yet is
+    // restarted by the screen panel once the host is online again.
+    const keepVideoPeer = options?.keepVideoPeer === true && hasScreenVideoStream(get());
+    if (keepVideoPeer) {
+      peerFlowAbortRegistry.cancel('primary');
+    } else {
+      videoPeerStartGeneration += 1;
+      clearVideoRetryTimer();
+      peerFlowAbortRegistry.cancelAll();
+      get().peer?.close();
+      get().signaling?.disconnect();
+    }
     clearReconnectTimer();
-    get().peer?.close();
-    get().signaling?.disconnect();
     get().relay?.disconnect();
     const cached = await loadRelayCache(pairedHost.deviceId);
     if (!isCurrent()) return;
     const current = get();
     const canReuseCurrentWorkspace = current.workspaceHostDeviceId === pairedHost.deviceId;
     set({
-      peer: null,
-      signaling: null,
+      ...(keepVideoPeer ? {} : { peer: null, signaling: null, videoStreams: {} }),
       relay: null,
-      relayHostOnline: cached ? false : null,
+      // While a kept video keeps rendering, the Mac's presence is merely unknown
+      // until the relay answers; "offline" would hide a working picture.
+      relayHostOnline: keepVideoPeer && canReuseCurrentWorkspace ? null : cached ? false : null,
       hostHello: cached?.hostHello ?? (canReuseCurrentWorkspace ? current.hostHello : null),
       layout: cached?.layout ?? (canReuseCurrentWorkspace ? current.layout : null),
-      remoteApps: cached?.remoteApps ?? (canReuseCurrentWorkspace ? current.remoteApps : []),
+      // The persisted cache marks screen sharing off for a cold start; a
+      // reconnect to the same Mac keeps the list it was just showing.
+      remoteApps: canReuseCurrentWorkspace ? current.remoteApps : (cached?.remoteApps ?? []),
       agents: cached?.agents ?? (canReuseCurrentWorkspace ? current.agents : {}),
       workspaceHostDeviceId: cached || canReuseCurrentWorkspace ? pairedHost.deviceId : null,
-      videoStreams: {},
       relayScreenFrames: {},
       error: cached
         ? connectionStatusCopy('cached-reconnecting')
@@ -470,7 +502,7 @@ export const useAppStore = create<AppState>((set, get) => ({
             relayHostOnline: cached ? (prev.relayHostOnline ?? false) : true,
             error: cached ? prev.error : null,
           }));
-          if (!isScreenStreamAvailable(nextRemoteApps)) {
+          if (!isScreenSharingOn(nextRemoteApps)) {
             if (remoteApps.some((app) => app.remoteAppId === 'screen' && app.enabled === false)) {
               clearPendingScreenStop();
             }
@@ -541,6 +573,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   async startVideoPeer() {
     const { phoneKeypair, pairedHost } = get();
     if (!phoneKeypair || !pairedHost) return;
+    videoPeerWanted = true;
+    clearVideoRetryTimer();
+    // A hidden page cannot negotiate media; resumeVideoPeerIfNeeded starts the
+    // flow when the page is visible again.
     if (isDocumentHidden()) return;
 
     const generation = ++videoPeerStartGeneration;
@@ -561,6 +597,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   stopVideoPeer(agentId = 'screen') {
+    forgetVideoPeer();
     videoPeerStartGeneration += 1;
     peerFlowAbortRegistry.cancelAll();
     get().peer?.close();
@@ -572,6 +609,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       signaling: null,
       error: isScreenStreamStatusMessage(prev.error) ? null : prev.error,
     }));
+  },
+
+  resumeVideoPeerIfNeeded() {
+    if (!canResumeVideoPeer(get())) return;
+    void get().startVideoPeer();
   },
 
   clearVideoStream(agentId) {
@@ -631,7 +673,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
       }
 
-      await get().startPeer();
+      await get().startPeer({ keepVideoPeer: options?.keepVideoPeer });
     })();
     const guardedRecovery = recovery.finally(() => {
       if (recoverConnectionInFlight === guardedRecovery) {
@@ -716,6 +758,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     videoPeerStartGeneration += 1;
     peerFlowAbortRegistry.cancelAll();
     clearReconnectTimer();
+    forgetVideoPeer();
     get().peer?.close();
     get().signaling?.disconnect();
     get().relay?.disconnect();
@@ -1359,20 +1402,25 @@ async function persistRelayCache(state: AppState): Promise<void> {
   if (!state.pairedHost) return;
   if (state.workspaceHostDeviceId !== state.pairedHost.deviceId) return;
   const remoteApps = remoteAppsForCachedWorkspace(state.remoteApps);
-  await idbSet(`${RELAY_CACHE_PREFIX}${state.pairedHost.deviceId}`, {
-    hostHello: state.hostHello
-      ? {
-          ...state.hostHello,
-          remoteApps: state.hostHello.remoteApps
-            ? remoteAppsForCachedWorkspace(state.hostHello.remoteApps)
-            : remoteApps,
-        }
-      : null,
-    layout: state.layout,
-    remoteApps,
-    agents: state.agents,
-    savedAtUnixMs: Date.now(),
-  } satisfies RelayCachedWorkspace);
+  try {
+    await idbSet(`${RELAY_CACHE_PREFIX}${state.pairedHost.deviceId}`, {
+      hostHello: state.hostHello
+        ? {
+            ...state.hostHello,
+            remoteApps: state.hostHello.remoteApps
+              ? remoteAppsForCachedWorkspace(state.hostHello.remoteApps)
+              : remoteApps,
+          }
+        : null,
+      layout: state.layout,
+      remoteApps,
+      agents: state.agents,
+      savedAtUnixMs: Date.now(),
+    } satisfies RelayCachedWorkspace);
+  } catch {
+    // The cache only speeds up the next open; storage that is full, private,
+    // or missing must not surface as an unhandled rejection.
+  }
 }
 
 function sanitizeRelayCache(cached: RelayCachedWorkspace): RelayCachedWorkspace {
@@ -1614,30 +1662,37 @@ async function startWebRtcPeerFlow(
         if (!isCurrent()) return;
         if (state.connected) {
           reconnectAttempt = 0;
+          if (options.videoOnly) videoRetryAttempt = 0;
           set({ relayHostOnline: true, error: null });
           return;
         }
         if (state.error) {
           const hasRelayFrame = options.videoOnly && hasRecentRelayScreenFrame(get());
-          set({
-            relayHostOnline: options.videoOnly && relayStillOnline() ? true : false,
+          // A video flow says nothing about the Mac's presence; only the
+          // relay may mark it offline.
+          set((prev) => ({
+            relayHostOnline: options.videoOnly ? prev.relayHostOnline : false,
             error: hasRelayFrame ? null : state.error,
-          });
+          }));
         }
       },
       onClosed: ({ error }) => {
         if (!isCurrent()) return;
         if (options.videoOnly) {
+          // The relay owns its own reconnect; the video flow only retries
+          // itself, with backoff, while the screen is still wanted.
           clearScreenVideoStream(set, get);
-        }
-        if (options.videoOnly && relayStillOnline()) {
           const hasRelayFrame = hasRecentRelayScreenFrame(get());
-          set({
+          set((prev) => ({
             peer: null,
             signaling: null,
-            relayHostOnline: true,
-            error: hasRelayFrame ? null : SCREEN_STREAM_DISCONNECTED_MESSAGE,
-          });
+            error: hasRelayFrame
+              ? null
+              : relayStillOnline()
+                ? SCREEN_STREAM_DISCONNECTED_MESSAGE
+                : prev.error,
+          }));
+          scheduleVideoPeerRetry(get);
           return;
         }
         set({
@@ -1689,6 +1744,7 @@ async function startWebRtcPeerFlow(
       },
       onVideoTrack: (agentId, stream) => {
         if (!isCurrent()) return;
+        videoRetryAttempt = 0;
         replaceVideoStreamForAgent(set, get, agentId, stream);
       },
       onLayout: (layout) => {
@@ -1703,7 +1759,7 @@ async function startWebRtcPeerFlow(
           relayHostOnline: true,
           error: null,
         });
-        if (!isScreenStreamAvailable(nextRemoteApps)) {
+        if (!isScreenSharingOn(nextRemoteApps)) {
           if (remoteApps.some((app) => app.remoteAppId === 'screen' && app.enabled === false)) {
             clearPendingScreenStop();
           }
@@ -1716,23 +1772,65 @@ async function startWebRtcPeerFlow(
   } catch (error) {
     if (!isCurrent()) return;
     const message = connectionError(error) || initialError;
-    if (options.videoOnly && relayStillOnline()) {
-      clearScreenVideoStream(set, get);
-      const hasRelayFrame = hasRecentRelayScreenFrame(get());
-      set({
-        peer: null,
-        signaling: null,
-        relayHostOnline: true,
-        error: hasRelayFrame ? null : message,
-      });
-      return;
-    }
     if (options.videoOnly) {
       clearScreenVideoStream(set, get);
+      const hasRelayFrame = hasRecentRelayScreenFrame(get());
+      set((prev) => ({
+        peer: null,
+        signaling: null,
+        error: hasRelayFrame ? null : relayStillOnline() ? message : prev.error,
+      }));
+      scheduleVideoPeerRetry(get);
+      return;
     }
     set({ error: message });
     scheduleReconnect(set, get, message);
   }
+}
+
+function hasScreenVideoStream(state: AppState): boolean {
+  return screenMediaAgentIds(state).some((agentId) => Boolean(state.videoStreams[agentId]));
+}
+
+function forgetVideoPeer(): void {
+  videoPeerWanted = false;
+  videoRetryAttempt = 0;
+  clearVideoRetryTimer();
+}
+
+function clearVideoRetryTimer(): void {
+  if (videoRetryTimer !== null && typeof window !== 'undefined') {
+    window.clearTimeout(videoRetryTimer);
+  }
+  videoRetryTimer = null;
+}
+
+function canResumeVideoPeer(state: AppState): boolean {
+  return (
+    videoPeerWanted &&
+    !isDocumentHidden() &&
+    isWorkspaceRoute(state.route) &&
+    state.relayHostOnline === true &&
+    isScreenStreamAvailable(state.remoteApps) &&
+    !hasScreenVideoStream(state)
+  );
+}
+
+/**
+ * Retries a screen video flow that ended without a rendering stream. The
+ * screen panel only restarts on prop changes, so a flow that times out or
+ * drops before its first frame would otherwise wait for a manual retry.
+ */
+function scheduleVideoPeerRetry(get: () => AppState): void {
+  if (typeof window === 'undefined') return;
+  if (!videoPeerWanted || videoRetryTimer !== null) return;
+  const delay = VIDEO_RETRY_BACKOFF_MS[Math.min(videoRetryAttempt, VIDEO_RETRY_BACKOFF_MS.length - 1)];
+  videoRetryAttempt += 1;
+  videoRetryTimer = window.setTimeout(() => {
+    videoRetryTimer = null;
+    if (!canResumeVideoPeer(get())) return;
+    void get().startVideoPeer();
+  }, delay);
 }
 
 function failNoSession(): never {
@@ -1798,6 +1896,7 @@ function scheduleReconnect(set: SetState, get: () => AppState, reason: string) {
       reason,
       forceRestart: true,
       refreshHosts: reconnectAttempt % 4 === 0,
+      keepVideoPeer: true,
     });
   }, delay);
   set({ error: reason });

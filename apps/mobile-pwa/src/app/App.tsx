@@ -28,6 +28,7 @@ export function App() {
   const navigateTo = useAppStore((s) => s.navigateTo);
   const disconnectPeer = useAppStore((s) => s.disconnectPeer);
   const recoverConnection = useAppStore((s) => s.recoverConnection);
+  const resumeVideoPeerIfNeeded = useAppStore((s) => s.resumeVideoPeerIfNeeded);
   const workspaceFixtureEnabled = isWorkspaceFixtureEnabled();
 
   useEffect(() => {
@@ -81,7 +82,10 @@ export function App() {
         const request = pendingRecover;
         pendingRecover = null;
         if (!request || document.visibilityState === 'hidden') return;
-        void recoverConnection(request);
+        // Screen video is independent of the relay: a rendering stream is kept,
+        // and one that stopped while the page was hidden is restarted here.
+        resumeVideoPeerIfNeeded();
+        void recoverConnection({ ...request, keepVideoPeer: true });
       }, LIFECYCLE_RECOVERY_DEBOUNCE_MS);
     };
     const onVisibilityChange = () => {
@@ -110,7 +114,7 @@ export function App() {
       window.removeEventListener('focus', onFocus);
       window.removeEventListener('online', onOnline);
     };
-  }, [recoverConnection]);
+  }, [recoverConnection, resumeVideoPeerIfNeeded]);
 
   if (updateRequired) return <AppUpdateRequiredScreen />;
 
