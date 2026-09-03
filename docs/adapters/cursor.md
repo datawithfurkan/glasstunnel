@@ -1,55 +1,85 @@
 # Cursor adapter
 
-**Source:** `apps/host-macos/Sources/Adapters/Cursor/`
+**Source:** `apps/host-macos/Sources/Adapters/Cursor/` — `CursorAdapter.swift` (the
+card), `CursorStateWatcher.swift` and `CursorDesktopStore.swift` (the app's store),
+`CursorDesktopDriver.swift` (Accessibility), `CursorHooks.swift` (hooks), and the
+message codec shared with the Cursor Agent card (`CursorConversationCodec.swift`).
 
-The Cursor adapter reads local Cursor state when the installed version exposes a
-compatible chat-shaped SQLite schema. It must degrade to an honest unavailable or
-browse-only state when parity cannot be verified.
+Mirrors the chats of the Cursor desktop app (`/Applications/Cursor.app`, bundle
+`com.todesktop.230313mzl4w4u92`). The app owns the chats, so Glasstunnel never spawns a
+second process; it reads what the app writes and drives the app's own window.
 
-## Data source
+## State sources
 
-- Cursor Application Support databases under the current user's Library.
-- `state.vscdb` and recent workspace storage databases.
-- Chat/composer-shaped `cursorDiskKV` and `ItemTable` rows.
-- A file-system watcher that refreshes state without constant polling.
+| What | Where it comes from |
+| ---- | ------------------- |
+| Chat list, titles, workspace, mode | the `composerHeaders` table of `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` (Cursor 3.x); older builds' `composerData:` rows and per-workspace databases are still read. Drafts, subagents, and archived chats are hidden. The workspace comes from `User/workspaceStorage/<id>/workspace.json` or a folder-like subtitle |
+| Transcript | 3.x chats: the `conversationState` snapshot lists the message blobs (`agentKv:blob:<sha256>`), Vercel AI SDK messages whose `tool-call` / `tool-result` parts become structured rows with 12-line previews and full output on request; older chats: `fullConversationHeadersOnly` + `bubbleId:` rows. Cursor's injected context block is skipped; the typed prompt is the next user message |
+| Busy / done from the store | the last message: a tool call without its result → working, an `AskQuestion` call without a result → waiting for an answer, an assistant reply → done; `hasBlockingPendingActions` on the chat → waiting for the person in the app |
+| Live turn state | Cursor hooks (`beforeSubmitPrompt` → working, `preToolUse` → a running row, `postToolUse` / `postToolUseFailure` → the row's end, `stop` → done / Stopped / error), which stand until the store itself moves on |
+| Model | `modelConfig.modelName` of the chat, shown read-only ("Managed in Cursor") |
 
-The reader opens Cursor databases read-only and never writes to Cursor storage. It
-must not log names, prompts, responses, raw JSON, workspace hashes, or database values.
+Everything is read-only: the databases are opened `SQLITE_OPEN_READONLY` (a WAL store
+without sidecars falls back to an immutable open), and nothing here logs names, prompts,
+responses, or database values.
 
-## Input delivery
+### Hooks
 
-For the active Cursor chat, Glasstunnel:
+On `start()` the adapter (either Cursor card) merges Glasstunnel entries into
+`~/.cursor/hooks.json` for `beforeSubmitPrompt`, `preToolUse`, `postToolUse`,
+`postToolUseFailure`, and `stop`, preserving your own entries verbatim and replacing only
+the ones that name the Glasstunnel socket. Each entry runs a small command that forwards
+routing and status metadata (`conversation_id`, `generation_id`, `hook_event_name`,
+`status`, `tool_name`, a one-line tool title, `transcript_path`, `workspace_roots`,
+`model`) to `~/Library/Application Support/Glasstunnel/cursor.sock`; prompt text and
+tool output never travel through the hook. The command prints nothing, so Cursor
+proceeds. Cursor watches the file and reloads it; a file that is not valid JSON is left
+alone and reported in the card's status.
 
-1. Activates Cursor through the Accessibility API.
-2. Finds a settable chat input in the focused window.
-3. Writes the prompt and reads it back to verify the target.
-4. Falls back to PID-targeted keyboard replacement only when direct AX replacement
-   cannot be verified.
-5. Submits Return only after the written value matches.
+Hook events reach the card through the process-wide `CursorHookRouter`, which routes by
+`conversation_id`: the desktop card owns the composer ids in the app's store, the Cursor
+Agent card the chats it created or resumed.
 
-This path is intentionally guarded to avoid typing into another app or another Cursor
-chat. Accessibility permission is required.
+## Driving the app
+
+- **Accessibility opt-in.** Cursor exposes its web content only after
+  `AXManualAccessibility` is set on the application (Electron's switch for assistive
+  clients); the driver sets it and waits a few seconds for the web area.
+- **Composer.** The settable text area whose empty value is Cursor's placeholder
+  ("Plan, Build, / for skills, @ for context", "Send follow-up", …), else the text area
+  beside the "Add agents, context, tools" toolbar; a code editor is never picked. The
+  text is written through Accessibility and read back; if the app ignores the write the
+  driver focuses the field and types, then pastes. Return submits.
+- **Which chat is in front.** The window title when it names a chat, else a selected
+  sidebar entry or tab, else a heading, matched against the titles in the store. A
+  prompt is refused with "Switch Cursor to “<title>” before sending this prompt" when
+  the front chat is readable and differs; when no title can be read at all (a new
+  chat, a compact window), the composer in front is used.
+- **Switching chats** presses the chat's sidebar entry and re-checks; a selected chat
+  the app is not showing yet is published with `isActive: false` so the phone retries.
+  "New chat" presses the app's New Chat control; the chat appears in the list after
+  its first prompt.
+- **Interrupt** presses the Stop control, else sends Escape; the `stop` hook with
+  status `aborted` then reads as "Stopped".
+- **Questions** — an `AskQuestion` tool call becomes a decision on the phone; the
+  answer presses the chosen option in the app and the question stays open until the
+  store records the answer.
 
 ## Product boundaries
 
-- Only the visibly active Cursor chat is a verified prompt target.
-- Parsed non-current chats are browse-only until Cursor provides a deterministic
-  switch/acknowledgement path.
-- Generated labels such as `Cursor chat 1` distinguish unnamed records but do not
-  prove exact label parity.
-- Header-only rows prove discovery, not message-history parity.
-- Model and settings controls are read-only and shown as `Managed in Cursor`.
-- Cursor Agent is a separate CLI-backed Preview integration.
-- Schema changes can temporarily make the adapter unavailable.
-
-See `docs/cursor-workspace-prompt-routing.md` for the deeplink decision and
-`docs/agent-app-support-matrix.md` for the public tier.
+- No window video: the phone gets a structured chat, targets, and status. Use Mac
+  Screen for the raw window.
+- Read-only runtime controls; model and mode are managed in Cursor.
+- Cursor Agent is a separate CLI-backed card (`docs/adapters/cursor-agent.md`).
+- Schema changes can make the store unreadable; the card then says so rather than
+  guessing.
 
 ## Privacy-safe checks
 
 ```bash
 pnpm qa:cursor-state
 pnpm qa:cursor:live-state
+GT_CURSOR_REAL_STATE=1 swift test --package-path apps/host-macos --filter testRealCursorStoresParse
 pnpm qa:cursor:workspace-prompt-policy
 ```
 

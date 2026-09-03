@@ -8,6 +8,9 @@ import GTProtocol
 public struct CursorComposerSummary: Equatable, Sendable {
     public let composerId: String
     public let name: String?
+    /// Cursor's own subtitle for the chat (older builds put the folder here).
+    public let subtitle: String?
+    public let status: String?
     public let workspaceId: String?
     public let workspacePath: String?
     public let createdAtUnixMs: Int64?
@@ -33,10 +36,19 @@ final class CursorDesktopStoreReader {
     let stateDBPath: String
     /// `~/Library/Application Support/Cursor`, for `workspaceStorage` lookups.
     let stateRoot: URL
+    /// The folder a per-workspace database belongs to, when known.
+    let fallbackWorkspacePath: String?
 
-    init(stateDBPath: String, stateRoot: URL) {
+    init(stateDBPath: String, stateRoot: URL, fallbackWorkspacePath: String? = nil) {
         self.stateDBPath = stateDBPath
         self.stateRoot = stateRoot
+        self.fallbackWorkspacePath = fallbackWorkspacePath
+    }
+
+    /// True when the database carries any table this reader knows.
+    func hasKnownChatStorage() -> Bool {
+        guard let db = try? CursorSQLiteDatabase(path: stateDBPath) else { return false }
+        return db.tableExists("composerHeaders") || db.tableExists("cursorDiskKV") || db.tableExists("ItemTable")
     }
 
     /// Chats newest first, drafts and subagents excluded, capped at `limit`.
@@ -53,8 +65,10 @@ final class CursorDesktopStoreReader {
                 return CursorComposerSummary(
                     composerId: composerId,
                     name: value["name"] as? String,
+                    subtitle: Self.nonEmpty(value["subtitle"] as? String),
+                    status: Self.nonEmpty(value["status"] as? String),
                     workspaceId: workspaceId,
-                    workspacePath: workspaceId.flatMap { self.workspacePath(forWorkspaceId: $0) },
+                    workspacePath: self.workspacePath(forWorkspaceId: workspaceId, subtitle: value["subtitle"] as? String),
                     createdAtUnixMs: row.int(2) ?? (value["createdAt"] as? NSNumber)?.int64Value,
                     lastUpdatedAtUnixMs: row.int(3) ?? (value["lastUpdatedAt"] as? NSNumber)?.int64Value,
                     isArchived: (row.int(4) ?? 0) != 0 || value["isArchived"] as? Bool == true,
@@ -75,9 +89,11 @@ final class CursorDesktopStoreReader {
                 let workspaceId = Self.workspaceIdentifier(value["workspaceIdentifier"])
                 return CursorComposerSummary(
                     composerId: composerId,
-                    name: value["name"] as? String,
+                    name: Self.composerName(from: value),
+                    subtitle: Self.nonEmpty(value["subtitle"] as? String),
+                    status: Self.nonEmpty(value["status"] as? String),
                     workspaceId: workspaceId,
-                    workspacePath: workspaceId.flatMap { self.workspacePath(forWorkspaceId: $0) },
+                    workspacePath: self.workspacePath(forWorkspaceId: workspaceId, subtitle: value["subtitle"] as? String),
                     createdAtUnixMs: (value["createdAt"] as? NSNumber)?.int64Value,
                     lastUpdatedAtUnixMs: (value["lastUpdatedAt"] as? NSNumber)?.int64Value,
                     isArchived: value["isArchived"] as? Bool == true,
@@ -171,10 +187,35 @@ final class CursorDesktopStoreReader {
         return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     }
 
+    private static func composerName(from value: [String: Any]) -> String? {
+        for key in ["name", "title", "displayName", "label"] {
+            if let name = nonEmpty(value[key] as? String) { return name }
+        }
+        return nil
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     private static func workspaceIdentifier(_ value: Any?) -> String? {
         if let string = value as? String, !string.isEmpty { return string }
         if let dict = value as? [String: Any], let id = dict["id"] as? String, !id.isEmpty { return id }
         return nil
+    }
+
+    /// The folder a chat belongs to: a path-like subtitle (older builds), the
+    /// workspace's `workspace.json`, else the database's own folder.
+    private func workspacePath(forWorkspaceId id: String?, subtitle: String?) -> String? {
+        if let subtitle = subtitle?.trimmingCharacters(in: .whitespacesAndNewlines), subtitle.hasPrefix("/") || subtitle.hasPrefix("~") {
+            return subtitle
+        }
+        if let id, let path = workspacePath(forWorkspaceId: id) {
+            return path
+        }
+        return fallbackWorkspacePath
     }
 
     /// `User/workspaceStorage/<id>/workspace.json` names the folder a chat
@@ -187,6 +228,10 @@ final class CursorDesktopStoreReader {
             .appendingPathComponent("workspaceStorage", isDirectory: true)
             .appendingPathComponent(trimmed, isDirectory: true)
             .appendingPathComponent("workspace.json")
+        return Self.folderPath(fromWorkspaceJSON: workspaceJSON)
+    }
+
+    static func folderPath(fromWorkspaceJSON workspaceJSON: URL) -> String? {
         guard
             let data = try? Data(contentsOf: workspaceJSON),
             let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

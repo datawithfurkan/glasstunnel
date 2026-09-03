@@ -378,6 +378,8 @@ private final class NoopHookLineSource: HookLineSource, @unchecked Sendable {
 private final class SnapshotCollector: @unchecked Sendable {
     private let lock = NSLock()
     private var snapshots: [AgentStateSnapshot] = []
+    /// Snapshots before this index were consumed by earlier waits.
+    private var cursor = 0
     private var task: Task<Void, Never>?
 
     init(_ stream: AsyncStream<AgentStateSnapshot>) {
@@ -404,13 +406,17 @@ private final class SnapshotCollector: @unchecked Sendable {
     /// The first snapshot (from the moment of the call) matching `predicate`.
     func wait(timeout: TimeInterval, where predicate: @escaping (AgentStateSnapshot) -> Bool) async throws -> AgentStateSnapshot {
         let deadline = Date().addingTimeInterval(timeout)
-        var seen = 0
         while Date() < deadline {
             lock.lock()
-            let pending = Array(snapshots[seen...])
-            seen = snapshots.count
+            let start = cursor
+            let pending = Array(snapshots[start...])
+            if let index = pending.firstIndex(where: predicate) {
+                cursor = start + index + 1
+                lock.unlock()
+                return pending[index]
+            }
+            cursor = snapshots.count
             lock.unlock()
-            if let match = pending.first(where: predicate) { return match }
             try await Task.sleep(nanoseconds: 40_000_000)
         }
         let summary = all.suffix(6).map { "\($0.status)/\($0.statusDetail)" }.joined(separator: " → ")
