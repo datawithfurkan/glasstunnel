@@ -1,10 +1,10 @@
 # Agent App Release Evidence
 
-- Date: 2026-09-03T06:16:53Z
+- Date: 2026-09-03T07:20:18Z
 - App: Claude Code
 - Result: pass
 - Environment: Local Test Lab host on the development Mac, phone-sized mobile Chromium (Pixel 7 emulation) and mobile WebKit (iPhone 15 emulation), real signed-in Claude Code CLI 2.1.226
-- Glasstunnel commit: 7bde8143
+- Glasstunnel commit: 18e53e67
 - Artifact: artifacts/claude-code-phone-driven.txt
 - Privacy review: pass
 
@@ -24,7 +24,7 @@ verify a submitted prompt against the transcript and resubmit it once when the T
 kept it in the composer, which a resumed session had done in the run before.
 The same lane also passed on mobile WebKit (`pnpm lab:e2e:claude-code:safari`),
 so the card behaves the same in an iPhone-class browser. Both browser passes were
-re-recorded at this commit after the phone app's transcript renderer changed.
+re-recorded at this commit after structured tool rows landed on the Mac and the phone.
 
 ## Limitations
 
