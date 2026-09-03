@@ -164,9 +164,7 @@ public final class CursorAgentAdapter: AgentAdapter, @unchecked Sendable {
     }
 
     public func interrupt() async throws {
-        lock.lock()
-        interruptedTurn = currentProcess != nil
-        lock.unlock()
+        lock.withLock { interruptedTurn = currentProcess != nil }
         terminateCurrentProcess()
     }
 
@@ -222,12 +220,12 @@ public final class CursorAgentAdapter: AgentAdapter, @unchecked Sendable {
         do {
             if let value = update.modelId {
                 let normalized = try Self.normalizedModel(value)
-                lock.lock()
-                runtimeModelId = normalized
-                if !modelOptions.contains(where: { $0.id == normalized }) {
-                    modelOptions.append(AgentRuntimeOption(id: normalized, label: Self.modelLabel(normalized)))
+                lock.withLock {
+                    runtimeModelId = normalized
+                    if !modelOptions.contains(where: { $0.id == normalized }) {
+                        modelOptions.append(AgentRuntimeOption(id: normalized, label: Self.modelLabel(normalized)))
+                    }
                 }
-                lock.unlock()
             }
         } catch {
             emitSnapshot(detail: "settings failed")
@@ -270,19 +268,17 @@ public final class CursorAgentAdapter: AgentAdapter, @unchecked Sendable {
             guard requested != "agent" else {
                 throw Self.error(-5, Self.agentModeRefusal)
             }
-            lock.lock()
-            mode = requested
-            lock.unlock()
+            lock.withLock { mode = requested }
             appendEvent("Mode: \(requested)")
             emitSnapshot(detail: "settings updated")
         case .model(let requested):
             let normalized = try Self.normalizedModel(requested)
-            lock.lock()
-            runtimeModelId = normalized
-            if !modelOptions.contains(where: { $0.id == normalized }) {
-                modelOptions.append(AgentRuntimeOption(id: normalized, label: Self.modelLabel(normalized)))
+            lock.withLock {
+                runtimeModelId = normalized
+                if !modelOptions.contains(where: { $0.id == normalized }) {
+                    modelOptions.append(AgentRuntimeOption(id: normalized, label: Self.modelLabel(normalized)))
+                }
             }
-            lock.unlock()
             appendEvent("Model: \(normalized)")
             emitSnapshot(detail: "settings updated")
         case .newChat:
@@ -351,17 +347,15 @@ public final class CursorAgentAdapter: AgentAdapter, @unchecked Sendable {
         let parser = CursorAgentStreamParser(agentID: agentID, turnId: turnId)
         let promptMessage = AgentChatMessage(messageId: "\(agentID)-\(turnId)-prompt", role: .user, text: prompt, atUnixMs: startedAt, kind: .text)
 
-        lock.lock()
-        interruptedTurn = false
-        liveMessages = [promptMessage]
-        liveDetails = [:]
-        lastActivityUnixMs = startedAt
-        currentStatus = .working
-        currentDetail = "Cursor Agent is working"
-        let modelId = runtimeModelId
-        let mode = self.mode
-        let workspace = self.workspace
-        lock.unlock()
+        let (modelId, mode, workspace) = lock.withLock {
+            interruptedTurn = false
+            liveMessages = [promptMessage]
+            liveDetails = [:]
+            lastActivityUnixMs = startedAt
+            currentStatus = .working
+            currentDetail = "Cursor Agent is working"
+            return (runtimeModelId, self.mode, self.workspace)
+        }
         emitCurrentSnapshot()
 
         var arguments = ["--print", "--output-format", "stream-json", "--stream-partial-output", "--trust", "--workspace", workspace, "--resume", chatId]
@@ -382,10 +376,10 @@ public final class CursorAgentAdapter: AgentAdapter, @unchecked Sendable {
         parser.finish()
         publishLiveTurn(parser: parser, startedAt: startedAt, promptMessage: promptMessage, force: true)
 
-        lock.lock()
-        let wasInterrupted = interruptedTurn
-        interruptedTurn = false
-        lock.unlock()
+        let wasInterrupted = lock.withLock {
+            defer { interruptedTurn = false }
+            return interruptedTurn
+        }
 
         if wasInterrupted {
             appendEvent(CursorConversationBuilder.stoppedDetail)
@@ -553,9 +547,7 @@ public final class CursorAgentAdapter: AgentAdapter, @unchecked Sendable {
             }
             throw Self.error(-10, output.isEmpty ? "Cursor Agent did not return a usable chat id." : TranscriptPreview.singleLine(output, limit: 200))
         }
-        lock.lock()
-        ownedChatIds.insert(id)
-        lock.unlock()
+        lock.withLock { _ = ownedChatIds.insert(id) }
         refreshChats(selectNewest: false)
         return id
     }
