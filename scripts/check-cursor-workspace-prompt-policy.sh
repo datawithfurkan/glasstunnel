@@ -27,8 +27,8 @@ grep -q "Reconsideration Criteria" "$DOC" \
 
 grep -q "supportsNewThread: false" "$CURSOR_ADAPTER" \
   || fail "Cursor adapter must not advertise new-thread support"
-grep -q "Browse only" "$AGENT_CARD" \
-  || fail "mobile Cursor target UI must keep browse-only copy"
+grep -q "Open this chat" "$AGENT_CARD" \
+  || fail "mobile Cursor target UI must keep the unverified-selection copy"
 grep -q "Non-current chat routing" "$SUPPORT_MATRIX" \
   || fail "support matrix must retain the unverified non-current routing boundary"
 grep -q "separate product path" "$DOC" \

@@ -559,7 +559,7 @@ describe('AgentCarousel primary copy', () => {
     expect(terminalSessionActionCopy('newSession', { action: 'closeSession', atUnixMs: 10_000 })).toBe('New');
   });
 
-  it('shows focused target switching for Terminal, OpenCode, Cursor, Codex, and Claude', () => {
+  it('shows focused target switching for Terminal, OpenCode, Cursor, Cursor Agent, Codex, and Claude', () => {
     expect(shouldShowCommandTargetSwitcher(directApp('terminal'))).toBe(true);
     expect(shouldShowCommandTargetSwitcher(cliApp('opencode'))).toBe(true);
     expect(shouldShowCommandTargetSwitcher({ ...codexApp(), remoteAppId: 'cursor', agentId: 'cursor' })).toBe(true);
@@ -574,12 +574,12 @@ describe('AgentCarousel primary copy', () => {
     ).toBe(true);
     expect(shouldShowCommandTargetSwitcher(cliApp('claude-code'))).toBe(true);
     expect(shouldShowCommandTargetSwitcher(cliApp('codex-cli'))).toBe(false);
-    expect(shouldShowCommandTargetSwitcher(cliApp('cursor-agent'))).toBe(false);
+    expect(shouldShowCommandTargetSwitcher(cliApp('cursor-agent'))).toBe(true);
     expect(shouldShowCommandTargetSwitcher(cliApp('gemini-cli'))).toBe(false);
     expect(shouldShowCommandTargetSwitcher(directApp('screen'))).toBe(false);
   });
 
-  it('retries a selected Codex or Claude desktop target until the app confirms it is active', () => {
+  it('retries a selected Codex, Claude desktop, or Cursor target until the app confirms it is active', () => {
     expect(shouldRequestTargetSelection(codexApp(), { selected: true, isActive: false })).toBe(true);
     expect(shouldRequestTargetSelection(codexApp(), { selected: true, isActive: true })).toBe(false);
     expect(shouldRequestTargetSelection(codexApp(), { selected: false, isActive: false })).toBe(true);
@@ -590,7 +590,8 @@ describe('AgentCarousel primary copy', () => {
       shouldRequestTargetSelection({ ...codexApp(), remoteAppId: 'claude-desktop' }, { selected: true, isActive: true }),
     ).toBe(false);
     expect(shouldRequestTargetSelection(cliApp('claude-code'), { selected: true, isActive: false })).toBe(false);
-    expect(shouldRequestTargetSelection(cursorApp(), { selected: true, isActive: false })).toBe(false);
+    expect(shouldRequestTargetSelection(cursorApp(), { selected: true, isActive: false })).toBe(true);
+    expect(shouldRequestTargetSelection(cursorApp(), { selected: true, isActive: true })).toBe(false);
   });
 
   it('shows cached workspace connection issues without hiding projects', () => {
