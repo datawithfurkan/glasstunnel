@@ -50,6 +50,25 @@ final class ClaudeDesktopAdapterTests: XCTestCase {
         XCTAssertEqual(parsedInterrupted.status, .idle)
         XCTAssertEqual(parsedInterrupted.statusDetail, "Stopped")
         XCTAssertFalse(parsedInterrupted.messages.contains { $0.text.hasPrefix("[Request interrupted") })
+
+        // The app files the interrupted tool's result after the marker; that
+        // record is not a new turn, so the card must stay "Stopped".
+        let lateResult = interrupted + """
+
+        {"type":"user","sessionId":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","timestamp":"2026-09-01T10:00:04.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_2","content":"Command was interrupted","is_error":true}]}}
+        """
+        let parsedLate = ClaudeCodeSessionParser.parse(jsonl: lateResult, agentID: "claude-desktop", maxMessages: 50)
+        XCTAssertEqual(parsedLate.status, .idle)
+        XCTAssertEqual(parsedLate.statusDetail, "Stopped")
+
+        // A real prompt after the interruption starts a new turn as usual.
+        let nextPrompt = lateResult + """
+
+        {"type":"user","entrypoint":"claude-desktop","cwd":"/Users/dev/App","sessionId":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","timestamp":"2026-09-01T10:00:09.000Z","message":{"role":"user","content":"Try again"}}
+        """
+        let parsedNext = ClaudeCodeSessionParser.parse(jsonl: nextPrompt, agentID: "claude-desktop", maxMessages: 50)
+        XCTAssertEqual(parsedNext.status, .working)
+        XCTAssertEqual(parsedNext.statusDetail, "Claude is working")
     }
 
     func testAskUserQuestionBecomesPendingInputRequestUntilAnswered() {
