@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const supabaseAuthMock = vi.hoisted(() => ({
   getSession: vi.fn(),
@@ -59,15 +59,44 @@ vi.mock('../transport/RelayConnection', () => ({
   RelayConnection: relayConnectionMock.MockRelayConnection,
 }));
 
+// Node has no IndexedDB; the store treats the relay cache as best effort.
+vi.mock('idb-keyval', () => ({
+  get: vi.fn(async () => undefined),
+  set: vi.fn(async () => {}),
+  del: vi.fn(async () => {}),
+}));
+
+const startPeerFlowMock = vi.hoisted(() => ({
+  calls: [] as StartPeerFlowParams[],
+}));
+
+vi.mock('../transport/startPeerFlow', () => ({
+  startPeerFlow: vi.fn(async (params: StartPeerFlowParams) => {
+    startPeerFlowMock.calls.push(params);
+  }),
+}));
+
 import {
   hasLinkCodeParam,
   mergeClaimedHost,
   mergeLocalOptimisticMessages,
   shouldEnterHostLinkFlow,
   useAppStore,
+  VIDEO_RETRY_BACKOFF_MS,
 } from './store';
-import { SCREEN_STREAM_CONNECTING_MESSAGE } from './screenStreamStatus';
-import { AdapterKind, AgentStatus, ChatRole, type AgentTargetOption } from '@glasstunnel/protocol';
+import {
+  SCREEN_STREAM_CONNECTING_MESSAGE,
+  SCREEN_STREAM_DISCONNECTED_MESSAGE,
+} from './screenStreamStatus';
+import type { RelayConnectionOptions } from '../transport/RelayConnection';
+import type { StartPeerFlowParams } from '../transport/startPeerFlow';
+import {
+  AdapterKind,
+  AgentStatus,
+  ChatRole,
+  type AgentTargetOption,
+  type RemoteApp,
+} from '@glasstunnel/protocol';
 import type { DeviceKeypair } from '@glasstunnel/shared-crypto';
 import type { PairedHost } from './store';
 
@@ -983,6 +1012,205 @@ describe('app store account link routing', () => {
     ]);
   });
 });
+
+describe('app store screen video recovery', () => {
+  type AppPeer = ReturnType<typeof useAppStore.getState>['peer'];
+  type AppSignaling = ReturnType<typeof useAppStore.getState>['signaling'];
+
+  beforeEach(() => {
+    relayConnectionMock.instances.length = 0;
+    startPeerFlowMock.calls.length = 0;
+  });
+
+  afterEach(() => {
+    useAppStore.getState().disconnectPeer();
+    useAppStore.setState({
+      route: 'loading',
+      pairedHost: null,
+      phoneKeypair: null,
+      videoStreams: {},
+      relayScreenFrames: {},
+      remoteApps: [],
+      relayHostOnline: null,
+      workspaceHostDeviceId: null,
+      error: null,
+    });
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('keeps a rendering screen stream while the relay reconnects', async () => {
+    setupRecoverableWorkspace();
+    const close = vi.fn();
+    const disconnect = vi.fn();
+    const stream = fakeScreenStream();
+    useAppStore.setState({
+      workspaceHostDeviceId: 'host-device',
+      relayHostOnline: true,
+      remoteApps: [screenRemoteApp()],
+      videoStreams: { screen: stream },
+      peer: { close } as unknown as AppPeer,
+      signaling: { disconnect } as unknown as AppSignaling,
+    });
+
+    const start = useAppStore.getState().startPeer({ keepVideoPeer: true });
+    await vi.waitFor(() => expect(relayConnectionMock.instances).toHaveLength(1));
+
+    expect(close).not.toHaveBeenCalled();
+    expect(disconnect).not.toHaveBeenCalled();
+    expect(useAppStore.getState().videoStreams.screen).toBe(stream);
+    expect(useAppStore.getState().relayHostOnline).toBeNull();
+    expect(useAppStore.getState().remoteApps[0]?.enabled).toBe(true);
+
+    relayConnectionMock.instances[0]?.resolveConnect?.('phone-device');
+    await start;
+    expect(useAppStore.getState().videoStreams.screen).toBe(stream);
+  });
+
+  it('tears the screen stream down on a full restart', async () => {
+    setupRecoverableWorkspace();
+    const close = vi.fn();
+    const stream = fakeScreenStream();
+    useAppStore.setState({
+      workspaceHostDeviceId: 'host-device',
+      relayHostOnline: true,
+      remoteApps: [screenRemoteApp()],
+      videoStreams: { screen: stream },
+      peer: { close } as unknown as AppPeer,
+    });
+
+    const start = useAppStore.getState().startPeer();
+    await vi.waitFor(() => expect(relayConnectionMock.instances).toHaveLength(1));
+
+    expect(close).toHaveBeenCalledOnce();
+    expect(useAppStore.getState().videoStreams.screen).toBeUndefined();
+
+    relayConnectionMock.instances[0]?.resolveConnect?.('phone-device');
+    await start;
+  });
+
+  it('retries a video flow that ends without a stream, with backoff', async () => {
+    setupRecoverableWorkspace();
+    useAppStore.setState({
+      workspaceHostDeviceId: 'host-device',
+      relayHostOnline: true,
+      remoteApps: [screenRemoteApp()],
+    });
+
+    void useAppStore.getState().startVideoPeer();
+    await vi.waitFor(() => expect(startPeerFlowMock.calls).toHaveLength(1));
+
+    startPeerFlowMock.calls[0]?.onClosed?.({ reason: 'timeout', error: 'timed out' });
+    expect(useAppStore.getState().error).toBe(SCREEN_STREAM_DISCONNECTED_MESSAGE);
+    expect(useAppStore.getState().relayHostOnline).toBe(true);
+
+    vi.advanceTimersByTime(VIDEO_RETRY_BACKOFF_MS[0]! - 1);
+    expect(startPeerFlowMock.calls).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+    await vi.waitFor(() => expect(startPeerFlowMock.calls).toHaveLength(2));
+
+    startPeerFlowMock.calls[1]?.onClosed?.({ reason: 'peer', error: 'dropped' });
+    vi.advanceTimersByTime(VIDEO_RETRY_BACKOFF_MS[1]! - 1);
+    expect(startPeerFlowMock.calls).toHaveLength(2);
+    vi.advanceTimersByTime(1);
+    await vi.waitFor(() => expect(startPeerFlowMock.calls).toHaveLength(3));
+  });
+
+  it('does not retry once screen sharing is stopped', async () => {
+    setupRecoverableWorkspace();
+    useAppStore.setState({
+      workspaceHostDeviceId: 'host-device',
+      relayHostOnline: true,
+      remoteApps: [screenRemoteApp()],
+    });
+
+    void useAppStore.getState().startVideoPeer();
+    await vi.waitFor(() => expect(startPeerFlowMock.calls).toHaveLength(1));
+    startPeerFlowMock.calls[0]?.onClosed?.({ reason: 'timeout', error: 'timed out' });
+    useAppStore.getState().stopVideoPeer('screen');
+
+    vi.advanceTimersByTime(VIDEO_RETRY_BACKOFF_MS[VIDEO_RETRY_BACKOFF_MS.length - 1]! * 2);
+    await Promise.resolve();
+
+    expect(startPeerFlowMock.calls).toHaveLength(1);
+  });
+
+  it('waits while the page is hidden and starts on resume', async () => {
+    setupRecoverableWorkspace();
+    vi.stubGlobal('document', { visibilityState: 'hidden' });
+    useAppStore.setState({
+      workspaceHostDeviceId: 'host-device',
+      relayHostOnline: true,
+      remoteApps: [screenRemoteApp()],
+    });
+
+    void useAppStore.getState().startVideoPeer();
+    await Promise.resolve();
+    expect(startPeerFlowMock.calls).toHaveLength(0);
+
+    vi.stubGlobal('document', { visibilityState: 'visible' });
+    useAppStore.getState().resumeVideoPeerIfNeeded();
+    await vi.waitFor(() => expect(startPeerFlowMock.calls).toHaveLength(1));
+
+    // A stream that is already rendering must not be restarted on resume.
+    useAppStore.setState({ videoStreams: { screen: fakeScreenStream() } });
+    useAppStore.getState().resumeVideoPeerIfNeeded();
+    await Promise.resolve();
+    expect(startPeerFlowMock.calls).toHaveLength(1);
+  });
+
+  it('keeps a live stream through a transient screen Error status but stops when sharing is off', async () => {
+    setupRecoverableWorkspace();
+    useAppStore.setState({
+      workspaceHostDeviceId: 'host-device',
+      remoteApps: [screenRemoteApp()],
+    });
+
+    const start = useAppStore.getState().startPeer();
+    await vi.waitFor(() => expect(relayConnectionMock.instances).toHaveLength(1));
+    const relay = relayConnectionMock.instances[0]!;
+    relay.resolveConnect?.('phone-device');
+    await start;
+
+    const stream = fakeScreenStream();
+    useAppStore.setState({ videoStreams: { screen: stream }, relayHostOnline: true });
+    const relayOpts = relay.opts as RelayConnectionOptions;
+
+    relayOpts.onRemoteApps?.(
+      [screenRemoteApp({ status: AgentStatus.Error, statusDetail: 'Screen unavailable' })],
+      false,
+    );
+    expect(useAppStore.getState().videoStreams.screen).toBe(stream);
+
+    relayOpts.onRemoteApps?.([screenRemoteApp({ enabled: false })], false);
+    expect(useAppStore.getState().videoStreams.screen).toBeUndefined();
+  });
+});
+
+function fakeScreenStream(): MediaStream {
+  const track = { stop: vi.fn(), readyState: 'live', kind: 'video' };
+  return {
+    getTracks: () => [track],
+    getVideoTracks: () => [track],
+  } as unknown as MediaStream;
+}
+
+function screenRemoteApp(overrides: Partial<RemoteApp> = {}): RemoteApp {
+  return {
+    remoteAppId: 'screen',
+    displayName: 'Mac Screen',
+    adapterKind: AdapterKind.Mirror,
+    agentId: 'screen',
+    enabled: true,
+    available: true,
+    status: AgentStatus.Idle,
+    statusDetail: 'Screen ready',
+    windowTitle: '',
+    applicationBundleId: '',
+    hasVideo: true,
+    ...overrides,
+  };
+}
 
 function setupRecoverableWorkspace() {
   vi.useFakeTimers();

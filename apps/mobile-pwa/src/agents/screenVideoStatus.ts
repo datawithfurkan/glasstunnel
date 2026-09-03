@@ -5,7 +5,11 @@ import {
 
 export { RELAY_SCREEN_FRAME_FRESH_MS };
 
-export type ScreenVideoRenderPhase = 'idle' | 'syncing' | 'ready' | 'stalled' | 'error';
+/**
+ * `frozen` is a stream that rendered before and then stopped receiving
+ * frames; `stalled` is a stream that never rendered at all.
+ */
+export type ScreenVideoRenderPhase = 'idle' | 'syncing' | 'ready' | 'frozen' | 'stalled' | 'error';
 
 export type ScreenVideoTone = 'ok' | 'warning' | 'error';
 
@@ -20,6 +24,7 @@ export interface ScreenVideoStatus {
     | 'disconnected'
     | 'waiting'
     | 'syncing'
+    | 'frozen'
     | 'stalled'
     | 'video-error'
     | 'ready';
@@ -72,6 +77,12 @@ export function describeScreenVideoStatus(input: ScreenVideoStatusInput): Screen
   if (input.hostOnline === false) {
     return { label: 'Mac offline', tone: 'error', canControl: false, issue: 'offline' };
   }
+  // A picture that is rendering right now outranks error text that may be
+  // stale (a status the Mac published for the fallback, a message from a
+  // previous flow); the liveness watchdog demotes it the moment frames stop.
+  if (input.hasStream && input.renderPhase === 'ready') {
+    return { label: 'Screen ready', tone: 'ok', canControl: true, issue: 'ready' };
+  }
   if (input.captureError) {
     return { label: 'Screen error', tone: 'error', canControl: false, issue: 'capture' };
   }
@@ -81,8 +92,8 @@ export function describeScreenVideoStatus(input: ScreenVideoStatusInput): Screen
   if (!input.hasStream) {
     return { label: 'Waiting for screen', tone: 'warning', canControl: false, issue: 'waiting' };
   }
-  if (input.renderPhase === 'ready') {
-    return { label: 'Screen ready', tone: 'ok', canControl: true, issue: 'ready' };
+  if (input.renderPhase === 'frozen') {
+    return { label: 'Screen paused', tone: 'warning', canControl: false, issue: 'frozen' };
   }
   if (input.renderPhase === 'stalled') {
     return { label: 'Screen not visible', tone: 'error', canControl: false, issue: 'stalled' };

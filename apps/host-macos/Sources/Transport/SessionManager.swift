@@ -85,6 +85,12 @@ public final class SessionManager {
     private var relayFileAttachmentBatches: [String: PendingRelayFileAttachmentBatch] = [:]
     #if os(macOS)
     private var relayScreenCapture: (any RelayScreenCapturing)?
+    /// The quality the last screen start asked for; nil once sharing stops.
+    private var relayScreenQuality: RemoteAppActionRequest.ScreenQuality?
+    /// Phones that asked for the screen over the relay and may need JPEG frames.
+    private var relayScreenRequesters: Set<DeviceID> = []
+    /// Phones whose WebRTC screen track currently delivers frames.
+    private var phonesWithLiveVideo: Set<DeviceID> = []
     private lazy var relayScreenCaptureReconciler = AsyncLatestStateReconciler<RemoteAppActionRequest.ScreenQuality?>(
         initialValue: nil
     ) { [weak self] quality in
@@ -197,6 +203,9 @@ public final class SessionManager {
             relayReconnectAttempt = 0
             onState?(.connected)
             try await publishInitialRelayState(using: relay)
+            #if os(macOS)
+            refreshRelayScreenCapture()
+            #endif
         } catch {
             self.relay = nil
             throw error
@@ -321,6 +330,9 @@ public final class SessionManager {
         for id in activeIDs {
             onPeerDisconnected?(id)
         }
+        #if os(macOS)
+        phonesWithLiveVideo.removeAll()
+        #endif
         stopRelayScreenCapture()
         if let pendingLinkCodeContinuation {
             self.pendingLinkCodeContinuation = nil
@@ -626,7 +638,7 @@ public final class SessionManager {
                 }
             }
         case .remoteAppActionRequest(let request):
-            handleRemoteAppActionRequest(request)
+            handleRemoteAppActionRequest(request, from: clientDeviceID)
         case .inputRequestResponse(let response):
             #if os(macOS)
             sessionRemoteAppLogger.info("remote app input response received agentId=\(response.agentId, privacy: .public) requestId=\(response.requestId, privacy: .public) answers=\(response.answers.count, privacy: .public)")
@@ -703,10 +715,13 @@ public final class SessionManager {
         }
     }
 
-    private func handleRemoteAppActionRequest(_ request: RemoteAppActionRequest) {
+    private func handleRemoteAppActionRequest(
+        _ request: RemoteAppActionRequest,
+        from clientDeviceID: DeviceID? = nil
+    ) {
         let agentId = RemoteAppDefinition.definition(for: request.remoteAppId)?.agentId ?? request.remoteAppId
         #if os(macOS)
-        sessionRemoteAppLogger.info("remote app action received remoteAppId=\(request.remoteAppId, privacy: .public) agentId=\(agentId, privacy: .public) action=\(request.action.rawValue, privacy: .public)")
+        sessionRemoteAppLogger.notice("remote app action received remoteAppId=\(request.remoteAppId, privacy: .public) agentId=\(agentId, privacy: .public) action=\(request.action.rawValue, privacy: .public)")
         #endif
         guard canPerformRelayRemoteAppAction(agentId: agentId, action: request.action) else {
             #if os(macOS)
@@ -716,14 +731,14 @@ public final class SessionManager {
         }
         let isScreenAction = request.remoteAppId == "screen" || agentId == "screen"
         #if os(macOS)
-        sessionRemoteAppLogger.info("remote app action accepted remoteAppId=\(request.remoteAppId, privacy: .public) agentId=\(agentId, privacy: .public) action=\(request.action.rawValue, privacy: .public)")
+        sessionRemoteAppLogger.notice("remote app action accepted remoteAppId=\(request.remoteAppId, privacy: .public) agentId=\(agentId, privacy: .public) action=\(request.action.rawValue, privacy: .public)")
         #endif
 
-        Task { @MainActor [weak self, controller = remoteAppController, request, agentId, isScreenAction] in
+        Task { @MainActor [weak self, controller = remoteAppController, request, agentId, isScreenAction, clientDeviceID] in
             do {
                 try await controller.performRemoteAppAction(request)
                 if isScreenAction {
-                    await self?.handleRelayScreenAction(request)
+                    await self?.handleRelayScreenAction(request, from: clientDeviceID)
                 }
             } catch {
                 #if os(macOS)
@@ -735,7 +750,10 @@ public final class SessionManager {
         }
     }
 
-    private func handleRelayScreenAction(_ request: RemoteAppActionRequest) async {
+    private func handleRelayScreenAction(
+        _ request: RemoteAppActionRequest,
+        from clientDeviceID: DeviceID?
+    ) async {
         #if os(macOS)
         switch request.action {
         case .disable, .stop, .closeSession:
@@ -743,26 +761,100 @@ public final class SessionManager {
             await relayScreenCaptureReconciler.waitUntilSettled()
         case .enable, .start, .launch, .newSession:
             await startRelayScreenCapture(
-                quality: request.screenQuality ?? .readable
+                quality: request.screenQuality ?? .readable,
+                requestedBy: clientDeviceID
             )
         }
         #endif
     }
 
     private func startRelayScreenCapture(
-        quality: RemoteAppActionRequest.ScreenQuality = .readable
+        quality: RemoteAppActionRequest.ScreenQuality = .readable,
+        requestedBy clientDeviceID: DeviceID? = nil
     ) async {
         #if os(macOS)
-        relayScreenCaptureReconciler.setDesired(quality)
+        relayScreenQuality = quality
+        if let clientDeviceID {
+            relayScreenRequesters.insert(clientDeviceID)
+            // A phone asking again wants frames now, whatever it reported before.
+            phonesWithLiveVideo.remove(clientDeviceID)
+        }
+        updateRelayScreenCaptureDesire(force: true)
         await relayScreenCaptureReconciler.waitUntilSettled()
         #endif
     }
 
     private func stopRelayScreenCapture() {
         #if os(macOS)
-        relayScreenCaptureReconciler.setDesired(nil)
+        relayScreenQuality = nil
+        relayScreenRequesters.removeAll()
+        updateRelayScreenCaptureDesire()
         #endif
     }
+
+    #if os(macOS)
+    /// The JPEG fallback runs while some phone that asked for the screen has
+    /// no live WebRTC track. Phones report their track through
+    /// `videoTrackHint`; a request whose phone identity is unknown keeps the
+    /// fallback running. `force` re-runs the reconciler for an explicit start,
+    /// which republishes the streaming status the phone waits for.
+    private func updateRelayScreenCaptureDesire(force: Bool = false) {
+        let allRequestersHaveVideo =
+            !relayScreenRequesters.isEmpty && relayScreenRequesters.isSubset(of: phonesWithLiveVideo)
+        let desired = allRequestersHaveVideo ? nil : relayScreenQuality
+        let changed = desired != relayScreenCaptureReconciler.desiredValue
+        if changed {
+            sessionRemoteAppLogger.notice("relay screen fallback \(desired == nil ? "paused" : "running", privacy: .public) requesters=\(self.relayScreenRequesters.count, privacy: .public) liveVideo=\(self.phonesWithLiveVideo.count, privacy: .public)")
+        }
+        guard changed || force else { return }
+        relayScreenCaptureReconciler.setDesired(desired)
+    }
+
+    /// The fallback keeps the relay client it was created with; after a relay
+    /// reconnect it has to be rebuilt on the new one.
+    private func refreshRelayScreenCapture() {
+        guard let desired = relayScreenCaptureReconciler.desiredValue else { return }
+        relayScreenCaptureReconciler.setDesired(desired)
+    }
+
+    private func handleVideoTrackHint(_ hint: VideoTrackHint, from phoneDeviceID: DeviceID) {
+        guard hint.agentId == "screen" else { return }
+        if hint.active {
+            phonesWithLiveVideo.insert(phoneDeviceID)
+        } else {
+            phonesWithLiveVideo.remove(phoneDeviceID)
+        }
+        updateRelayScreenCaptureDesire()
+    }
+
+    private func forgetPhoneVideo(_ phoneDeviceID: DeviceID) {
+        guard phonesWithLiveVideo.remove(phoneDeviceID) != nil else { return }
+        updateRelayScreenCaptureDesire()
+    }
+
+    /// Restarts every phone's screen capture; used after display and wake
+    /// events that leave ScreenCaptureKit silent without reporting an error.
+    public func restartVideoCaptures(reason: String) {
+        for (_, session) in sessions {
+            session.restartVideoCaptures(reason: reason)
+        }
+    }
+
+    nonisolated private static func shortDeviceID(_ deviceID: DeviceID) -> String {
+        String(deviceID.prefix(11))
+    }
+
+    nonisolated private static func describe(peerState: WebRTCPeer.State) -> String {
+        switch peerState {
+        case .new: return "new"
+        case .connecting: return "connecting"
+        case .connected: return "connected"
+        case .disconnected: return "disconnected"
+        case .failed(let reason): return "failed(\(reason))"
+        case .closed: return "closed"
+        }
+    }
+    #endif
 
     #if os(macOS)
     private func reconcileRelayScreenCapture(
@@ -1400,6 +1492,10 @@ public final class SessionManager {
     private func initiateWebRTC(to phoneDeviceId: DeviceID) async {
         guard let signaling else { return }
         if let existing = sessions.removeValue(forKey: phoneDeviceId) {
+            #if os(macOS)
+            sessionRemoteAppLogger.notice("peer replaced phone=\(Self.shortDeviceID(phoneDeviceId), privacy: .public)")
+            forgetPhoneVideo(phoneDeviceId)
+            #endif
             let stopTask = existing.stop()
             existing.peer.close()
             await stopTask.value
@@ -1443,6 +1539,9 @@ public final class SessionManager {
             guard let manager = self else { return }
             Task { @MainActor [manager] in
                 guard manager.sessions[phoneDeviceId] === session else { return }
+                #if os(macOS)
+                sessionRemoteAppLogger.notice("peer state phone=\(Self.shortDeviceID(phoneDeviceId), privacy: .public) state=\(Self.describe(peerState: state), privacy: .public)")
+                #endif
                 switch state {
                 case .connected:
                     manager.onPeerConnected?(phoneDeviceId)
@@ -1450,12 +1549,24 @@ public final class SessionManager {
                 case .closed, .failed:
                     let stopTask = manager.sessions[phoneDeviceId]?.stop()
                     manager.sessions.removeValue(forKey: phoneDeviceId)
+                    #if os(macOS)
+                    manager.forgetPhoneVideo(phoneDeviceId)
+                    #endif
                     manager.onPeerDisconnected?(phoneDeviceId)
                     await stopTask?.value
                 default: break
                 }
             }
         }
+        #if os(macOS)
+        session.onVideoTrackHint = { [weak self] phoneID, hint in
+            guard let manager = self else { return }
+            Task { @MainActor [manager] in
+                guard manager.sessions[phoneID] === session else { return }
+                manager.handleVideoTrackHint(hint, from: phoneID)
+            }
+        }
+        #endif
 
         do {
             await session.prepareMediaForOffer()

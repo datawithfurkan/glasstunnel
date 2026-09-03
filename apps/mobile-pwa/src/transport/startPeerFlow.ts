@@ -60,6 +60,7 @@ export async function startPeerFlow(params: StartPeerFlowParams) {
   let connectionTimeout: number | null = null;
   let disconnectedTimeout: number | null = null;
   let heartbeatId: number | null = null;
+  let signalingKeepaliveId: number | null = null;
   let abortHandler: (() => void) | null = null;
   const refs: {
     peer?: PeerConnection;
@@ -90,12 +91,30 @@ export async function startPeerFlow(params: StartPeerFlowParams) {
     }
   };
 
+  const stopSignalingKeepalive = () => {
+    if (signalingKeepaliveId !== null) {
+      window.clearInterval(signalingKeepaliveId);
+      signalingKeepaliveId = null;
+    }
+  };
+
+  /**
+   * Signaling only carries the offer, answer and ICE candidates. Once the peer
+   * is connected the socket is dead weight, so losing it must not cost the
+   * picture; the next restart opens a fresh one.
+   */
+  const releaseSignaling = () => {
+    stopSignalingKeepalive();
+    refs.signaling = undefined;
+  };
+
   const disposeFlow = (): boolean => {
     if (closed) return false;
     closed = true;
     clearConnectionTimeout();
     clearDisconnectedTimeout();
     stopHeartbeat();
+    stopSignalingKeepalive();
     if (signal && abortHandler) {
       signal.removeEventListener('abort', abortHandler);
       abortHandler = null;
@@ -145,8 +164,11 @@ export async function startPeerFlow(params: StartPeerFlowParams) {
     },
     onLocalIce: async (candidate) => {
       if (closed) return;
+      const activeSignaling = refs.signaling;
+      // A candidate found after the peer connected is optional; without a
+      // signaling socket it is simply not trickled.
+      if (!activeSignaling && peerConnected) return;
       try {
-        const activeSignaling = refs.signaling;
         if (!activeSignaling) throw new Error('Signaling is not ready yet.');
         await activeSignaling.sendEnvelope({
           envelopeId: createClientId(),
@@ -165,7 +187,7 @@ export async function startPeerFlow(params: StartPeerFlowParams) {
           },
         });
       } catch (error) {
-        onState({ error: (error as Error).message });
+        if (!peerConnected) onState({ error: (error as Error).message });
       }
     },
     onTrack: (stream, trackId) => {
@@ -175,15 +197,10 @@ export async function startPeerFlow(params: StartPeerFlowParams) {
     },
     onMessage: (msg) => {
       if (closed) return;
-      const activeSignaling = refs.signaling;
-      if (!activeSignaling) {
-        onState({ error: 'Signaling is not ready yet.' });
-        return;
-      }
       handleDataChannel(
         msg,
         peer,
-        activeSignaling,
+        refs.signaling,
         disposeFlow,
         onState,
         onHello,
@@ -243,7 +260,11 @@ export async function startPeerFlow(params: StartPeerFlowParams) {
     },
     onClose: (_event, intentional) => {
       if (closed || intentional) return;
-      closeFlow('signaling', peerConnected ? droppedError : timeoutError);
+      if (peerConnected) {
+        releaseSignaling();
+        return;
+      }
+      closeFlow('signaling', timeoutError);
     },
     trustedPublicKeyForDevice: (deviceId) =>
       deviceId === host.deviceId ? host.publicKeyB64 : undefined,
@@ -275,6 +296,13 @@ export async function startPeerFlow(params: StartPeerFlowParams) {
   onSignaling(signaling);
   onPeer(peer);
 
+  // Idle NAT bindings and carrier proxies drop a silent socket long before the
+  // peer does; the Worker answers each ping with a pong.
+  signalingKeepaliveId = window.setInterval(
+    () => signaling.sendControl({ type: 'ping', at: Date.now() }),
+    SIGNALING_KEEPALIVE_MS,
+  );
+
   await signaling.sendEnvelope({
     envelopeId: createClientId(),
     fromDeviceId: keypair.deviceId,
@@ -295,10 +323,12 @@ export async function startPeerFlow(params: StartPeerFlowParams) {
   }, 25_000);
 }
 
+export const SIGNALING_KEEPALIVE_MS = 20_000;
+
 function handleDataChannel(
   msg: DataChannelMessage,
   peer: PeerConnection,
-  signaling: SignalingClient,
+  signaling: SignalingClient | undefined,
   onFatalClose: () => void,
   onState: (s: { error?: string; connected?: boolean }) => void,
   onHello: (hello: Hello) => void,
@@ -320,7 +350,7 @@ function handleDataChannel(
         onState({ error: err });
         onFatalClose();
         peer.close();
-        signaling.disconnect();
+        signaling?.disconnect();
         return;
       }
       onHello(hello);

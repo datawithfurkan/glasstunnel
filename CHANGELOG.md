@@ -3,7 +3,33 @@
 Notable user-facing changes are recorded here. Glasstunnel follows semantic
 versioning after the first public beta; pre-release compatibility may still change.
 
-## Unreleased
+## 0.1.9 - Unreleased
+
+### Fixed
+
+- Mac Screen no longer goes black until the page is refreshed. The phone now
+  watches decoded and painted frames instead of trusting the video element,
+  shows "Screen paused" when frames stop, and restarts the stream on its own
+  with a growing wait; a stream that never renders is restarted after 10 s.
+- The Mac keeps one video sender per phone for the life of the connection and
+  repeats the last screen frame once a second while the screen is idle
+  (protocol 0.2.3), so a paused capture resumes on the track the phone already
+  has and a silent track means a dead one. A capture that ScreenCaptureKit
+  stops is restarted with backoff, and display changes, wake, and login
+  restart it too.
+- The web app mounted two copies of every panel (one per layout) and only hid
+  one with CSS; the hidden Mac Screen copy sent its own start request and
+  restarted the visible stream on every focus. Exactly one layout is mounted
+  now, chosen by viewport width.
+- A screen stream now survives relay reconnects, lifecycle recoveries and
+  signaling socket drops; the signaling socket pings every 20 s; a video flow
+  that fails before its first frame is retried with backoff; a flow requested
+  while the page was hidden starts on return; and Retry no longer restarts the
+  whole connection while the relay is healthy.
+- The Mac publishes its remote-app list only when it changed instead of every
+  5 s, and the relay Worker closes a Mac socket that stopped pinging so phones
+  stop seeing a dead Mac as online and screen requests are no longer
+  acknowledged into the void.
 
 ### Added
 
@@ -30,6 +56,12 @@ versioning after the first public beta; pre-release compatibility may still chan
 
 ### Changed
 
+- The Mac pauses the JPEG screen fallback while every phone that asked for the
+  screen reports a live WebRTC track, and resumes it the moment one stalls.
+  The fallback is rebuilt after the Mac's relay reconnects instead of feeding
+  a dead socket.
+- Screen, capture, and peer lifecycle events are logged at notice level, so
+  `log show` can reconstruct a screen-sharing incident.
 - Cursor chats on the phone are switchable ("Switch to", "Open chat" until the
   app confirms, "Current chat") instead of "Browse only".
 

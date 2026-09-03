@@ -5,6 +5,12 @@ import GTCapture
 import GTInput
 import GTAdapters
 import WebRTC
+#if os(macOS)
+import OSLog
+import QuartzCore
+
+private let screenLogger = Logger(subsystem: "io.glasstunnel.host", category: "Screen")
+#endif
 
 /// Glues a connected device's WebRTC peer to host-level remote apps.
 ///
@@ -25,10 +31,21 @@ public final class Session {
     public let autoLock: AutoLock
     public let redactor: SecretRedactor
 
+    /// The phone reporting whether its WebRTC screen track is delivering frames.
+    public var onVideoTrackHint: (@Sendable (DeviceID, VideoTrackHint) -> Void)?
+
     private let remoteAppController: RemoteAppController
     #if os(macOS)
     private var captures: [AgentID: any VideoCaptureBinding] = [:]
     private var captureReconcilers: [AgentID: AsyncLatestStateReconciler<RemoteApp?>] = [:]
+    private var captureRestartTasks: [AgentID: Task<Void, Never>] = [:]
+    private var captureRestartAttempts: [AgentID: Int] = [:]
+    private static let captureRestartBaseDelaySeconds: Double = 1
+    private static let captureRestartMaxDelaySeconds: Double = 30
+    /// Builds the Mac Screen capture binding; tests substitute a fake.
+    var displayCaptureBindingFactory: DisplayCaptureBindingFactory = { agentID, source, trackID, onState in
+        DisplayCaptureBinding(agentID: agentID, source: source, trackID: trackID, onState: onState)
+    }
     #endif
     private var currentLayout: GridLayout
     private var currentRemoteApps: [RemoteApp]
@@ -81,6 +98,8 @@ public final class Session {
     public func stop() -> Task<Void, Never> {
         isStopping = true
         #if os(macOS)
+        for task in captureRestartTasks.values { task.cancel() }
+        captureRestartTasks.removeAll()
         let agentIDs = Set(captures.keys).union(captureReconcilers.keys)
         let reconcilers = agentIDs.map { agentID in
             peer.removeVideoTrack(agentID: agentID)
@@ -290,6 +309,8 @@ public final class Session {
             // Deprecated compatibility message. The Mac is still the source of
             // truth and the visible model is now remote apps, not grid cells.
             _ = update
+        case .videoTrackHint(let hint):
+            onVideoTrackHint?(phoneDeviceID, hint)
         default:
             break
         }
@@ -850,7 +871,7 @@ public final class Session {
         if app.remoteAppId == "screen" || app.agentId == "screen" {
             let source = peer.videoSource()
             let trackID = peer.addVideoTrack(agentID: app.agentId, source: source)
-            let binding = DisplayCaptureBinding(agentID: app.agentId, source: source, trackID: trackID) { [weak self] state in
+            let binding = displayCaptureBindingFactory(app.agentId, source, trackID) { [weak self] state in
                 self?.handleCaptureState(state, app: app)
             }
             captures[app.agentId] = binding
@@ -863,6 +884,7 @@ public final class Session {
                 peer.removeVideoTrack(agentID: app.agentId)
                 if isCaptureDesired(app) {
                     publishCaptureFailure(app: app, reason: error.localizedDescription)
+                    scheduleCaptureRestart(for: app, reason: error.localizedDescription)
                 }
             }
             return
@@ -891,9 +913,67 @@ public final class Session {
     }
 
     private func stopCapture(agentId: AgentID) async {
+        captureRestartTasks.removeValue(forKey: agentId)?.cancel()
+        captureRestartAttempts[agentId] = nil
         guard let binding = captures.removeValue(forKey: agentId) else { return }
         peer.removeVideoTrack(agentID: agentId)
         await binding.stop()
+    }
+
+    /// Restarts a capture whose stream died, after a wait that doubles with
+    /// each failure. The dead binding stays registered until the restart runs,
+    /// so the reconciler cannot start a second stream in the meantime.
+    private func scheduleCaptureRestart(for app: RemoteApp, reason: String) {
+        guard captureRestartTasks[app.agentId] == nil, isCaptureDesired(app) else { return }
+        let attempt = captureRestartAttempts[app.agentId, default: 0]
+        captureRestartAttempts[app.agentId] = attempt + 1
+        let delaySeconds = min(
+            Self.captureRestartBaseDelaySeconds * pow(2, Double(attempt)),
+            Self.captureRestartMaxDelaySeconds
+        )
+        screenLogger.notice("capture restart scheduled agentId=\(app.agentId, privacy: .public) attempt=\(attempt + 1, privacy: .public) delaySeconds=\(delaySeconds, privacy: .public) reason=\(reason, privacy: .private)")
+        captureRestartTasks[app.agentId] = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
+            guard let self, !Task.isCancelled else { return }
+            self.captureRestartTasks[app.agentId] = nil
+            await self.restartCapture(agentID: app.agentId)
+        }
+    }
+
+    /// Stops the current binding, if any, and lets the reconciler build a
+    /// fresh one. The peer keeps its sender, so the phone sees frames resume
+    /// on the track it already has and needs no renegotiation.
+    private func restartCapture(agentID: AgentID) async {
+        let reconciler = captureReconciler(for: agentID)
+        await reconciler.waitUntilSettled()
+        guard !isStopping else { return }
+        if let binding = captures.removeValue(forKey: agentID) {
+            await binding.stop()
+        }
+        guard !isStopping,
+              let app = currentRemoteApps.first(where: { $0.agentId == agentID }),
+              isCaptureDesired(app)
+        else {
+            peer.removeVideoTrack(agentID: agentID)
+            return
+        }
+        reconciler.setDesired(app)
+    }
+
+    /// Restart every running capture; used after display and wake events that
+    /// can leave ScreenCaptureKit silent without reporting an error.
+    public func restartVideoCaptures(reason: String) {
+        guard !isStopping else { return }
+        for agentID in captures.keys {
+            screenLogger.notice("capture restart requested agentId=\(agentID, privacy: .public) reason=\(reason, privacy: .public)")
+            captureRestartTasks.removeValue(forKey: agentID)?.cancel()
+            captureRestartAttempts[agentID] = 0
+            captureRestartTasks[agentID] = Task { @MainActor [weak self] in
+                guard let self, !Task.isCancelled else { return }
+                self.captureRestartTasks[agentID] = nil
+                await self.restartCapture(agentID: agentID)
+            }
+        }
     }
 
     private func resolveWindowID(for app: RemoteApp) async -> CGWindowID? {
@@ -917,15 +997,18 @@ public final class Session {
         case .starting:
             publishCaptureState(app: app, status: .working, detail: captureStartingDetail(for: app), text: captureStartingMessage(for: app))
         case .running:
+            captureRestartAttempts[app.agentId] = 0
             publishCaptureState(app: app, status: .idle, detail: captureReadyDetail(for: app), text: captureReadyMessage(for: app))
         case .stopping:
             break
         case .error(let reason):
             publishCaptureFailure(app: app, reason: reason)
+            scheduleCaptureRestart(for: app, reason: reason)
         }
     }
 
     private func publishCaptureState(app: RemoteApp, status: AgentStatus, detail: String, text: String) {
+        screenLogger.notice("capture state agentId=\(app.agentId, privacy: .public) status=\(String(describing: status), privacy: .public) detail=\(detail, privacy: .public)")
         remoteAppController.publishRemoteAppStatus(
             remoteAppId: app.remoteAppId,
             status: status,
@@ -935,6 +1018,7 @@ public final class Session {
     }
 
     private func publishCaptureFailure(app: RemoteApp, reason: String) {
+        screenLogger.error("capture failed agentId=\(app.agentId, privacy: .public) reason=\(reason, privacy: .private)")
         let cleanReason = reason.trimmingCharacters(in: .whitespacesAndNewlines)
         let suffix = cleanReason.isEmpty ? "" : " \(cleanReason)"
         let text: String
@@ -994,12 +1078,19 @@ public final class Session {
 
 #if os(macOS)
 @MainActor
-private protocol VideoCaptureBinding: AnyObject {
+protocol VideoCaptureBinding: AnyObject {
     var agentID: AgentID { get }
     var trackID: String { get }
     func start() async throws
     func stop() async
 }
+
+typealias DisplayCaptureBindingFactory = @MainActor (
+    _ agentID: AgentID,
+    _ source: RTCVideoSource,
+    _ trackID: String,
+    _ onState: @escaping (WindowCapture.State) -> Void
+) -> any VideoCaptureBinding
 
 /// Bridges a `WindowCapture` to a `RTCVideoSource` by converting captured
 /// CMSampleBuffers into RTCVideoFrames.
@@ -1012,6 +1103,7 @@ final class WindowCaptureBinding: VideoCaptureBinding {
     private var capture: WindowCapture
     private let onState: (WindowCapture.State) -> Void
     private let downsampler = FrameDownsampler(targetMaxDimension: 1280)
+    private let keepalive = FrameKeepalive()
 
     init(agentID: AgentID, windowID: CGWindowID, source: RTCVideoSource, trackID: String, onState: @escaping (WindowCapture.State) -> Void) {
         self.agentID = agentID
@@ -1027,15 +1119,26 @@ final class WindowCaptureBinding: VideoCaptureBinding {
             Task { @MainActor in onState(state) }
         }
         let downsampler = downsampler
-        capture.onFrame = { [weak source, downsampler] sampleBuffer in
+        let keepalive = keepalive
+        // ScreenCaptureKit delivers frames only when pixels change. Repeating
+        // the last frame once a second lets the phone tell an idle screen from
+        // a dead stream and restart the latter.
+        keepalive.onRepeat = { [weak source] buffer in
             guard let source else { return }
-            guard let frame = makeVideoFrame(from: sampleBuffer, downsampler: downsampler) else { return }
-            source.capturer(RTCVideoCapturer(delegate: source), didCapture: frame)
+            source.capturer(RTCVideoCapturer(delegate: source), didCapture: makeRepeatedVideoFrame(from: buffer))
+        }
+        capture.onFrame = { [weak source, downsampler, keepalive] sampleBuffer in
+            guard let source else { return }
+            guard let made = makeVideoFrame(from: sampleBuffer, downsampler: downsampler) else { return }
+            keepalive.noteFrame(made.buffer)
+            source.capturer(RTCVideoCapturer(delegate: source), didCapture: made.frame)
         }
         try await capture.start()
+        keepalive.start()
     }
 
     func stop() async {
+        keepalive.stop()
         capture.onFrame = nil
         capture.onState = nil
         await capture.stop()
@@ -1051,6 +1154,7 @@ final class DisplayCaptureBinding: VideoCaptureBinding {
     private var capture: DisplayCapture
     private let onState: (WindowCapture.State) -> Void
     private let downsampler = FrameDownsampler(targetMaxDimension: 1280)
+    private let keepalive = FrameKeepalive()
 
     init(agentID: AgentID, source: RTCVideoSource, trackID: String, onState: @escaping (WindowCapture.State) -> Void) {
         self.agentID = agentID
@@ -1065,30 +1169,55 @@ final class DisplayCaptureBinding: VideoCaptureBinding {
             Task { @MainActor in onState(state) }
         }
         let downsampler = downsampler
-        capture.onFrame = { [weak source, downsampler] sampleBuffer in
+        let keepalive = keepalive
+        // ScreenCaptureKit delivers frames only when pixels change. Repeating
+        // the last frame once a second lets the phone tell an idle screen from
+        // a dead stream and restart the latter.
+        keepalive.onRepeat = { [weak source] buffer in
             guard let source else { return }
-            guard let frame = makeVideoFrame(from: sampleBuffer, downsampler: downsampler) else { return }
-            source.capturer(RTCVideoCapturer(delegate: source), didCapture: frame)
+            source.capturer(RTCVideoCapturer(delegate: source), didCapture: makeRepeatedVideoFrame(from: buffer))
+        }
+        capture.onFrame = { [weak source, downsampler, keepalive] sampleBuffer in
+            guard let source else { return }
+            guard let made = makeVideoFrame(from: sampleBuffer, downsampler: downsampler) else { return }
+            keepalive.noteFrame(made.buffer)
+            source.capturer(RTCVideoCapturer(delegate: source), didCapture: made.frame)
         }
         try await capture.start()
+        keepalive.start()
     }
 
     func stop() async {
+        keepalive.stop()
         capture.onFrame = nil
         capture.onState = nil
         await capture.stop()
     }
 }
 
-private func makeVideoFrame(from sampleBuffer: CMSampleBuffer, downsampler: FrameDownsampler) -> RTCVideoFrame? {
+private func makeVideoFrame(
+    from sampleBuffer: CMSampleBuffer,
+    downsampler: FrameDownsampler
+) -> (frame: RTCVideoFrame, buffer: CVPixelBuffer)? {
     guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return nil }
     let videoBuffer = downsampler.downsample(pixelBuffer) ?? pixelBuffer
     let timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
     let timestampNs = Int64(CMTimeGetSeconds(timestamp) * Double(NSEC_PER_SEC))
-    return RTCVideoFrame(
+    let frame = RTCVideoFrame(
         buffer: RTCCVPixelBuffer(pixelBuffer: videoBuffer),
         rotation: ._0,
         timeStampNs: timestampNs
+    )
+    return (frame, videoBuffer)
+}
+
+/// A keepalive copy of the last frame. ScreenCaptureKit stamps frames with
+/// the host clock, so a stamp taken from the same clock sorts after them.
+private func makeRepeatedVideoFrame(from buffer: CVPixelBuffer) -> RTCVideoFrame {
+    RTCVideoFrame(
+        buffer: RTCCVPixelBuffer(pixelBuffer: buffer),
+        rotation: ._0,
+        timeStampNs: Int64(CACurrentMediaTime() * Double(NSEC_PER_SEC))
     )
 }
 #endif

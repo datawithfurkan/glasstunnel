@@ -100,6 +100,8 @@ final class AppState: ObservableObject {
     private var deviceKey: DeviceKey?
     private var sessionManager: SessionManager?
     private var refreshTimer: Timer?
+    private var systemEventObservers: [NSObjectProtocol] = []
+    private var captureRestartDebounce: Task<Void, Never>?
     private var cancellables: Set<AnyCancellable> = []
     private var isApplyingKeepAwakePreference = false
 
@@ -156,6 +158,7 @@ final class AppState: ObservableObject {
                 await appState.refreshWindows()
             }
         }
+        installSystemEventObservers()
         if onboardingComplete && requiredPermissionsGranted {
             await startSessionManagerIfNeeded()
         }
@@ -691,6 +694,50 @@ final class AppState: ObservableObject {
 
     func rejectActiveDevice() {
         approvalController.rejectActive()
+    }
+
+    /// Display and wake transitions can leave ScreenCaptureKit silent without
+    /// an error. Restart the screen captures once the burst of notifications
+    /// that accompanies a hot-plug or wake has settled.
+    private func installSystemEventObservers() {
+        let workspaceCenter = NSWorkspace.shared.notificationCenter
+        let workspaceEvents: [Notification.Name] = [
+            NSWorkspace.didWakeNotification,
+            NSWorkspace.screensDidWakeNotification,
+            NSWorkspace.sessionDidBecomeActiveNotification,
+        ]
+        for name in workspaceEvents {
+            systemEventObservers.append(
+                workspaceCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                    Task { @MainActor [weak self] in
+                        self?.scheduleScreenCaptureRestart(reason: name.rawValue)
+                    }
+                }
+            )
+        }
+        systemEventObservers.append(
+            NotificationCenter.default.addObserver(
+                forName: NSApplication.didChangeScreenParametersNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.scheduleScreenCaptureRestart(
+                        reason: NSApplication.didChangeScreenParametersNotification.rawValue
+                    )
+                }
+            }
+        )
+    }
+
+    private func scheduleScreenCaptureRestart(reason: String) {
+        captureRestartDebounce?.cancel()
+        captureRestartDebounce = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            guard let self, !Task.isCancelled else { return }
+            self.captureRestartDebounce = nil
+            self.sessionManager?.restartVideoCaptures(reason: reason)
+        }
     }
 
     private func applyKeepAwakePreference() {
