@@ -281,7 +281,7 @@ describe('AgentCard terminal copy', () => {
     });
   });
 
-  it('describes Cursor targets as browsable chats, not switchable sessions', () => {
+  it('describes Cursor targets as switchable chats with the current one marked', () => {
     const currentChat = {
       label: 'glasstunnel',
       selected: true,
@@ -309,17 +309,17 @@ describe('AgentCard terminal copy', () => {
     });
     expect(commandTargetButtonDisplay(previousChat, AdapterKind.Cursor)).toEqual({
       label: 'Bug bash notes',
-      subtitle: 'Browse only',
+      subtitle: 'glasstunnel',
     });
     expect(commandTargetButtonState(previousChat, false, AdapterKind.Cursor)).toEqual({
       ariaDisabled: false,
-      ariaLabel: 'Browse chat: Bug bash notes',
+      ariaLabel: 'Switch to Bug bash notes',
       ariaPressed: false,
       canSelect: true,
     });
   });
 
-  it('does not call a locally selected Cursor target current until Cursor confirms it is active', () => {
+  it('keeps a selected Cursor chat actionable until Cursor confirms it is in front', () => {
     const cursorActiveChat = {
       label: 'current-chat',
       selected: false,
@@ -343,13 +343,13 @@ describe('AgentCard terminal copy', () => {
     });
     expect(commandTargetButtonDisplay(localOnlyChat, AdapterKind.Cursor)).toEqual({
       label: 'Bug bash notes',
-      subtitle: 'Browse only',
+      subtitle: 'Open this chat',
     });
     expect(commandTargetButtonState(localOnlyChat, false, AdapterKind.Cursor)).toEqual({
-      ariaDisabled: true,
-      ariaLabel: 'Browsing chat: Bug bash notes',
+      ariaDisabled: false,
+      ariaLabel: 'Open chat: Bug bash notes',
       ariaPressed: true,
-      canSelect: false,
+      canSelect: true,
     });
   });
 

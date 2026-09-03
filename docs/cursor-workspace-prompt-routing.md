@@ -11,9 +11,13 @@ prefill, destination acknowledgement, or exact existing-composer routing.
 
 ## Current contract
 
-- The active visible Cursor chat can use the verified Accessibility delivery path.
-- Non-current parsed targets are `Browse only` and must reject prompt delivery.
-- Cursor does not advertise `supportsNewThread` through this unverified route.
+- The chat the Cursor window shows can use the verified Accessibility delivery path.
+- Selecting another chat on the phone presses its entry in Cursor's sidebar and is
+  confirmed only when the window's title matches; until then the target reads
+  `Open this chat`, the phone retries, and prompts are refused rather than typed
+  into the wrong chat. A workspace `/prompt` deep link is not used for this.
+- "New chat" presses Cursor's own New Chat control; chats do not advertise
+  `supportsNewThread` through the unverified deep-link route.
 - Model controls remain read-only and managed in Cursor.
 
 ## Reconsideration Criteria

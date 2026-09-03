@@ -51,6 +51,8 @@
     "lab:e2e:codex-cli": "node scripts/lab/e2e.mjs codex-cli-chromium",
     "lab:e2e:cursor-agent": "node scripts/lab/e2e.mjs cursor-agent-chromium",
     "lab:e2e:cursor-agent:safari": "node scripts/lab/e2e.mjs cursor-agent-webkit",
+    "lab:e2e:cursor": "node scripts/lab/e2e.mjs cursor-desktop-chromium",
+    "lab:e2e:cursor:safari": "node scripts/lab/e2e.mjs cursor-desktop-webkit",
     "lab:e2e:claude-code": "node scripts/lab/e2e.mjs claude-code-chromium",
     "lab:e2e:claude-code:safari": "node scripts/lab/e2e.mjs claude-code-webkit",
     "lab:e2e:claude-desktop": "node scripts/lab/e2e.mjs claude-desktop-chromium",

@@ -35,6 +35,12 @@ test('projectsForMode isolates the opt-in Cursor Agent account journey', () => {
   assert.deepEqual(projectsForMode('cursor-agent-safari'), ['local-cursor-agent-mobile-webkit']);
 });
 
+test('projectsForMode isolates the opt-in Cursor desktop account journey', () => {
+  assert.deepEqual(projectsForMode('cursor-desktop-chromium'), ['local-cursor-desktop-mobile-chromium']);
+  assert.deepEqual(projectsForMode('cursor-desktop-webkit'), ['local-cursor-desktop-mobile-webkit']);
+  assert.deepEqual(projectsForMode('cursor-desktop-safari'), ['local-cursor-desktop-mobile-webkit']);
+});
+
 test('projectsForMode isolates the opt-in Claude account journeys', () => {
   assert.deepEqual(projectsForMode('claude-code-chromium'), ['local-claude-code-mobile-chromium']);
   assert.deepEqual(projectsForMode('claude-desktop-chromium'), [

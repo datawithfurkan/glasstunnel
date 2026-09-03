@@ -182,23 +182,21 @@ export function commandTargetButtonState(
   canSelect: boolean;
 } {
   const selected = Boolean(target.selected);
-  const unverifiedCodexSelection =
-    adapterKind === AdapterKind.Mirror && selected && target.isActive === false;
-  const ariaDisabled = (selected && !unverifiedCodexSelection) || readOnly;
+  // Desktop apps (Codex, Cursor) confirm a switch through their own window;
+  // until they do, the selected chat stays actionable so the phone can retry.
+  const unverifiedDesktopSelection =
+    (adapterKind === AdapterKind.Mirror || adapterKind === AdapterKind.Cursor) &&
+    selected &&
+    target.isActive === false;
+  const ariaDisabled = (selected && !unverifiedDesktopSelection) || readOnly;
   const display = commandTargetButtonDisplay(target, adapterKind);
-  const cursorCurrent = cursorTargetIsCurrent(target);
-  const ariaLabel =
-    adapterKind === AdapterKind.Cursor
-      ? cursorCurrent
+  const ariaLabel = unverifiedDesktopSelection
+    ? `Open chat: ${display.label}`
+    : selected
+      ? adapterKind === AdapterKind.Cursor
         ? `Current chat: ${display.label}`
-        : selected
-          ? `Browsing chat: ${display.label}`
-          : `Browse chat: ${display.label}`
-      : unverifiedCodexSelection
-        ? `Open chat: ${display.label}`
-        : selected
-          ? `Current session: ${display.label}`
-          : `Switch to ${display.label}`;
+        : `Current session: ${display.label}`
+      : `Switch to ${display.label}`;
 
   return {
     ariaDisabled,
@@ -224,15 +222,16 @@ export function commandTargetButtonDisplay(
       : target.subtitle || target.projectLabel
   )?.trim() || '';
 
-  if (adapterKind === AdapterKind.Cursor) {
-    return {
-      label,
-      subtitle: cursorTargetIsCurrent(target) ? 'Current chat' : 'Browse only',
-    };
+  if (
+    (adapterKind === AdapterKind.Mirror || adapterKind === AdapterKind.Cursor) &&
+    target.selected &&
+    target.isActive === false
+  ) {
+    return { label, subtitle: 'Open this chat' };
   }
 
-  if (adapterKind === AdapterKind.Mirror && target.selected && target.isActive === false) {
-    return { label, subtitle: 'Open this chat' };
+  if (adapterKind === AdapterKind.Cursor && cursorTargetIsCurrent(target)) {
+    return { label, subtitle: 'Current chat' };
   }
 
   return {

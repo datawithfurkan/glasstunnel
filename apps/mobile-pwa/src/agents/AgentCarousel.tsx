@@ -1479,7 +1479,8 @@ export function shouldRequestTargetSelection(
 ): boolean {
   return (
     !target.selected ||
-    ((app.remoteAppId === 'codex' || app.remoteAppId === 'claude-desktop') && target.isActive === false)
+    ((app.remoteAppId === 'codex' || app.remoteAppId === 'claude-desktop' || app.remoteAppId === 'cursor') &&
+      target.isActive === false)
   );
 }
 

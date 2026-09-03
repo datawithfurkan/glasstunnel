@@ -22,6 +22,8 @@ const SCREEN_WEBKIT_PROJECTS = ['local-screen-mobile-webkit'];
 const CODEX_CLI_CHROMIUM_PROJECTS = ['local-codex-cli-mobile-chromium'];
 const CURSOR_AGENT_CHROMIUM_PROJECTS = ['local-cursor-agent-mobile-chromium'];
 const CURSOR_AGENT_WEBKIT_PROJECTS = ['local-cursor-agent-mobile-webkit'];
+const CURSOR_DESKTOP_CHROMIUM_PROJECTS = ['local-cursor-desktop-mobile-chromium'];
+const CURSOR_DESKTOP_WEBKIT_PROJECTS = ['local-cursor-desktop-mobile-webkit'];
 const CLAUDE_CODE_CHROMIUM_PROJECTS = ['local-claude-code-mobile-chromium'];
 const CLAUDE_DESKTOP_CHROMIUM_PROJECTS = ['local-claude-desktop-mobile-chromium'];
 const CLAUDE_CODE_WEBKIT_PROJECTS = ['local-claude-code-mobile-webkit'];
@@ -305,6 +307,8 @@ export function projectsForMode(mode) {
   if (mode === 'codex-cli-chromium') return CODEX_CLI_CHROMIUM_PROJECTS;
   if (mode === 'cursor-agent-chromium') return CURSOR_AGENT_CHROMIUM_PROJECTS;
   if (mode === 'cursor-agent-webkit' || mode === 'cursor-agent-safari') return CURSOR_AGENT_WEBKIT_PROJECTS;
+  if (mode === 'cursor-desktop-chromium') return CURSOR_DESKTOP_CHROMIUM_PROJECTS;
+  if (mode === 'cursor-desktop-webkit' || mode === 'cursor-desktop-safari') return CURSOR_DESKTOP_WEBKIT_PROJECTS;
   if (mode === 'claude-code-chromium') return CLAUDE_CODE_CHROMIUM_PROJECTS;
   if (mode === 'claude-desktop-chromium') return CLAUDE_DESKTOP_CHROMIUM_PROJECTS;
   if (mode === 'claude-code-webkit' || mode === 'claude-code-safari') return CLAUDE_CODE_WEBKIT_PROJECTS;
