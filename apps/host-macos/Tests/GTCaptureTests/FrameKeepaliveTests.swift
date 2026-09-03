@@ -19,11 +19,11 @@ final class FrameKeepaliveTests: XCTestCase {
 
     func testFreshFramesPostponeTheRepeat() throws {
         let buffer = try makePixelBuffer()
-        var now: TimeInterval = 0
-        let keepalive = FrameKeepalive(interval: 1.0, clock: { now })
+        let clock = ManualClock()
+        let keepalive = FrameKeepalive(interval: 1.0, clock: { clock.now })
 
         keepalive.noteFrame(buffer)
-        now = 0.9
+        clock.now = 0.9
         keepalive.noteFrame(buffer)
         XCTAssertNil(keepalive.frameToRepeat(now: 1.5))
         XCTAssertNil(keepalive.frameToRepeat(now: 1.85))
@@ -70,5 +70,11 @@ final class FrameKeepaliveTests: XCTestCase {
         XCTAssertEqual(status, kCVReturnSuccess)
         return try XCTUnwrap(buffer)
     }
+}
+
+/// A clock the test advances by hand; a reference type so the keepalive's
+/// `@Sendable` clock closure captures it without capturing a mutable local.
+private final class ManualClock: @unchecked Sendable {
+    var now: TimeInterval = 0
 }
 #endif
