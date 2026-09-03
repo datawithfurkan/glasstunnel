@@ -405,8 +405,11 @@ export function ScreenRemotePanel({
     setVideoRenderPhase('idle');
     setVideoRenderDetail(null);
     if (hostOnline === true) {
+      // The relay is fine; only the screen stream needs a fresh start. A full
+      // connection restart here would tear down the peer just started.
       requestScreenStart();
       void startVideoPeer();
+      return;
     }
     onRetryConnection();
   };

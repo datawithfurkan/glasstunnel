@@ -46,6 +46,18 @@ export function isScreenStreamAvailable(apps: RemoteApp[]): boolean {
   );
 }
 
+/**
+ * True while the Mac reports screen sharing as on and available, regardless of
+ * the screen app's status. A transient Error status (the JPEG fallback failing
+ * to start, an action the screen app does not support) must not tear down a
+ * video stream that is still delivering frames; only turning sharing off, or
+ * losing Screen Recording permission, should.
+ */
+export function isScreenSharingOn(apps: RemoteApp[]): boolean {
+  const screen = apps.find((app) => app.remoteAppId === 'screen');
+  return Boolean(screen?.enabled && screen.available !== false);
+}
+
 export function shouldAcceptRelayScreenFrame(
   apps: RemoteApp[],
   frame: { agentId: string },
