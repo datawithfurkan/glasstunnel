@@ -386,9 +386,7 @@ private final class SnapshotCollector: @unchecked Sendable {
         task = Task { [weak self] in
             for await snapshot in stream {
                 guard let self else { return }
-                self.lock.lock()
-                self.snapshots.append(snapshot)
-                self.lock.unlock()
+                self.lock.withLock { self.snapshots.append(snapshot) }
             }
         }
     }
