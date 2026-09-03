@@ -2,6 +2,11 @@
 
 Every user-visible change to `packages/protocol/schema/glasstunnel.proto` goes here. Breaking changes bump the minor version of `PROTOCOL_VERSION`; additive changes bump the patch.
 
+## 0.2.3 - additive
+
+- Hosts repeat the last Mac Screen frame at least once per second while the screen is idle, so a silent video track means a dead one. Phones treat a host whose `hostVersion` is 0.2.3 or later as keepalive-capable and restart a screen stream that goes quiet.
+- Phones send `videoTrackHint` over the data channel to report whether their WebRTC screen track is delivering frames (`active`). The host pauses the JPEG relay fallback while every phone that asked for the screen reports a live track, and resumes it as soon as one reports a stall or drops off.
+
 ## 0.2.1 - additive
 
 - Added `ADAPTER_KIND_CLAUDE_DESKTOP` for the Claude desktop app adapter, distinct from the CLI-backed `ADAPTER_KIND_CLAUDE_CODE`.

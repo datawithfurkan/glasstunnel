@@ -330,6 +330,7 @@ public final class RemoteAppController {
     private var adapters: [String: any AgentAdapter] = [:]
     private var adapterObservers: [String: Task<Void, Never>] = [:]
     private var latestSnapshots: [AgentID: AgentStateSnapshot] = [:]
+    private var lastPublishedRemoteApps: [RemoteApp]?
     private var screenRecordingAvailable = true
     private let executableExists: @Sendable (String) -> Bool
     private let appExists: @Sendable (String) -> Bool
@@ -1411,8 +1412,15 @@ public final class RemoteAppController {
         "\(window.applicationBundleID)|\(window.pid)|\(window.windowID)|\(window.title)"
     }
 
+    /// Publishes only when the list actually changed. The 5 s window refresh
+    /// calls this constantly; republishing an identical list made every
+    /// connected phone re-evaluate its screen stream and rewrite its cache,
+    /// and made the relay re-send the hello for nothing.
     private func publishRemoteApps() {
-        onRemoteAppsChanged?(remoteAppsSnapshot())
+        let snapshot = remoteAppsSnapshot()
+        guard snapshot != lastPublishedRemoteApps else { return }
+        lastPublishedRemoteApps = snapshot
+        onRemoteAppsChanged?(snapshot)
     }
 
     private func persistEnabled() {

@@ -144,9 +144,22 @@ public final class WebRTCPeer: NSObject, @unchecked Sendable {
 
     /// Attach a VideoSource to the peer for a given grid cell. Returns a stable
     /// trackID the phone can use to map video to the agent.
+    ///
+    /// The peer keeps one sender per agent for its whole life. A restarted
+    /// capture replaces the sender's track, which needs no renegotiation; a
+    /// `removeTrack`/`addTrack` pair would put the new track on a fresh
+    /// m-section that the phone never learns about, because nothing here
+    /// sends a second offer.
     public func addVideoTrack(agentID: AgentID, source: RTCVideoSource) -> String {
         let trackID = "gt-\(agentID)"
         let track = factory.videoTrack(with: source, trackId: trackID)
+        senderLock.lock()
+        let existing = _videoSenders[agentID]
+        senderLock.unlock()
+        if let existing {
+            existing.track = track
+            return trackID
+        }
         let sender = connection.add(track, streamIds: ["gt-main"])
         senderLock.lock()
         if let sender { _videoSenders[agentID] = sender }
@@ -154,12 +167,29 @@ public final class WebRTCPeer: NSObject, @unchecked Sendable {
         return trackID
     }
 
+    /// Stops sending for the agent while keeping its negotiated sender, so a
+    /// later `addVideoTrack` resumes on the same track the phone already has.
     public func removeVideoTrack(agentID: AgentID) {
         senderLock.lock()
-        let sender = _videoSenders.removeValue(forKey: agentID)
+        let sender = _videoSenders[agentID]
         senderLock.unlock()
-        guard let sender else { return }
-        connection.removeTrack(sender)
+        sender?.track = nil
+    }
+
+    func hasVideoSender(agentID: AgentID) -> Bool {
+        senderLock.lock()
+        defer { senderLock.unlock() }
+        return _videoSenders[agentID] != nil
+    }
+
+    var videoSenderCount: Int {
+        senderLock.lock()
+        defer { senderLock.unlock() }
+        return _videoSenders.count
+    }
+
+    var senderCount: Int {
+        connection.senders.count
     }
 
     public func videoSource() -> RTCVideoSource {
@@ -171,6 +201,9 @@ public final class WebRTCPeer: NSObject, @unchecked Sendable {
     public func close() {
         dataChannel?.close()
         dataChannel = nil
+        senderLock.lock()
+        _videoSenders.removeAll()
+        senderLock.unlock()
         connection.close()
         onState?(.closed)
     }

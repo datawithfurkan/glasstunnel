@@ -368,7 +368,19 @@ export function ScreenRemotePanel({
     let cancelled = false;
     let paintedFrames = 0;
     let paintHandle: number | null = null;
+    let lastHintActive: boolean | null = null;
     const canCountPaints = typeof video.requestVideoFrameCallback === 'function';
+    // The Mac pauses its JPEG fallback while every phone reports a live
+    // track, and resumes it the moment one reports a stall.
+    const sendHint = (active: boolean) => {
+      if (!peer || lastHintActive === active) return;
+      lastHintActive = active;
+      peer.sendVideoTrackHint({
+        agentId: app.agentId,
+        trackId: stream.getVideoTracks()[0]?.id ?? '',
+        active,
+      });
+    };
     const armPaintProbe = () => {
       if (cancelled || !video.requestVideoFrameCallback) return;
       paintHandle = video.requestVideoFrameCallback(() => {
@@ -407,10 +419,12 @@ export function ScreenRemotePanel({
       });
       if (verdict.restart) {
         cancelled = true;
+        sendHint(false);
         restartStalledStream();
         return;
       }
       if (verdict.state === 'live') {
+        sendHint(true);
         if (Date.now() - streamAttachedAtRef.current >= LIVE_RESET_MS) {
           restartAttemptRef.current = 0;
         }
@@ -420,6 +434,7 @@ export function ScreenRemotePanel({
         return;
       }
       if (verdict.state === 'stalled') {
+        sendHint(false);
         setVideoRenderPhase((phase) => (phase === 'ready' || phase === 'frozen' ? 'frozen' : phase));
       }
     };
@@ -435,7 +450,7 @@ export function ScreenRemotePanel({
         video.cancelVideoFrameCallback(paintHandle);
       }
     };
-  }, [peer, restartStalledStream, stream, strictLiveness]);
+  }, [app.agentId, peer, restartStalledStream, stream, strictLiveness]);
 
   const sendTap = (
     element: HTMLElement,

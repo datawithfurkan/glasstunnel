@@ -7,7 +7,7 @@
  * of the repo buildable and match the proto schema one-to-one.
  */
 
-export const PROTOCOL_VERSION = '0.2.2';
+export const PROTOCOL_VERSION = '0.2.3';
 
 export type DeviceId = string;
 export type AgentId = string;
