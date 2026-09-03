@@ -269,26 +269,25 @@ test('@claude-desktop-account prompts, answers permission and question dialogs, 
   });
   await turnFinished(page, `Beta_PICKED_${marker}`, 1);
 
-  // 4. Interrupt from the phone. A long shell command is stopped through the
-  //    app's own Stop control; the transcript then records the turn as
-  //    stopped, so the card reads "idle" and the command's output never lands.
-  const sleepMarker = `${marker}_SLEPT`;
+  // 4. Interrupt from the phone. A long reply is stopped through the app's
+  //    own Stop control; the transcript then records the turn as stopped, so
+  //    the card reads "idle" and the reply's closing marker never lands. (A
+  //    long shell command is not a reliable target: Claude Code may run it in
+  //    the background and finish the turn at once.)
+  const doneMarker = `${marker}_DONE`;
   await sendPrompt(
     page,
-    `Run this shell command with your Bash tool and show me its output: sleep 45 && echo ${sleepMarker}`,
+    `Count from 1 to 400 in words, one number per line, without using any tools. After the last line, reply with exactly ${doneMarker}.`,
   );
-  const runPermission = page.getByText('Claude needs a decision', { exact: true }).filter({ visible: true });
-  if (await runPermission.waitFor({ state: 'visible', timeout: 20_000 }).then(() => true).catch(() => false)) {
-    await decide(page, /Allow/);
-  }
   const stop = page.getByRole('button', { name: 'Stop response', exact: true }).filter({ visible: true });
   await expect(stop).toBeVisible({ timeout: 60_000 });
+  await page.waitForTimeout(3_000);
   await stop.click();
   await expect(page.getByText('idle', { exact: true }).filter({ visible: true }).first()).toBeVisible({
     timeout: 90_000,
   });
   await expect(stop).toBeHidden();
-  expect(await occurrences(page, sleepMarker), 'the interrupted command never reported its output').toBe(1);
+  expect(await occurrences(page, doneMarker), 'the interrupted reply never reached its closing marker').toBe(1);
 
   // 5. The CLI card owns a different session, so none of the above moved it.
   await openTab(page, 'Code');

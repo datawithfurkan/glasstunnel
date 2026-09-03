@@ -299,6 +299,11 @@ enum ClaudeCodeSessionParser {
         var pendingInputRequest: AgentInputRequest?
         var model: String?
         var lastActivityUnixMs: Int64?
+        /// Set by the "[Request interrupted…]" record. The app then files the
+        /// interrupted tool's result as one more user record; that record must
+        /// not read as a new turn, or "Stopped" flips back to "working" until
+        /// the next real prompt.
+        var interruptedTurn = false
 
         for (index, line) in jsonl.split(whereSeparator: \.isNewline).enumerated() {
             guard
@@ -329,6 +334,7 @@ enum ClaudeCodeSessionParser {
                     status = .idle
                     statusDetail = "Stopped"
                     pendingInputRequest = nil
+                    interruptedTurn = true
                     messages.append(AgentChatMessage(
                         messageId: "\(agentID)-claude-\(index)",
                         role: .system,
@@ -340,6 +346,11 @@ enum ClaudeCodeSessionParser {
                 if raw["isMeta"] as? Bool == true || localCommandPrefixes.contains(where: { text.hasPrefix($0) }) {
                     continue
                 }
+                if interruptedTurn && !extracted.hasHumanText {
+                    // The interrupted tool's own result: keep "Stopped".
+                    break
+                }
+                interruptedTurn = false
                 status = .working
                 statusDetail = "Claude is working"
                 // The answer clears the question; so does moving on without one.
@@ -348,6 +359,7 @@ enum ClaudeCodeSessionParser {
                     pendingInputRequest = nil
                 }
             case "assistant":
+                interruptedTurn = false
                 // A newer assistant record means any earlier question was
                 // abandoned or answered outside the transcript.
                 pendingInputRequest = nil
