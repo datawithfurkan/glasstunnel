@@ -343,6 +343,10 @@ public final class CursorStateWatcher: @unchecked Sendable {
 
         lock.lock()
         lastReadStoreClock = clock
+        // A store replaced while it was being read leaves the clock in step
+        // with content that is already stale; forget the clock so the next
+        // poll reads again.
+        if storeClock() != clock { lastReadStoreClock = nil }
         lock.unlock()
 
         publish(Snapshot(

@@ -119,7 +119,12 @@ test('@cursor-agent-account prompts, reads a file in plan mode, and interrupts C
   const stop = page.getByRole('button', { name: 'Stop response', exact: true }).filter({ visible: true });
   await expect(stop).toBeVisible({ timeout: 60_000 });
   await page.waitForTimeout(2_000);
-  await stop.click();
+  // A fast model can finish the long reply before the click lands; a Stop
+  // control that vanished then means the turn ended on its own, which is a
+  // lane failure worth naming rather than a silent hang until the test timeout.
+  await stop.click({ timeout: 15_000 }).catch(async () => {
+    throw new Error(`the Stop control disappeared before it could be pressed; the card shows ${await page.locator('main').filter({ visible: true }).first().innerText().then((t) => t.slice(-300))}`);
+  });
   await expect(page.getByText('idle', { exact: true }).filter({ visible: true }).first()).toBeVisible({
     timeout: 60_000,
   });

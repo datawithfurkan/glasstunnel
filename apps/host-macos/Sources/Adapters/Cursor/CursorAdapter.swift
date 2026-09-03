@@ -70,6 +70,14 @@ public final class CursorAdapter: AgentAdapter, @unchecked Sendable {
     private var turnEndedByHook = false
     /// The status and detail the ending stop hook reported.
     private var hookVerdict: (AgentStatus, String)?
+    /// True from a prompt (phone or `beforeSubmitPrompt` hook) until a stop
+    /// hook or a settled store state ends the turn. While it runs, the
+    /// composer's record still names the previous generation's outcome, so a
+    /// stale "aborted" there must not stop the running turn.
+    private var turnInProgress = false
+    /// The last chat the store reported as selected; a read that found none
+    /// does not count as a switch.
+    private var lastSelectedTargetId: String?
     private var liveRows: [LiveRow] = []
     private var liveEvents: [AgentChatMessage] = []
     private var turnStartMessageCount: Int?
@@ -204,6 +212,7 @@ public final class CursorAdapter: AgentAdapter, @unchecked Sendable {
         turnStartMessageCount = latest?.messages.count ?? 0
         hookAnchor = nil
         turnEndedByHook = false
+        turnInProgress = true
         currentStatus = .working
         currentDetail = Self.workingDetail
         lastWorkingSince = Date()
@@ -434,6 +443,7 @@ public final class CursorAdapter: AgentAdapter, @unchecked Sendable {
             turnStartMessageCount = latest?.messages.count ?? 0
             lastWorkingSince = Date()
             turnEndedByHook = false
+            turnInProgress = true
         case .preToolUse:
             let name = event.toolName.isEmpty ? "tool" : event.toolName
             let id = event.toolCallId.isEmpty ? "\(name)-\(liveRows.count + 1)" : event.toolCallId
@@ -468,6 +478,7 @@ public final class CursorAdapter: AgentAdapter, @unchecked Sendable {
             }
             optimisticPrompt = nil
             turnEndedByHook = true
+            turnInProgress = false
             hookVerdict = (currentStatus, currentDetail)
         case .other:
             lock.unlock()
@@ -493,7 +504,11 @@ public final class CursorAdapter: AgentAdapter, @unchecked Sendable {
     private func apply(_ snapshot: CursorStateWatcher.Snapshot) {
         lock.lock()
         let previousAnchor = latest.map(Self.anchor(for:))
-        let selectionChanged = latest?.selectedTargetId != snapshot.selectedTargetId
+        // A read that found no chats (the store between writes) is not a
+        // switch; only a different selected chat resets the turn state.
+        let previousSelection = lastSelectedTargetId
+        let selectionChanged = snapshot.selectedTargetId != nil && previousSelection != nil && previousSelection != snapshot.selectedTargetId
+        if let selected = snapshot.selectedTargetId { lastSelectedTargetId = selected }
         let previousIds = Set((latest?.availableTargets ?? []).map(\.targetId))
         latest = snapshot
         let storeMoved = previousAnchor != Self.anchor(for: snapshot)
@@ -511,6 +526,7 @@ public final class CursorAdapter: AgentAdapter, @unchecked Sendable {
             pendingAnswerNote = nil
             hookAnchor = nil
             turnEndedByHook = false
+            turnInProgress = false
         }
         // Live rows and the echoed prompt are stand-ins until the store shows
         // the turn itself.
@@ -534,20 +550,28 @@ public final class CursorAdapter: AgentAdapter, @unchecked Sendable {
                 currentDetail = warning
             } else if optimisticPrompt != nil, snapshot.status != .waitingInput, !storeMoved {
                 // The prompt was just typed; the store has not seen it yet.
-            } else if turnEndedByHook, snapshot.status == .working {
+            } else if turnEndedByHook, snapshot.status == .working || snapshot.status == .done {
                 // The store persisted the ended turn's prompt (and perhaps a
                 // partial reply); the stop hook already settled that turn.
                 if let hookVerdict {
                     currentStatus = hookVerdict.0
                     currentDetail = hookVerdict.1
                 }
+            } else if turnInProgress, snapshot.status == .idle {
+                // Either the composer's record still names the previous
+                // generation's abort, or a read caught the store between
+                // writes; the turn that just started is running.
             } else {
                 currentStatus = snapshot.status
                 currentDetail = snapshot.statusDetail
                 if currentStatus == .idle, currentDetail.isEmpty, let warning = snapshot.schemaWarning {
                     currentDetail = warning
                 }
-                if snapshot.status == .working { lastWorkingSince = Date() }
+                switch snapshot.status {
+                case .working: lastWorkingSince = Date()
+                case .done, .error, .waitingInput: turnInProgress = false
+                default: break
+                }
             }
         }
         if let activity = snapshot.lastActivityUnixMs, activity > lastActivityUnixMs {
@@ -580,6 +604,7 @@ public final class CursorAdapter: AgentAdapter, @unchecked Sendable {
         currentDetail = "Idle"
         hookAnchor = nil
         optimisticPrompt = nil
+        turnInProgress = false
         return true
     }
 

@@ -283,9 +283,88 @@ final class CursorAdapterTests: XCTestCase {
         XCTAssertEqual(persisted.statusDetail, CursorAdapter.stoppedDetail)
         XCTAssertFalse(snapshots.all.dropFirst(seen).contains { $0.status == .working }, "no working state after the stop")
 
+        // A partial reply persisted with a "completed" record reads as done on
+        // its own; the stop hook's verdict still stands.
+        let seenBeforeReply = snapshots.all.count
+        try CursorTestFixtures.writeDesktopStore(
+            at: root,
+            composers: [
+                CursorTestFixtures.Composer(
+                    composerId: "composer-release",
+                    name: "Release chat",
+                    workspaceId: "ws-1",
+                    createdAt: 1_782_385_000_000,
+                    lastUpdatedAt: 1_782_390_000_000,
+                    status: "completed",
+                    messages: [
+                        ["role": "user", "content": [["type": "text", "text": "Check the repo"]]],
+                        ["role": "assistant", "content": [["type": "text", "text": "All clean."]]],
+                        ["role": "user", "content": [["type": "text", "text": "Count to four hundred"]]],
+                        ["role": "assistant", "content": [["type": "text", "text": "one, two, three"]]],
+                    ]
+                ),
+            ],
+            workspaces: ["ws-1": "/Users/dev/App"]
+        )
+        let partial = try await snapshots.wait(timeout: 8) { $0.recentMessages.contains { $0.text == "one, two, three" } }
+        XCTAssertEqual(partial.status, .idle)
+        XCTAssertEqual(partial.statusDetail, CursorAdapter.stoppedDetail, "the partial reply does not turn an interrupted turn into a finished one")
+        XCTAssertFalse(snapshots.all.dropFirst(seenBeforeReply).contains { $0.status == .done })
+
         // A new prompt from the app starts a new turn again.
         hooks.emit(kind: "beforeSubmitPrompt", conversation: "composer-release")
         _ = try await snapshots.wait(timeout: 5) { $0.status == .working }
+    }
+
+    func testStaleAbortRecordDoesNotStopARunningTurn() async throws {
+        try await adapter.start()
+        _ = try await snapshots.wait(timeout: 5) { $0.status == .done }
+        try await adapter.sendInput("Count to four hundred", submit: true)
+        _ = try await snapshots.wait(timeout: 5) { $0.status == .working }
+
+        // Cursor persists the new prompt while the composer's record still says
+        // the previous generation was aborted; the running turn stays working.
+        let seen = snapshots.all.count
+        // The store keeps the whole chat, so its copy of the turn has more rows
+        // than the card counted when the prompt left the phone.
+        func write(status: String, reply: String?) throws {
+            var messages: [[String: Any]] = [
+                ["role": "user", "content": [["type": "text", "text": "Check the repo"]]],
+                ["role": "assistant", "content": [
+                    ["type": "text", "text": "Looking."],
+                    ["type": "tool-call", "toolCallId": "c1", "toolName": "Shell", "args": ["command": "git status --short"]],
+                ]],
+                ["role": "tool", "content": [["type": "tool-result", "toolCallId": "c1", "toolName": "Shell", "result": "clean"]]],
+                ["role": "assistant", "content": [["type": "text", "text": "All clean."]]],
+                ["role": "user", "content": [["type": "text", "text": "Count to four hundred"]]],
+            ]
+            if let reply { messages.append(["role": "assistant", "content": [["type": "text", "text": reply]]]) }
+            try CursorTestFixtures.writeDesktopStore(
+                at: root,
+                composers: [
+                    CursorTestFixtures.Composer(
+                        composerId: "composer-release",
+                        name: "Release chat",
+                        workspaceId: "ws-1",
+                        createdAt: 1_782_385_000_000,
+                        lastUpdatedAt: reply == nil ? 1_782_391_000_000 : 1_782_392_000_000,
+                        status: status,
+                        messages: messages
+                    ),
+                ],
+                workspaces: ["ws-1": "/Users/dev/App"]
+            )
+        }
+        try write(status: "aborted", reply: nil)
+        let persisted = try await snapshots.wait(timeout: 8) { $0.recentMessages.count >= 6 && $0.recentMessages.last?.text == "Count to four hundred" }
+        XCTAssertEqual(persisted.status, .working, "a stale abort record must not stop the turn that just started")
+        XCTAssertFalse(snapshots.all.dropFirst(seen).contains { $0.statusDetail == CursorAdapter.stoppedDetail })
+
+        // The reply lands and the record says completed: the turn is done.
+        try write(status: "completed", reply: "one, two, three, four hundred")
+        let finished = try await snapshots.wait(timeout: 8) { $0.recentMessages.last?.text == "one, two, three, four hundred" }
+        XCTAssertEqual(finished.status, .done)
+        XCTAssertEqual(finished.statusDetail, CursorAdapter.doneDetail)
     }
 
     func testStoreChangesReplaceTheLiveRows() async throws {

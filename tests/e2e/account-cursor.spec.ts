@@ -104,12 +104,18 @@ test('@cursor-desktop-account switches to a dedicated chat, prompts, and interru
   const doneMarker = `${marker}_DONE`;
   await sendPrompt(
     page,
-    `Count from 1 to 400 in words, one number per line, without using any tools. After the last line, reply with exactly ${doneMarker}.`,
+    `Count from 1 to 1500 in words, one number per line, without using any tools. After the last line, reply with exactly ${doneMarker}.`,
   );
+  // The app's model can be fast: press Stop soon after the turn starts.
   const stop = page.getByRole('button', { name: 'Stop response', exact: true }).filter({ visible: true });
   await expect(stop).toBeVisible({ timeout: 60_000 });
-  await page.waitForTimeout(3_000);
-  await stop.click();
+  await page.waitForTimeout(1_500);
+  // A fast model can finish the long reply before the click lands; a Stop
+  // control that vanished then means the turn ended on its own, which is a
+  // lane failure worth naming rather than a silent hang until the test timeout.
+  await stop.click({ timeout: 15_000 }).catch(async () => {
+    throw new Error(`the Stop control disappeared before it could be pressed; the card shows ${await page.locator('main').filter({ visible: true }).first().innerText().then((t) => t.slice(-300))}`);
+  });
   await expect(page.getByText('idle', { exact: true }).filter({ visible: true }).first()).toBeVisible({
     timeout: 90_000,
   });
