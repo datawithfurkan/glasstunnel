@@ -462,37 +462,41 @@ public final class CursorAgentAdapter: AgentAdapter, @unchecked Sendable {
         let collected = OutputBuffer()
 
         setCurrentProcess(process)
+        // Each handler delivers its chunks in order and reports end of file
+        // last, so the turn is judged only once that report arrived: an
+        // earlier version drained the pipe from the termination handler and
+        // could resume before a chunk the handler had already read was
+        // published, losing the chat id or the result line on a busy machine.
+        let stdoutClosed = DispatchSemaphore(value: 0)
+        let stderrClosed = DispatchSemaphore(value: 0)
         return await withCheckedContinuation { continuation in
             stdout.fileHandleForReading.readabilityHandler = { handle in
                 let data = handle.availableData
-                guard !data.isEmpty else { return }
+                guard !data.isEmpty else {
+                    handle.readabilityHandler = nil
+                    stdoutClosed.signal()
+                    return
+                }
                 let text = String(decoding: data, as: UTF8.self)
                 collected.append(text)
                 publish(text)
             }
             stderr.fileHandleForReading.readabilityHandler = { handle in
                 let data = handle.availableData
-                guard !data.isEmpty else { return }
+                guard !data.isEmpty else {
+                    handle.readabilityHandler = nil
+                    stderrClosed.signal()
+                    return
+                }
                 collected.append(String(decoding: data, as: UTF8.self))
             }
             process.terminationHandler = { [weak self] process in
+                // A grandchild that still holds the pipe after the CLI itself
+                // was ended must not hang the turn, hence the bounded waits.
+                _ = stdoutClosed.wait(timeout: .now() + 1.5)
+                _ = stderrClosed.wait(timeout: .now() + 0.5)
                 stdout.fileHandleForReading.readabilityHandler = nil
                 stderr.fileHandleForReading.readabilityHandler = nil
-                // Drain what is left, but never hang on a grandchild that
-                // still holds the pipe after the CLI itself was ended.
-                let drained = DispatchSemaphore(value: 0)
-                DispatchQueue.global(qos: .utility).async {
-                    let restOut = stdout.fileHandleForReading.readDataToEndOfFile()
-                    if !restOut.isEmpty {
-                        let text = String(decoding: restOut, as: UTF8.self)
-                        collected.append(text)
-                        publish(text)
-                    }
-                    let restErr = stderr.fileHandleForReading.readDataToEndOfFile()
-                    if !restErr.isEmpty { collected.append(String(decoding: restErr, as: UTF8.self)) }
-                    drained.signal()
-                }
-                _ = drained.wait(timeout: .now() + 1.5)
                 self?.clearCurrentProcess(process)
                 continuation.resume(returning: RunResult(status: process.terminationStatus, combinedOutput: collected.value()))
             }

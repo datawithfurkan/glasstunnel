@@ -457,6 +457,7 @@ private final class SnapshotCollector: @unchecked Sendable {
             try await Task.sleep(nanoseconds: 40_000_000)
         }
         let summary = all.suffix(6).map { "\($0.status)/\($0.statusDetail)" }.joined(separator: " → ")
-        throw NSError(domain: "SnapshotCollector", code: 1, userInfo: [NSLocalizedDescriptionKey: "timed out; last snapshots: \(summary)"])
+        let lastMessage = all.last?.recentMessages.last.map { "\($0.kind): \($0.text)" } ?? "-"
+        throw NSError(domain: "SnapshotCollector", code: 1, userInfo: [NSLocalizedDescriptionKey: "timed out; last snapshots: \(summary); last message: \(lastMessage)"])
     }
 }
