@@ -476,12 +476,9 @@ public final class CursorAdapter: AgentAdapter, @unchecked Sendable {
                 currentStatus = .done
                 currentDetail = Self.doneDetail
             }
-            // The echoed prompt stays until the store shows the turn itself;
-            // dropping it here left the transcript without the prompt of an
-            // interrupted turn until Cursor had persisted it.
-            if let start = turnStartMessageCount, (latest?.messages.count ?? 0) > start {
-                optimisticPrompt = nil
-            }
+            // The echoed prompt stays until the store shows the same words;
+            // an aborted prompt is sometimes never persisted, and the echo is
+            // then the only record the phone has of it.
             turnEndedByHook = true
             turnInProgress = false
             hookVerdict = (currentStatus, currentDetail)
@@ -534,9 +531,15 @@ public final class CursorAdapter: AgentAdapter, @unchecked Sendable {
             turnInProgress = false
         }
         // Live rows and the echoed prompt are stand-ins until the store shows
-        // the turn itself.
+        // the turn itself. The echo goes only when the store holds the same
+        // words: counting rows misfires when the previous turn's reply lands
+        // late, and an aborted prompt may never be persisted at all, in which
+        // case the echo is the only record the phone has of it.
+        if let echoed = optimisticPrompt,
+           snapshot.messages.contains(where: { $0.role == .user && $0.text.trimmingCharacters(in: .whitespacesAndNewlines) == echoed.text }) {
+            optimisticPrompt = nil
+        }
         if let start = turnStartMessageCount, snapshot.messages.count > start {
-            if snapshot.messages.last(where: { $0.role == .user }) != nil { optimisticPrompt = nil }
             let storeHasLiveRow = snapshot.messages.contains { message in message.kind == .toolCall && liveRows.contains { $0.callId == message.toolCallId } }
             if storeHasLiveRow || snapshot.messages.count >= start + 1 + liveRows.count {
                 liveRows = []
