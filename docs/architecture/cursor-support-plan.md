@@ -268,6 +268,8 @@ working → done from hooks, see the reply and tool rows, interrupt a long reply
 
 ## Status (2026-09-03)
 
+- 2026-09-03 afternoon: `pnpm lab:e2e:cursor-agent` and `:safari` pass on the real CLI (nano model); public record `docs/release-evidence/agent-apps/cursor-agent-phone-driven-pass.md` at d5790f4a. The first live run exposed and fixed the per-part reminder filter and the per-folder chat selection. The desktop lane still waits for a local (not Cloud) chat named "Glasstunnel live evidence".
+
 Draft PR: https://github.com/datawithfurkan/glasstunnel/pull/22.
 
 Stages 0–2 and the phone changes are implemented and unit-tested (`swift test`
