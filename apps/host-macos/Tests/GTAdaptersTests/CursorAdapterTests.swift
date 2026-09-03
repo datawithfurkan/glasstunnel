@@ -255,6 +255,37 @@ final class CursorAdapterTests: XCTestCase {
         _ = try await snapshots.wait(timeout: 5) { $0.status == .working && $0.statusDetail == "Stopping" }
         hooks.emit(kind: "stop", conversation: "composer-release", status: "aborted")
         _ = try await snapshots.wait(timeout: 5) { $0.status == .idle && $0.statusDetail == CursorAdapter.stoppedDetail }
+
+        // The app then persists the interrupted turn: the prompt with no reply,
+        // which reads as "working" on its own. The stop hook already settled
+        // the turn, so the card stays stopped until a new turn starts.
+        let seen = snapshots.all.count
+        try CursorTestFixtures.writeDesktopStore(
+            at: root,
+            composers: [
+                CursorTestFixtures.Composer(
+                    composerId: "composer-release",
+                    name: "Release chat",
+                    workspaceId: "ws-1",
+                    createdAt: 1_782_385_000_000,
+                    lastUpdatedAt: 1_782_389_000_000,
+                    messages: [
+                        ["role": "user", "content": [["type": "text", "text": "Check the repo"]]],
+                        ["role": "assistant", "content": [["type": "text", "text": "All clean."]]],
+                        ["role": "user", "content": [["type": "text", "text": "Count to four hundred"]]],
+                    ]
+                ),
+            ],
+            workspaces: ["ws-1": "/Users/dev/App"]
+        )
+        let persisted = try await snapshots.wait(timeout: 8) { $0.recentMessages.contains { $0.text == "Count to four hundred" } }
+        XCTAssertEqual(persisted.status, .idle, "the store's reading must not revive a turn the stop hook ended")
+        XCTAssertEqual(persisted.statusDetail, CursorAdapter.stoppedDetail)
+        XCTAssertFalse(snapshots.all.dropFirst(seen).contains { $0.status == .working }, "no working state after the stop")
+
+        // A new prompt from the app starts a new turn again.
+        hooks.emit(kind: "beforeSubmitPrompt", conversation: "composer-release")
+        _ = try await snapshots.wait(timeout: 5) { $0.status == .working }
     }
 
     func testStoreChangesReplaceTheLiveRows() async throws {
@@ -383,6 +414,9 @@ private final class CursorSnapshotCollector: @unchecked Sendable {
     }
 
     deinit { task?.cancel() }
+
+    /// Every snapshot received so far, in order.
+    var all: [AgentStateSnapshot] { lock.withLock { snapshots } }
 
     func wait(timeout: TimeInterval, where predicate: @escaping (AgentStateSnapshot) -> Bool) async throws -> AgentStateSnapshot {
         let deadline = Date().addingTimeInterval(timeout)

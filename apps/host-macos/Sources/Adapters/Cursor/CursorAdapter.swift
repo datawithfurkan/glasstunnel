@@ -64,6 +64,10 @@ public final class CursorAdapter: AgentAdapter, @unchecked Sendable {
     private var frontTitleReadAt = Date.distantPast
     /// A hook-reported state stands until the store moves past this anchor.
     private var hookAnchor: String?
+    /// True after a stop hook ended the current turn. The store cannot tell an
+    /// aborted turn from one still running (both end with the prompt and no
+    /// reply), so its "working" reading is ignored until a new turn starts.
+    private var turnEndedByHook = false
     private var liveRows: [LiveRow] = []
     private var liveEvents: [AgentChatMessage] = []
     private var turnStartMessageCount: Int?
@@ -197,6 +201,7 @@ public final class CursorAdapter: AgentAdapter, @unchecked Sendable {
         pendingAnswerNote = nil
         turnStartMessageCount = latest?.messages.count ?? 0
         hookAnchor = nil
+        turnEndedByHook = false
         currentStatus = .working
         currentDetail = Self.workingDetail
         lastWorkingSince = Date()
@@ -426,6 +431,7 @@ public final class CursorAdapter: AgentAdapter, @unchecked Sendable {
             liveEvents = []
             turnStartMessageCount = latest?.messages.count ?? 0
             lastWorkingSince = Date()
+            turnEndedByHook = false
         case .preToolUse:
             let name = event.toolName.isEmpty ? "tool" : event.toolName
             let id = event.toolCallId.isEmpty ? "\(name)-\(liveRows.count + 1)" : event.toolCallId
@@ -459,6 +465,7 @@ public final class CursorAdapter: AgentAdapter, @unchecked Sendable {
                 currentDetail = Self.doneDetail
             }
             optimisticPrompt = nil
+            turnEndedByHook = true
         case .other:
             lock.unlock()
             watcher.pollIfChanged()
@@ -500,6 +507,7 @@ public final class CursorAdapter: AgentAdapter, @unchecked Sendable {
             liveEvents = []
             pendingAnswerNote = nil
             hookAnchor = nil
+            turnEndedByHook = false
         }
         // Live rows and the echoed prompt are stand-ins until the store shows
         // the turn itself.
@@ -523,6 +531,9 @@ public final class CursorAdapter: AgentAdapter, @unchecked Sendable {
                 currentDetail = warning
             } else if optimisticPrompt != nil, snapshot.status != .waitingInput, !storeMoved {
                 // The prompt was just typed; the store has not seen it yet.
+            } else if turnEndedByHook, snapshot.status == .working {
+                // The store persisted the ended turn's prompt (and perhaps a
+                // partial reply); the stop hook already settled that turn.
             } else {
                 currentStatus = snapshot.status
                 currentDetail = snapshot.statusDetail
