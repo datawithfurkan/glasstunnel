@@ -57,6 +57,8 @@
     "lab:e2e:claude-code:safari": "node scripts/lab/e2e.mjs claude-code-webkit",
     "lab:e2e:claude-desktop": "node scripts/lab/e2e.mjs claude-desktop-chromium",
     "lab:e2e:claude-desktop:safari": "node scripts/lab/e2e.mjs claude-desktop-webkit",
+    "lab:e2e:codex-desktop": "node scripts/lab/e2e.mjs codex-desktop-chromium",
+    "lab:e2e:codex-desktop:safari": "node scripts/lab/e2e.mjs codex-desktop-webkit",
     "lab:e2e:safari": "node scripts/lab/e2e.mjs webkit",
     "lab:e2e:screen": "node scripts/lab/e2e.mjs screen-chromium",
     "lab:e2e:screen:safari": "node scripts/lab/e2e.mjs screen-webkit",

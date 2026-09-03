@@ -30,6 +30,27 @@ versioning after the first public beta; pre-release compatibility may still chan
   5 s, and the relay Worker closes a Mac socket that stopped pinging so phones
   stop seeing a dead Mac as online and screen requests are no longer
   acknowledged into the void.
+- The Codex desktop card's model chip showed the global Codex default (the
+  `config.toml` model and effort) for every thread. It now shows what the
+  selected thread actually runs, from the thread's own turn records and
+  settings events, so a thread on GPT-5.5 no longer reads "GPT-5.6-Sol".
+- Codex's machine-written context blocks (`<environment_context>`,
+  `<recommended_plugins>`, skill text, image markers) no longer render as the
+  user's own messages; attached images show as "[image]". Prompts typed into
+  the Codex composer are stored as Markdown, so a marker such as `GT_APP_1`
+  reached the phone as `GT\_APP\_1`; user messages now show the text the way
+  the app does.
+- Current Codex threads write shell commands and patches as `custom_tool_call`
+  records with list-shaped outputs. The card ignored the first and showed
+  "no output" for the second; both now become titled rows (the command, the
+  files a patch touches, "Update plan") with the exit code and wall time read
+  from the output header, and "Show all N lines" fetches long outputs.
+- A Codex turn stopped from the phone now shows a "Stopped" divider like the
+  Claude cards.
+- Linking the Codex card no longer stalls on "loading Codex context" for a
+  Codex home with thousands of threads: the catalog scan opens only the 200
+  newest rollouts and reads a small tail of each; the full 8 MB tail is read
+  only for the thread the card shows.
 
 ### Added
 
@@ -64,6 +85,15 @@ versioning after the first public beta; pre-release compatibility may still chan
   `log show` can reconstruct a screen-sharing incident.
 - Cursor chats on the phone are switchable ("Switch to", "Open chat" until the
   app confirms, "Current chat") instead of "Browse only".
+- Codex now ships inside ChatGPT.app. The Mac opts that shell into
+  Accessibility (once per process) before searching its window, so the composer
+  is found (placeholder "Do anything"). Other apps, Claude included, are left as
+  they are. Interrupt presses the app's own stop control when it is exposed and
+  falls back to Escape.
+- New lab lanes `pnpm lab:e2e:codex-desktop` and `pnpm lab:e2e:codex-desktop:safari`
+  drive the Codex desktop card from a phone-sized browser against the real app.
+  The lab runner warns when the installed Glasstunnel app is running before a
+  Claude lane, because both hosts share the Claude hook socket.
 
 ## 0.1.8 - Readable transcripts
 

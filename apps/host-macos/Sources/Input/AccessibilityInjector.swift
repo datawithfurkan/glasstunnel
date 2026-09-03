@@ -42,6 +42,30 @@ public final class AccessibilityInjector: @unchecked Sendable {
 
     public init() {}
 
+    /// Bundle ids of Electron apps that expose their web content to assistive
+    /// clients only after one opts in (the ChatGPT-hosted Codex shell). Claude
+    /// exposes its tree without it, and the opt-in would switch it into a
+    /// heavier screen-reader mode, so the list stays explicit.
+    public static var accessibilityOptInBundleIDs: Set<String> = ["com.openai.codex"]
+    private static let optInLock = NSLock()
+    private static var optedInPIDs: Set<pid_t> = []
+
+    /// The app's accessibility root, with the Electron opt-in attributes set
+    /// once per process for the apps that need them.
+    static func application(for pid: pid_t, bundleID: String) -> AXUIElement {
+        let app = AXUIElementCreateApplication(pid)
+        guard accessibilityOptInBundleIDs.contains(bundleID) else { return app }
+        optInLock.lock()
+        let alreadyOptedIn = optedInPIDs.contains(pid)
+        optedInPIDs.insert(pid)
+        optInLock.unlock()
+        if !alreadyOptedIn {
+            AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+            AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+        }
+        return app
+    }
+
     /// Main entry point. `targetHint` is an adapter-specific hint used to
     /// narrow the search, e.g. "chat input" or "prompt".
     @discardableResult public func deliver(
@@ -55,7 +79,7 @@ public final class AccessibilityInjector: @unchecked Sendable {
         }
         runningApp.activate(options: [.activateIgnoringOtherApps])
 
-        let app = AXUIElementCreateApplication(runningApp.processIdentifier)
+        let app = Self.application(for: runningApp.processIdentifier, bundleID: bundleID)
         guard let window = focusedWindow(of: app) ?? firstWindow(of: app) else {
             throw InjectionError.noFrontWindow
         }
@@ -85,7 +109,7 @@ public final class AccessibilityInjector: @unchecked Sendable {
         }
         runningApp.activate(options: [.activateIgnoringOtherApps])
 
-        let app = AXUIElementCreateApplication(runningApp.processIdentifier)
+        let app = Self.application(for: runningApp.processIdentifier, bundleID: bundleID)
         guard let window = focusedWindow(of: app) ?? firstWindow(of: app) else {
             throw InjectionError.noFrontWindow
         }
@@ -109,7 +133,7 @@ public final class AccessibilityInjector: @unchecked Sendable {
         }
         runningApp.activate(options: [.activateIgnoringOtherApps])
 
-        let app = AXUIElementCreateApplication(runningApp.processIdentifier)
+        let app = Self.application(for: runningApp.processIdentifier, bundleID: bundleID)
         guard let window = focusedWindow(of: app) ?? firstWindow(of: app) else {
             throw InjectionError.noFrontWindow
         }
@@ -129,7 +153,7 @@ public final class AccessibilityInjector: @unchecked Sendable {
             throw InjectionError.appNotRunning(bundleID)
         }
 
-        let app = AXUIElementCreateApplication(runningApp.processIdentifier)
+        let app = Self.application(for: runningApp.processIdentifier, bundleID: bundleID)
         guard let window = focusedWindow(of: app) ?? firstWindow(of: app) else {
             throw InjectionError.noFrontWindow
         }
@@ -156,7 +180,7 @@ public final class AccessibilityInjector: @unchecked Sendable {
         }
         runningApp.activate(options: [.activateIgnoringOtherApps])
 
-        let app = AXUIElementCreateApplication(runningApp.processIdentifier)
+        let app = Self.application(for: runningApp.processIdentifier, bundleID: bundleID)
         guard let window = focusedWindow(of: app) ?? firstWindow(of: app) else {
             throw InjectionError.noFrontWindow
         }
@@ -194,7 +218,7 @@ public final class AccessibilityInjector: @unchecked Sendable {
             throw InjectionError.appNotRunning(bundleID)
         }
 
-        let app = AXUIElementCreateApplication(runningApp.processIdentifier)
+        let app = Self.application(for: runningApp.processIdentifier, bundleID: bundleID)
         guard let window = focusedWindow(of: app) ?? firstWindow(of: app) else {
             throw InjectionError.noFrontWindow
         }
@@ -211,7 +235,7 @@ public final class AccessibilityInjector: @unchecked Sendable {
         }
         runningApp.activate(options: [.activateIgnoringOtherApps])
 
-        let app = AXUIElementCreateApplication(runningApp.processIdentifier)
+        let app = Self.application(for: runningApp.processIdentifier, bundleID: bundleID)
         guard let window = focusedWindow(of: app) ?? firstWindow(of: app) else {
             throw InjectionError.noFrontWindow
         }

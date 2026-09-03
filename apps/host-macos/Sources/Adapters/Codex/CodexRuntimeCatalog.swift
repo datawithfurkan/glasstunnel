@@ -27,7 +27,14 @@ enum CodexRuntimeCatalog {
         let modelOptions = catalog.models.map {
             AgentRuntimeOption(id: $0.slug, label: $0.displayName, description: $0.description)
         }
-        let selectedModel = catalog.models.first { $0.slug == selection.modelId } ?? catalog.models.first
+        // A selection names a model, or nothing; a model the catalog does not
+        // list keeps its slug rather than borrowing the first entry's name.
+        let selectedModel: Model?
+        if let modelId = selection.modelId, !modelId.isEmpty {
+            selectedModel = catalog.models.first { $0.slug == modelId }
+        } else {
+            selectedModel = catalog.models.first
+        }
         let effortOptions = selectedModel?.supportedReasoningLevels.map {
             AgentRuntimeOption(id: $0.effort, label: effortLabel($0.effort), description: $0.description)
         } ?? fallbackEffortOptions

@@ -845,4 +845,47 @@ final class CodexRuntimeCatalogTests: XCTestCase {
         let contents = (try? String(contentsOf: url, encoding: .utf8)) ?? "<missing>"
         XCTFail("Timed out waiting for \(url.path) to contain expected runtime arguments. Actual contents: \(contents)")
     }
+
+    func testControlsLabelTheSelectedModelAndKeepUnknownSlugs() throws {
+        let home = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        let catalog = """
+        {"models":[
+          {"slug":"gpt-5.6-sol","display_name":"GPT-5.6-Sol","default_reasoning_level":"high","supported_reasoning_levels":[{"effort":"high"},{"effort":"ultra"}],"additional_speed_tiers":["fast"],"visibility":"list"},
+          {"slug":"gpt-5.5","display_name":"GPT-5.5","default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"medium"},{"effort":"xhigh"}],"additional_speed_tiers":[],"visibility":"list"}
+        ]}
+        """
+        try catalog.write(to: home.appendingPathComponent("models_cache.json"), atomically: true, encoding: .utf8)
+        try "model = \"gpt-5.6-sol\"\nmodel_reasoning_effort = \"ultra\"\n".write(
+            to: home.appendingPathComponent("config.toml"), atomically: true, encoding: .utf8)
+        let previous = ProcessInfo.processInfo.environment["CODEX_HOME"]
+        setenv("CODEX_HOME", home.path, 1)
+        defer {
+            if let previous { setenv("CODEX_HOME", previous, 1) } else { unsetenv("CODEX_HOME") }
+        }
+
+        // The thread's own selection, not the config default, names the chip.
+        let thread = CodexRuntimeCatalog.controls(
+            selection: CodexRuntimeSelection(modelId: "gpt-5.5", reasoningEffort: "xhigh", fastMode: false),
+            editable: false,
+            appliesOn: .managedLocally,
+            note: "Managed in Codex"
+        )
+        XCTAssertEqual(thread.modelLabel, "GPT-5.5")
+        XCTAssertEqual(thread.reasoningEffortLabel, "Extra high")
+        XCTAssertEqual(thread.reasoningEffortOptions.map(\.id), ["medium", "xhigh"])
+        XCTAssertNil(thread.fastMode, "GPT-5.5 has no fast tier, so no speed pill")
+
+        let unknown = CodexRuntimeCatalog.controls(
+            selection: CodexRuntimeSelection(modelId: "gpt-9-preview", reasoningEffort: nil, fastMode: false),
+            editable: false,
+            appliesOn: .managedLocally
+        )
+        XCTAssertEqual(unknown.modelLabel, "gpt-9-preview", "an unlisted model keeps its slug instead of the first catalog entry's name")
+        XCTAssertEqual(unknown.modelId, "gpt-9-preview")
+
+        XCTAssertEqual(CodexRuntimeCatalog.defaultSelection(),
+                       CodexRuntimeSelection(modelId: "gpt-5.6-sol", reasoningEffort: "ultra", fastMode: false))
+    }
 }

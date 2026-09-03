@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -28,6 +28,8 @@ const CLAUDE_CODE_CHROMIUM_PROJECTS = ['local-claude-code-mobile-chromium'];
 const CLAUDE_DESKTOP_CHROMIUM_PROJECTS = ['local-claude-desktop-mobile-chromium'];
 const CLAUDE_CODE_WEBKIT_PROJECTS = ['local-claude-code-mobile-webkit'];
 const CLAUDE_DESKTOP_WEBKIT_PROJECTS = ['local-claude-desktop-mobile-webkit'];
+const CODEX_DESKTOP_CHROMIUM_PROJECTS = ['local-codex-desktop-mobile-chromium'];
+const CODEX_DESKTOP_WEBKIT_PROJECTS = ['local-codex-desktop-mobile-webkit'];
 const execFileAsync = promisify(execFile);
 const DEFAULT_PTY_PROCESS_REGISTRY = join(
   homedir(),
@@ -313,6 +315,8 @@ export function projectsForMode(mode) {
   if (mode === 'claude-desktop-chromium') return CLAUDE_DESKTOP_CHROMIUM_PROJECTS;
   if (mode === 'claude-code-webkit' || mode === 'claude-code-safari') return CLAUDE_CODE_WEBKIT_PROJECTS;
   if (mode === 'claude-desktop-webkit' || mode === 'claude-desktop-safari') return CLAUDE_DESKTOP_WEBKIT_PROJECTS;
+  if (mode === 'codex-desktop-chromium') return CODEX_DESKTOP_CHROMIUM_PROJECTS;
+  if (mode === 'codex-desktop-webkit' || mode === 'codex-desktop-safari') return CODEX_DESKTOP_WEBKIT_PROJECTS;
   if (mode === 'screen-chromium') return SCREEN_CHROMIUM_PROJECTS;
   if (mode === 'screen-webkit' || mode === 'screen-safari') return SCREEN_WEBKIT_PROJECTS;
   if (mode === 'webkit' || mode === 'safari') return WEBKIT_PROJECTS;
@@ -320,9 +324,31 @@ export function projectsForMode(mode) {
   return CHROMIUM_PROJECTS;
 }
 
+/**
+ * The installed Glasstunnel app and the lab host share one Claude hook socket
+ * (~/Library/Application Support/Glasstunnel/cc.sock); whichever Claude
+ * adapter starts last takes the hooks, so an installed app that is running
+ * can steal a Claude lane's permission prompts mid-run.
+ */
+export function installedHostWarning(projects, isRunning = installedGlasstunnelAppIsRunning) {
+  if (!projects.some((project) => project.includes('claude'))) return null;
+  if (!isRunning()) return null;
+  return 'Warning: the installed Glasstunnel app is running. It shares the Claude hook socket with the lab host and can take the hooks over mid-run; quit it before Claude lanes.';
+}
+
+function installedGlasstunnelAppIsRunning() {
+  try {
+    return execFileSync('pgrep', ['-f', '/Applications/Glasstunnel.app/Contents/MacOS'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
 const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
   const projects = projectsForMode(process.argv[2]);
+  const warning = installedHostWarning(projects);
+  if (warning) console.warn(warning);
   runE2E({ projects })
     .then(() => console.log(`Local Playwright passed: ${projects.join(', ')}`))
     .catch((error) => {

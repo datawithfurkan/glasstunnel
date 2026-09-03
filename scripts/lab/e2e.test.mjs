@@ -7,6 +7,7 @@ import test from 'node:test';
 import { ensureRuntimeDirectories, labConfig } from './config.mjs';
 import {
   cleanupPtyProcessRecords,
+  installedHostWarning,
   newManagedTerminalSessions,
   newPtyProcessRecords,
   parseTerminalScreenSessions,
@@ -53,6 +54,9 @@ test('projectsForMode offers mobile WebKit variants of the Claude account journe
   assert.deepEqual(projectsForMode('claude-code-safari'), ['local-claude-code-mobile-webkit']);
   assert.deepEqual(projectsForMode('claude-desktop-webkit'), ['local-claude-desktop-mobile-webkit']);
   assert.deepEqual(projectsForMode('claude-desktop-safari'), ['local-claude-desktop-mobile-webkit']);
+  assert.deepEqual(projectsForMode('codex-desktop-chromium'), ['local-codex-desktop-mobile-chromium']);
+  assert.deepEqual(projectsForMode('codex-desktop-webkit'), ['local-codex-desktop-mobile-webkit']);
+  assert.deepEqual(projectsForMode('codex-desktop-safari'), ['local-codex-desktop-mobile-webkit']);
 });
 
 test('runE2E passes only local account and host values to Playwright', async (t) => {
@@ -275,4 +279,10 @@ test('runE2E cleans only a PTY process record created during the run', async (t)
 
   assert.deepEqual(cleaned, [generated]);
   assert.equal(snapshots.length, 0);
+});
+
+test('warns about the installed app only for Claude lanes and only when it runs', () => {
+  assert.equal(installedHostWarning(['local-codex-desktop-mobile-chromium'], () => true), null);
+  assert.equal(installedHostWarning(['local-claude-desktop-mobile-chromium'], () => false), null);
+  assert.match(installedHostWarning(['local-claude-code-mobile-webkit'], () => true), /hook socket/);
 });

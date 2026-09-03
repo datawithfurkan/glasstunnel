@@ -109,6 +109,13 @@ export default defineConfig({
       },
     },
     {
+      name: 'local-codex-desktop-mobile-chromium',
+      grep: /@codex-desktop-account/,
+      use: {
+        ...devices['Pixel 7'],
+      },
+    },
+    {
       name: 'local-claude-code-mobile-webkit',
       grep: /@claude-code-account/,
       use: {
@@ -118,6 +125,13 @@ export default defineConfig({
     {
       name: 'local-claude-desktop-mobile-webkit',
       grep: /@claude-desktop-account/,
+      use: {
+        ...devices['iPhone 15'],
+      },
+    },
+    {
+      name: 'local-codex-desktop-mobile-webkit',
+      grep: /@codex-desktop-account/,
       use: {
         ...devices['iPhone 15'],
       },

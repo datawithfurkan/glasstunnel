@@ -112,4 +112,120 @@ final class TranscriptStructureTests: XCTestCase {
         XCTAssertLessThanOrEqual(huge.detail.utf8.count, TranscriptPreview.detailByteCount)
         XCTAssertEqual(TranscriptPreview.singleLine("  git   status\n--short "), "git status --short")
     }
+
+    func testCodexCustomToolCallsBecomeRowsWithHeadersParsed() {
+        let jsonl = #"""
+        {"timestamp":"2026-09-03T09:00:00.000Z","type":"response_item","payload":{"type":"custom_tool_call","status":"completed","call_id":"c1","name":"exec","input":"const r = await tools.exec_command({cmd:\"pnpm test --filter \\\"web\\\"\",\"workdir\":\"/x\"});\nreturn r;"}}
+        {"timestamp":"2026-09-03T09:00:01.000Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"c1","output":[{"type":"input_text","text":"Script completed\nWall time 0.1 seconds\nOutput:\n\nok 3 tests\n"}]}}
+        {"timestamp":"2026-09-03T09:00:02.000Z","type":"response_item","payload":{"type":"custom_tool_call","status":"completed","call_id":"c2","name":"apply_patch","input":"*** Begin Patch\n*** Update File: /repo/AGENTS.md\n@@\n-old\n+new\n*** Add File: /repo/src/new.ts\n+export {}\n*** End Patch"}}
+        {"timestamp":"2026-09-03T09:00:03.000Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"c2","output":"Exit code: 1\nWall time: 0 seconds\nOutput:\nFailed to apply"}}
+        {"timestamp":"2026-09-03T09:00:04.000Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\": \"git status\", \"workdir\": \"/repo\"}","call_id":"c3"}}
+        {"timestamp":"2026-09-03T09:00:05.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"c3","output":"Chunk ID: a036bd\nWall time: 2.5000 seconds\nProcess exited with code 0\nOriginal token count: 12\nOutput:\nOn branch main"}}
+        {"timestamp":"2026-09-03T09:00:06.000Z","type":"response_item","payload":{"type":"function_call","name":"update_plan","arguments":"{\"plan\":[{\"step\":\"a\",\"status\":\"in_progress\"}]}","call_id":"c4"}}
+        {"timestamp":"2026-09-03T09:00:07.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"c4","output":"Plan updated"}}
+        {"timestamp":"2026-09-03T09:00:08.000Z","type":"response_item","payload":{"type":"function_call","name":"view_image","arguments":"{\"path\":\"/tmp/shots/wave1_sheet_01.jpg\",\"detail\":\"high\"}","call_id":"c5"}}
+        {"timestamp":"2026-09-03T09:00:09.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"c5","output":[{"type":"input_image","image_url":"data:image/jpeg;base64,xx"}]}}
+        """#
+        let parsed = CodexDesktopSessionParser.parse(jsonl: jsonl, agentID: "codex-window", maxMessages: 24)
+        XCTAssertEqual(parsed.messages.map(\.kind), [.toolCall, .toolResult, .toolCall, .toolResult, .toolCall, .toolResult, .toolCall, .toolResult, .toolCall, .toolResult])
+
+        XCTAssertEqual(parsed.messages[0].toolName, "exec")
+        XCTAssertEqual(parsed.messages[0].title, "pnpm test --filter \"web\"", "the command inside the exec script, unescaped")
+        XCTAssertEqual(parsed.messages[0].toolCallId, "c1")
+        XCTAssertEqual(parsed.messages[1].text.trimmingCharacters(in: .whitespacesAndNewlines), "ok 3 tests", "the header above Output: is gone")
+        XCTAssertEqual(parsed.messages[1].durationMs, 100)
+        XCTAssertFalse(parsed.messages[1].isError)
+        XCTAssertEqual(parsed.messages[1].outputLineCount, 1)
+
+        XCTAssertEqual(parsed.messages[2].title, "AGENTS.md, new.ts")
+        XCTAssertTrue(parsed.messages[3].isError)
+        XCTAssertEqual(parsed.messages[3].text, "Failed to apply")
+
+        XCTAssertEqual(parsed.messages[4].title, "git status")
+        XCTAssertEqual(parsed.messages[5].text, "On branch main")
+        XCTAssertEqual(parsed.messages[5].durationMs, 2_500)
+        XCTAssertFalse(parsed.messages[5].isError)
+
+        XCTAssertEqual(parsed.messages[6].title, "Update plan")
+        XCTAssertEqual(parsed.messages[7].text, "Plan updated")
+        XCTAssertEqual(parsed.messages[8].title, "wave1_sheet_01.jpg")
+        XCTAssertEqual(parsed.messages[9].text, "[image]")
+    }
+
+    func testCodexOutputHeaderParsingLeavesOrdinaryTextAlone() {
+        let plain = CodexDesktopSessionParser.parseOutputHeader("Build finished.\nOutput: 3 files")
+        XCTAssertEqual(plain.text, "Build finished.\nOutput: 3 files")
+        XCTAssertNil(plain.durationMs)
+
+        let failed = CodexDesktopSessionParser.parseOutputHeader("Script failed\nWall time 1.5 seconds\nOutput:\nboom")
+        XCTAssertTrue(failed.isError)
+        XCTAssertEqual(failed.text, "boom")
+        XCTAssertEqual(failed.durationMs, 1_500)
+
+        let stillRunning = CodexDesktopSessionParser.parseOutputHeader("Chunk ID: 74bb26\nWall time: 30.0017 seconds\nProcess running with session ID 61152\nOriginal token count: 0\nOutput:\n")
+        XCTAssertEqual(stillRunning.text, "")
+        XCTAssertFalse(stillRunning.isError)
+        XCTAssertEqual(stillRunning.durationMs, 30_002)
+    }
+
+    func testCodexThreadRuntimeSelectionFollowsTheNewestRecord() {
+        let jsonl = #"""
+        {"timestamp":"2026-09-03T09:00:00.000Z","type":"session_meta","payload":{"cwd":"/repo","originator":"Codex Desktop","source":"vscode"}}
+        {"timestamp":"2026-09-03T09:00:01.000Z","type":"event_msg","payload":{"type":"thread_settings_applied","thread_settings":{"model":"gpt-5.6-sol","reasoning_effort":"ultra","service_tier":"priority"}}}
+        {"timestamp":"2026-09-03T09:00:02.000Z","type":"turn_context","payload":{"cwd":"/repo","model":"gpt-5.5","effort":"xhigh"}}
+        """#
+        let parsed = CodexDesktopSessionParser.parse(jsonl: jsonl, agentID: "codex-window", maxMessages: 24)
+        XCTAssertEqual(parsed.runtimeSelection, CodexRuntimeSelection(modelId: "gpt-5.5", reasoningEffort: "xhigh", fastMode: false))
+
+        let switched = jsonl + "\n" + #"""
+        {"timestamp":"2026-09-03T09:00:03.000Z","type":"event_msg","payload":{"type":"thread_settings_applied","thread_settings":{"model":"gpt-5.6-luna","reasoning_effort":"low","service_tier":"fast"}}}
+        """#
+        XCTAssertEqual(
+            CodexDesktopSessionParser.parse(jsonl: switched, agentID: "codex-window", maxMessages: 24).runtimeSelection,
+            CodexRuntimeSelection(modelId: "gpt-5.6-luna", reasoningEffort: "low", fastMode: true),
+            "a settings change after the last turn is what the thread runs next"
+        )
+
+        let noEffort = jsonl + "\n" + #"""
+        {"timestamp":"2026-09-03T09:00:04.000Z","type":"turn_context","payload":{"model":"gpt-5.4-mini","effort":null}}
+        """#
+        XCTAssertEqual(
+            CodexDesktopSessionParser.parse(jsonl: noEffort, agentID: "codex-window", maxMessages: 24).runtimeSelection,
+            CodexRuntimeSelection(modelId: "gpt-5.4-mini", reasoningEffort: nil, fastMode: false)
+        )
+
+        let bare = #"{"type":"session_meta","payload":{"cwd":"/repo"}}"#
+        XCTAssertNil(CodexDesktopSessionParser.parse(jsonl: bare, agentID: "codex-window", maxMessages: 24).runtimeSelection)
+    }
+
+    func testCodexInjectedContextStaysOutOfUserBubbles() {
+        let jsonl = #"""
+        {"timestamp":"2026-09-03T09:00:00.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>\n  <cwd>/repo</cwd>\n</environment_context>"}]}}
+        {"timestamp":"2026-09-03T09:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<recommended_plugins>\n- x\n</recommended_plugins>"},{"type":"input_text","text":"fix the crash"},{"type":"input_text","text":"\n# Files mentioned by the user\n"},{"type":"input_text","text":"<image name=[Image #1] path=\"/tmp/a.png\">"},{"type":"input_image","image_url":"data:image/png;base64,xx"},{"type":"input_text","text":"</image>"}]}}
+        {"timestamp":"2026-09-03T09:00:02.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<skill name=\"brainstorming\">\nlong text\n</skill>"},{"type":"input_text","text":"$brainstorming a name"}]}}
+        {"timestamp":"2026-09-03T09:00:03.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<div>keep me</div>"}]}}
+        {"timestamp":"2026-09-03T09:00:04.000Z","type":"event_msg","payload":{"type":"turn_aborted","reason":"interrupted"}}
+        """#
+        let parsed = CodexDesktopSessionParser.parse(jsonl: jsonl, agentID: "codex-window", maxMessages: 24)
+        XCTAssertEqual(parsed.messages.map(\.text), ["fix the crash\n\n[image]", "$brainstorming a name", "<div>keep me</div>", "Stopped"])
+        XCTAssertEqual(parsed.messages.last?.kind, .event)
+        XCTAssertEqual(parsed.messages.last?.role, .system)
+        XCTAssertEqual(parsed.status, .idle)
+        XCTAssertTrue(CodexDesktopSessionParser.isInjectedContext("<user_instructions>\nx\n</user_instructions>"))
+        XCTAssertTrue(CodexDesktopSessionParser.isInjectedContext("<some_future_block id=\"1\">..."))
+        XCTAssertFalse(CodexDesktopSessionParser.isInjectedContext("<b>bold</b> please"))
+        XCTAssertFalse(CodexDesktopSessionParser.isInjectedContext(""))
+    }
+
+    func testCodexUserTextLosesTheComposersMarkdownEscapes() {
+        let jsonl = #"""
+        {"timestamp":"2026-09-03T09:00:00.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Reply with exactly GT\\_CODEX\\_APP\\_1 and \\*nothing\\* else. Path C:\\Users stays."}]}}
+        {"timestamp":"2026-09-03T09:00:01.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"GT\\_CODEX\\_APP\\_1"}]}}
+        """#
+        let parsed = CodexDesktopSessionParser.parse(jsonl: jsonl, agentID: "codex-window", maxMessages: 24)
+        XCTAssertEqual(parsed.messages[0].text, "Reply with exactly GT_CODEX_APP_1 and *nothing* else. Path C:\\Users stays.")
+        XCTAssertEqual(parsed.messages[1].text, "GT\\_CODEX\\_APP\\_1", "assistant Markdown is rendered by the phone, not rewritten here")
+        XCTAssertEqual(CodexDesktopSessionParser.unescapeMarkdown("no escapes"), "no escapes")
+        XCTAssertEqual(CodexDesktopSessionParser.unescapeMarkdown("trailing\\"), "trailing\\")
+    }
 }
