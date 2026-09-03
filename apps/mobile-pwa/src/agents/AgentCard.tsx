@@ -19,6 +19,7 @@ import {
 import { createClientId } from '../lib/id';
 import { HorizontalScrollStrip } from '../ui/HorizontalScrollStrip';
 import { VideoTile } from './VideoTile';
+import { TranscriptView } from './TranscriptView';
 import { formatMessageTimestamp } from './messageTimestamp';
 
 interface Props {
@@ -335,7 +336,7 @@ export function AgentCard({
     !waitingForChoice;
   const mainSurfaceClass = commandSurfaceMode
     ? 'min-w-0 flex-1 min-h-0 overflow-hidden bg-[#0d0d0e] p-2 sm:p-4'
-    : 'flex-1 page-scroll px-4 py-3 space-y-3';
+    : 'flex-1 page-scroll px-3 py-2 space-y-2';
   const footerClass = commandSurfaceMode
     ? 'gt-mobile-composer border-t border-[color:var(--gt-border)] bg-[#151312] px-3 pt-2 pb-3'
     : 'gt-mobile-composer border-t border-[color:var(--gt-border)] px-3 pt-2 pb-3';
@@ -673,9 +674,7 @@ export function AgentCard({
                 copy={`Once ${app.displayName} writes in this thread, the latest context will appear here.`}
               />
             )}
-            {messages.map((message) => (
-              <MessageBubble key={message.messageId} message={message} />
-            ))}
+            {messages.length > 0 && <TranscriptView messages={messages} />}
             {pendingInputRequest && (
               <PlanningRequestCard
                 appName={app.displayName}
@@ -1380,55 +1379,6 @@ function TerminalSystemLine({ text }: { text: string }) {
   );
 }
 
-function MessageBubble({ message }: { message: AgentChatMessage }) {
-  const ownMessage = message.role === ChatRole.User;
-  const tone = bubbleTone(message.role);
-  const timestamp = formatMessageTimestamp(message.atUnixMs);
-
-  return (
-    <div className={`flex ${ownMessage ? 'justify-end' : 'justify-start'}`}>
-      <div
-        className={`max-w-[92%] border px-3.5 py-2.5 shadow-sm ${tone.container}`}
-      >
-        <div className={`mb-1 flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] ${tone.meta}`}>
-          <span>{roleLabel(message.role)}</span>
-          {message.redacted && (
-            <span
-              className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 normal-case tracking-normal ${tone.redacted}`}
-              title={
-                message.redactionReasons && message.redactionReasons.length > 0
-                  ? `Redacted patterns: ${message.redactionReasons.join(', ')}`
-                  : 'Sensitive data redacted by the Mac before it left your machine'
-              }
-            >
-              redacted
-              {message.redactionReasons && message.redactionReasons.length > 0 && (
-                <span className="text-[9.5px] opacity-80">
-                  {message.redactionReasons.slice(0, 2).join(', ')}
-                  {message.redactionReasons.length > 2 ? '…' : ''}
-                </span>
-              )}
-            </span>
-          )}
-        </div>
-        <div className={`whitespace-pre-wrap break-words font-mono text-[13px] leading-relaxed ${tone.text}`}>
-          {message.text}
-        </div>
-        {timestamp && (
-          <time
-            dateTime={timestamp.iso}
-            title={timestamp.full}
-            aria-label={`Created ${timestamp.full}`}
-            className={`mt-1.5 block text-right font-mono text-[10px] leading-none tracking-[0.04em] ${tone.time}`}
-          >
-            {timestamp.label}
-          </time>
-        )}
-      </div>
-    </div>
-  );
-}
-
 export function isTerminalApp(app: RemoteApp): boolean {
   return app.adapterKind === AdapterKind.Terminal || app.remoteAppId === 'terminal';
 }
@@ -1502,62 +1452,6 @@ function genericStatusLabel(status: AgentStatus, waitingForSnapshot: boolean): s
       return 'offline';
     default:
       return '?';
-  }
-}
-
-function bubbleTone(role: ChatRole) {
-  switch (role) {
-    case ChatRole.User:
-      return {
-        container:
-          'rounded-[6px] border-accent/35 bg-accent/12 text-[color:var(--gt-text)]',
-        meta: 'gt-dim justify-end',
-        text: 'text-[color:var(--gt-text)]',
-        time: 'text-accent/80',
-        redacted: 'bg-accent/12 text-accent',
-      };
-    case ChatRole.System:
-      return {
-        container:
-          'rounded-[6px] border-warn/20 bg-warn/10 text-[color:var(--gt-text)]',
-        meta: 'text-warn/90',
-        text: 'text-[color:var(--gt-text)]',
-        time: 'text-warn/75',
-        redacted: 'bg-warn/15 text-warn',
-      };
-    case ChatRole.Tool:
-      return {
-        container:
-          'rounded-[6px] border-[color:var(--gt-border)] bg-surface-3/70 text-[color:var(--gt-text)]',
-        meta: 'gt-dim',
-        text: 'text-[color:var(--gt-text)]',
-        time: 'gt-dim',
-        redacted: 'bg-warn/15 text-warn',
-      };
-    default:
-      return {
-        container:
-          'rounded-[6px] border-[color:var(--gt-border)] bg-surface-2 text-[color:var(--gt-text)]',
-        meta: 'gt-dim',
-        text: 'text-[color:var(--gt-text)]',
-        time: 'gt-dim',
-        redacted: 'bg-warn/15 text-warn',
-      };
-  };
-}
-
-function roleLabel(role: ChatRole): string {
-  switch (role) {
-    case ChatRole.User:
-      return 'you';
-    case ChatRole.Assistant:
-      return 'assistant';
-    case ChatRole.System:
-      return 'system';
-    case ChatRole.Tool:
-      return 'tool';
-    default:
-      return '';
   }
 }
 
