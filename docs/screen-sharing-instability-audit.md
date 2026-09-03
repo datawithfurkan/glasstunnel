@@ -11,6 +11,20 @@ The screen view has no health check once a frame has rendered, so anything that 
 
 The Mac log confirms the duplicate-panel behaviour (two `start` actions for the screen app 1 ms apart) and shows the Mac's own sockets to the Worker dropping roughly every 5 to 30 minutes over a VPN interface with heavy packet loss, so the fragile restart paths are exercised constantly. The log could not show the phone-side history because the host's screen lifecycle logging is info-level and is not persisted by macOS.
 
+## Implementation status
+
+Fixes landed on the audit branch after the report was written (commits in
+branch order):
+
+| Fix | Findings | Commit | Where |
+| --- | --- | --- | --- |
+| One panel mounted per layout, video kept across relay and signaling drops, signaling keepalive, retry with backoff, resume after hidden, Error status no longer tears down a live stream, Retry path cleanup, cached-workspace flag | S1, S5, S6, S9, S10, part of S4 | `c0470e5a` | PWA |
+| Frame-liveness watchdog with "Screen paused" and automatic restart; a rendering picture outranks stale error text | S2 | `e061996a` | PWA |
+| One sender per phone (track swap instead of remove/add), idle-frame keepalive at 1 fps, capture restart with backoff, display/wake/login observers, fallback pause while phones report live video, fallback rebuilt after relay reconnect, publish only on change, notice-level logging; protocol 0.2.3 | S3, S4, S7, S8, S12 | `e3b012e2` | Mac, protocol |
+| Relay hub closes a Mac socket that missed three pings, alarm moved at most every 5 s, signaling hub queues for a silent host | S11 | `95adb5bc` | Worker |
+
+Still open: S13 (same-profile duplicate tabs) and the S14 items.
+
 ## How the screen path works today
 
 | Leg | Carries | Notes |
