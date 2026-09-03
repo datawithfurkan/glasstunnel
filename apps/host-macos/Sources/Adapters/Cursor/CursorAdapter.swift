@@ -476,7 +476,12 @@ public final class CursorAdapter: AgentAdapter, @unchecked Sendable {
                 currentStatus = .done
                 currentDetail = Self.doneDetail
             }
-            optimisticPrompt = nil
+            // The echoed prompt stays until the store shows the turn itself;
+            // dropping it here left the transcript without the prompt of an
+            // interrupted turn until Cursor had persisted it.
+            if let start = turnStartMessageCount, (latest?.messages.count ?? 0) > start {
+                optimisticPrompt = nil
+            }
             turnEndedByHook = true
             turnInProgress = false
             hookVerdict = (currentStatus, currentDetail)

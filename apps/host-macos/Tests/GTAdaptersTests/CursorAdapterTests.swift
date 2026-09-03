@@ -367,6 +367,52 @@ final class CursorAdapterTests: XCTestCase {
         XCTAssertEqual(finished.statusDetail, CursorAdapter.doneDetail)
     }
 
+    func testInterruptedPromptStaysVisibleUntilTheStoreShowsIt() async throws {
+        try await adapter.start()
+        _ = try await snapshots.wait(timeout: 5) { $0.status == .done }
+        try await adapter.sendInput("Count to four hundred", submit: true)
+        _ = try await snapshots.wait(timeout: 5) { $0.status == .working }
+
+        // Stopped before Cursor persisted the prompt: the phone still sees it.
+        hooks.emit(kind: "stop", conversation: "composer-release", status: "aborted")
+        let stopped = try await snapshots.wait(timeout: 5) { $0.status == .idle && $0.statusDetail == CursorAdapter.stoppedDetail }
+        XCTAssertEqual(stopped.recentMessages.filter { $0.text == "Count to four hundred" }.count, 1, "the echoed prompt stays until the store has it")
+
+        // The store catches up: one copy of the prompt, still stopped.
+        try CursorTestFixtures.writeDesktopStore(
+            at: root,
+            composers: [
+                CursorTestFixtures.Composer(
+                    composerId: "composer-release",
+                    name: "Release chat",
+                    workspaceId: "ws-1",
+                    createdAt: 1_782_385_000_000,
+                    lastUpdatedAt: 1_782_393_000_000,
+                    status: "aborted",
+                    messages: [
+                        ["role": "user", "content": [["type": "text", "text": "Check the repo"]]],
+                        ["role": "assistant", "content": [
+                            ["type": "text", "text": "Looking."],
+                            ["type": "tool-call", "toolCallId": "c1", "toolName": "Shell", "args": ["command": "git status --short"]],
+                        ]],
+                        ["role": "tool", "content": [["type": "tool-result", "toolCallId": "c1", "toolName": "Shell", "result": "clean"]]],
+                        ["role": "assistant", "content": [["type": "text", "text": "All clean."]]],
+                        ["role": "user", "content": [["type": "text", "text": "Count to four hundred"]]],
+                    ]
+                ),
+            ],
+            workspaces: ["ws-1": "/Users/dev/App"]
+        )
+        // The store's copy carries a store id; the phone's echo carries a local one.
+        let caughtUp = try await snapshots.wait(timeout: 8) { snapshot in
+            snapshot.recentMessages.contains { $0.text == "Count to four hundred" && !$0.messageId.contains("-local-") }
+        }
+        XCTAssertEqual(caughtUp.recentMessages.filter { $0.text == "Count to four hundred" }.count, 1, "the store's copy replaces the echo")
+        XCTAssertEqual(caughtUp.recentMessages.last?.text, CursorAdapter.stoppedDetail, "the stop event stays after the prompt")
+        XCTAssertEqual(caughtUp.status, .idle)
+        XCTAssertEqual(caughtUp.statusDetail, CursorAdapter.stoppedDetail)
+    }
+
     func testStoreChangesReplaceTheLiveRows() async throws {
         try await adapter.start()
         _ = try await snapshots.wait(timeout: 5) { $0.status == .done }
@@ -514,7 +560,8 @@ private final class CursorSnapshotCollector: @unchecked Sendable {
             try await Task.sleep(nanoseconds: 40_000_000)
         }
         let summary = lock.withLock { snapshots.suffix(6).map { "\($0.status)/\($0.statusDetail)" }.joined(separator: " → ") }
-        throw NSError(domain: "CursorSnapshotCollector", code: 1, userInfo: [NSLocalizedDescriptionKey: "timed out; last snapshots: \(summary)"])
+        let tail = lock.withLock { snapshots.last.map { "\($0.recentMessages.count) messages, last: \($0.recentMessages.last?.text.prefix(60) ?? "-")" } ?? "no snapshot" }
+        throw NSError(domain: "CursorSnapshotCollector", code: 1, userInfo: [NSLocalizedDescriptionKey: "timed out; last snapshots: \(summary); \(tail)"])
     }
 }
 #endif

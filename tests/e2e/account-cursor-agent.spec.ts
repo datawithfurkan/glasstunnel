@@ -131,6 +131,10 @@ test('@cursor-agent-account prompts, reads a file in plan mode, and interrupts C
   await expect(page.getByText(/^Stopped/).filter({ visible: true }).first()).toBeVisible({
     timeout: 30_000,
   });
-  expect(await occurrences(page, doneMarker), 'the interrupted reply never reached its closing marker').toBe(1);
+  // The prompt's own copy of the marker is the only one allowed: the store may
+  // show the prompt a moment after the stop, so poll rather than read once.
+  await expect
+    .poll(() => occurrences(page, doneMarker), { timeout: 30_000, message: 'the interrupted reply never reached its closing marker' })
+    .toBe(1);
   await expect(page.locator('textarea').filter({ visible: true })).toBeEnabled({ timeout: 30_000 });
 });
