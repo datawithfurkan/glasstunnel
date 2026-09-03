@@ -10,6 +10,7 @@ import {
   type TargetRenameRequest,
   type AgentInputRequestResponse,
   type ScreenPointerInput,
+  type VideoTrackHint,
   encodeDataChannelMessageJson,
   decodeDataChannelMessageJson,
   DEFAULT_STUN_URLS,
@@ -288,6 +289,18 @@ export class PeerConnection {
       messageId: createClientId(),
       atUnixMs: Date.now(),
       body: { kind: 'heartbeatPing', heartbeatPing: { atUnixMs: Date.now() } },
+    });
+  }
+
+  /**
+   * Tells the Mac whether this phone's screen track is delivering frames, so
+   * it can pause the JPEG fallback while every phone has live video.
+   */
+  sendVideoTrackHint(hint: VideoTrackHint): boolean {
+    return this.send({
+      messageId: createClientId(),
+      atUnixMs: Date.now(),
+      body: { kind: 'videoTrackHint', videoTrackHint: hint },
     });
   }
 
