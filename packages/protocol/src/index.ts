@@ -7,7 +7,7 @@
  * of the repo buildable and match the proto schema one-to-one.
  */
 
-export const PROTOCOL_VERSION = '0.2.1';
+export const PROTOCOL_VERSION = '0.2.2';
 
 export type DeviceId = string;
 export type AgentId = string;
@@ -104,6 +104,15 @@ export interface PendingToolCall {
   summary: string;
 }
 
+/** What a transcript record is, for rendering transcripts for reading. */
+export enum ChatMessageKind {
+  Unspecified = 0,
+  Text = 1,
+  ToolCall = 2,
+  ToolResult = 3,
+  Event = 4,
+}
+
 export interface AgentChatMessage {
   messageId: string;
   role: ChatRole;
@@ -113,6 +122,35 @@ export interface AgentChatMessage {
   pendingToolCalls: PendingToolCall[];
   /** Pattern names (not matched text) for any redactions applied to `text`. */
   redactionReasons?: string[];
+  /** Structure for reading transcripts; absent from Macs that predate it. */
+  kind?: ChatMessageKind;
+  toolName?: string;
+  /** Pairs a tool result with its call. */
+  toolCallId?: string;
+  /** One-line label derived on the Mac (a command, a file name, a pattern). */
+  title?: string;
+  outputLineCount?: number;
+  durationMs?: number;
+  isError?: boolean;
+  /** `text` is a preview; the full text is available through a MessageDetailRequest. */
+  truncated?: boolean;
+}
+
+/** Phone → Mac: the full text of a message whose snapshot copy was a preview. */
+export interface MessageDetailRequest {
+  agentId: AgentId;
+  messageId: string;
+}
+
+/** Mac → phone: the full text of one message, redacted like a snapshot. */
+export interface MessageDetail {
+  agentId: AgentId;
+  messageId: string;
+  text: string;
+  redacted: boolean;
+  redactionReasons?: string[];
+  /** Still cut at the Mac's own cap. */
+  truncated: boolean;
 }
 
 export interface AgentTargetOption {
@@ -353,7 +391,9 @@ export type DataChannelBody =
   | { kind: 'heartbeatPing'; heartbeatPing: HeartbeatPing }
   | { kind: 'heartbeatPong'; heartbeatPong: HeartbeatPong }
   | { kind: 'videoTrackHint'; videoTrackHint: VideoTrackHint }
-  | { kind: 'redactionPolicyUpdate'; redactionPolicyUpdate: RedactionPolicyUpdate };
+  | { kind: 'redactionPolicyUpdate'; redactionPolicyUpdate: RedactionPolicyUpdate }
+  | { kind: 'messageDetailRequest'; messageDetailRequest: MessageDetailRequest }
+  | { kind: 'messageDetail'; messageDetail: MessageDetail };
 
 export interface DataChannelMessage {
   messageId: string;

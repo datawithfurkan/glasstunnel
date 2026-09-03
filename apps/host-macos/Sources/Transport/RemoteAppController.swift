@@ -560,6 +560,23 @@ public final class RemoteAppController {
         try await adapter.interrupt()
     }
 
+    /// The full text of a transcript message, redacted like a snapshot.
+    public func messageDetail(agentId: AgentID, messageId: MessageID) -> MessageDetail? {
+        guard let adapter = adapter(for: agentId), let detail = adapter.messageDetail(messageId) else {
+            return nil
+        }
+        let (redactedText, hits) = redactor.redact(detail.text)
+        let reasons = SecretRedactor.mergedReasons([], hits, SecretRedactor.placeholderReasons(in: redactedText))
+        return MessageDetail(
+            agentId: agentId,
+            messageId: messageId,
+            text: redactedText,
+            redacted: !reasons.isEmpty,
+            redactionReasons: reasons,
+            truncated: detail.truncated
+        )
+    }
+
     public func selectTarget(agentId: AgentID, targetId: String) async throws {
         if agentId == "terminal" {
             try selectTerminalSession(targetId: targetId)
@@ -1237,10 +1254,13 @@ public final class RemoteAppController {
                 hits,
                 SecretRedactor.placeholderReasons(in: redactedText)
             )
+            let (redactedTitle, titleHits) = redactor.redact(message.title)
+            let allReasons = SecretRedactor.mergedReasons(reasons, titleHits, [])
             var copy = message
             copy.text = redactedText
-            copy.redacted = message.redacted || !reasons.isEmpty
-            copy.redactionReasons = reasons
+            copy.title = redactedTitle
+            copy.redacted = message.redacted || !allReasons.isEmpty
+            copy.redactionReasons = allReasons
             return copy
         }
         latestSnapshots[definition.agentId] = redactedSnapshot

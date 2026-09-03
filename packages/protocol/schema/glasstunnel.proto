@@ -102,6 +102,8 @@ message DataChannelMessage {
     RedactionPolicyUpdate redaction_policy_update = 23;
     RemoteAppsUpdate remote_apps_update = 24;
     AgentRuntimeSettingsUpdate agent_runtime_settings_update = 30;
+    MessageDetailRequest message_detail_request = 32;
+    MessageDetail message_detail = 33;
   }
 }
 
@@ -214,6 +216,46 @@ message AgentChatMessage {
   // "aws_access_key", "github_pat". The actual matched text is NEVER sent;
   // only the pattern name. Phones show these in a tooltip on the redacted pill.
   repeated string redaction_reasons = 7;
+  // Structure for reading transcripts. All optional: a phone that predates
+  // them keeps rendering `text`, and a Mac that predates them leaves them unset.
+  ChatMessageKind kind = 8;
+  string tool_name = 9;
+  // Pairs a TOOL_RESULT with its TOOL_CALL.
+  string tool_call_id = 10;
+  // One-line label derived on the Mac (a Bash command, a file name, a
+  // search pattern). Redacted like `text`.
+  string title = 11;
+  int32 output_line_count = 12;
+  int64 duration_ms = 13;
+  bool is_error = 14;
+  // `text` is a preview; the full text is available through MessageDetailRequest.
+  bool truncated = 15;
+}
+
+enum ChatMessageKind {
+  CHAT_MESSAGE_KIND_UNSPECIFIED = 0;
+  CHAT_MESSAGE_KIND_TEXT = 1;
+  CHAT_MESSAGE_KIND_TOOL_CALL = 2;
+  CHAT_MESSAGE_KIND_TOOL_RESULT = 3;
+  CHAT_MESSAGE_KIND_EVENT = 4;
+}
+
+// Phone → Mac: asks for the full text of a message whose snapshot copy was
+// a preview (`truncated`).
+message MessageDetailRequest {
+  string agent_id = 1;
+  string message_id = 2;
+}
+
+// Mac → phone: the full text of one message, redacted like a snapshot.
+message MessageDetail {
+  string agent_id = 1;
+  string message_id = 2;
+  string text = 3;
+  bool redacted = 4;
+  repeated string redaction_reasons = 5;
+  // Still cut at the Mac's own cap.
+  bool truncated = 6;
 }
 
 message PendingToolCall {

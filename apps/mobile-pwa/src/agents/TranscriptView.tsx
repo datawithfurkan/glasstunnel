@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { AgentChatMessage } from '@glasstunnel/protocol';
+import { useAppStore } from '../lib/store';
 import { formatMessageTimestamp } from './messageTimestamp';
 import {
   activitySummary,
@@ -16,6 +17,7 @@ import {
 } from './transcript';
 
 interface Props {
+  agentId: string;
   messages: AgentChatMessage[];
 }
 
@@ -25,7 +27,7 @@ interface Props {
  * time stamp per cluster. "Focus" hides tool output until a row is opened;
  * "Full" keeps every output open.
  */
-export function TranscriptView({ messages }: Props) {
+export function TranscriptView({ agentId, messages }: Props) {
   const items = useMemo(() => buildTranscript(messages), [messages]);
   const [density, setDensity] = useTranscriptDensity();
   const firstActivityId = items.find((item) => item.kind === 'activity')?.id;
@@ -36,6 +38,7 @@ export function TranscriptView({ messages }: Props) {
         <TranscriptRow
           key={item.id}
           item={item}
+          agentId={agentId}
           density={density}
           toggle={item.id === firstActivityId ? <DensityToggle density={density} onChange={setDensity} /> : null}
         />
@@ -88,10 +91,12 @@ function DensityToggle({
 
 function TranscriptRow({
   item,
+  agentId,
   density,
   toggle,
 }: {
   item: TranscriptItem;
+  agentId: string;
   density: TranscriptDensity;
   toggle: ReactNode;
 }) {
@@ -105,7 +110,7 @@ function TranscriptRow({
     case 'event':
       return <EventDivider message={item.message} />;
     case 'activity':
-      return <ActivityBlock rows={item.rows} density={density} toggle={toggle} />;
+      return <ActivityBlock rows={item.rows} agentId={agentId} density={density} toggle={toggle} />;
     default:
       return null;
   }
@@ -186,10 +191,12 @@ function EventDivider({ message }: { message: AgentChatMessage }) {
 
 function ActivityBlock({
   rows,
+  agentId,
   density,
   toggle,
 }: {
   rows: ToolRow[];
+  agentId: string;
   density: TranscriptDensity;
   toggle: ReactNode;
 }) {
@@ -200,25 +207,27 @@ function ActivityBlock({
         {toggle}
       </div>
       {rows.map((row) => (
-        <ToolRowView key={row.id} row={row} open={density === 'full'} />
+        <ToolRowView key={row.id} row={row} agentId={agentId} open={density === 'full'} />
       ))}
     </div>
   );
 }
 
-function ToolRowView({ row, open }: { row: ToolRow; open: boolean }) {
+function ToolRowView({ row, agentId, open }: { row: ToolRow; agentId: string; open: boolean }) {
   const label = toolRowLabel(row);
   const hasOutput = row.output.trim().length > 0;
+  // A title from the Mac (the command, the file) beats the first output line.
+  const detail = row.title || row.detail;
   const summary = (
     <div className="grid grid-cols-[14px_minmax(0,1fr)_auto] items-center gap-2 px-2.5 py-1 text-[12.5px]">
-      <span className="gt-tool-caret text-accent" aria-hidden="true">
+      <span className={`gt-tool-caret ${row.isError ? 'text-err' : 'text-accent'}`} aria-hidden="true">
         {hasOutput ? '▸' : '·'}
       </span>
       <span className="min-w-0 truncate">
         <span className="font-semibold">{label.title}</span>
-        {row.detail && <span className="gt-muted ml-1.5 font-mono text-[11.5px]">{row.detail}</span>}
+        {detail && <span className="gt-muted ml-1.5 font-mono text-[11.5px]">{detail}</span>}
       </span>
-      <span className={`shrink-0 text-[11px] tabular-nums ${row.pending ? 'text-warn' : 'gt-dim'}`}>
+      <span className={`shrink-0 text-[11px] tabular-nums ${row.pending ? 'text-warn' : row.isError ? 'text-err' : 'gt-dim'}`}>
         {row.pending ? 'running…' : label.meta}
       </span>
     </div>
@@ -229,16 +238,34 @@ function ToolRowView({ row, open }: { row: ToolRow; open: boolean }) {
   return (
     <details key={open ? 'open' : 'closed'} open={open} className="gt-tool-row border-b border-[color:var(--gt-border)] last:border-b-0">
       <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">{summary}</summary>
-      <ToolOutput row={row} />
+      <ToolOutput row={row} agentId={agentId} />
     </details>
   );
 }
 
-function ToolOutput({ row }: { row: ToolRow }) {
+function ToolOutput({ row, agentId }: { row: ToolRow; agentId: string }) {
+  const detail = useAppStore((s) => (row.resultMessageId ? s.messageDetails[row.resultMessageId] : undefined));
+  const requestMessageDetail = useAppStore((s) => s.requestMessageDetail);
+  const [requested, setRequested] = useState(false);
+  const text = detail?.text ?? row.output;
+  const canFetch = row.truncated && !detail && Boolean(row.resultMessageId);
   return (
     <div className="px-2 pb-1.5 pl-[26px]">
-      <pre className="gt-tool-output">{row.output.replace(/\s+$/, '')}</pre>
-      {row.redacted && <RedactedPill reasons={row.redactionReasons} />}
+      <pre className="gt-tool-output">{text.replace(/\s+$/, '')}</pre>
+      {canFetch && (
+        <button
+          type="button"
+          onClick={() => {
+            if (row.resultMessageId && requestMessageDetail(agentId, row.resultMessageId)) setRequested(true);
+          }}
+          className="mt-1 text-[12px] text-accent disabled:opacity-60"
+          disabled={requested}
+        >
+          {requested ? 'Loading…' : `Show all ${row.lineCount} lines`}
+        </button>
+      )}
+      {detail?.truncated && <span className="gt-dim ml-2 text-[11px]">cut at the Mac's limit</span>}
+      {(row.redacted || detail?.redacted) && <RedactedPill reasons={detail?.redactionReasons ?? row.redactionReasons} />}
     </div>
   );
 }

@@ -14,12 +14,15 @@ final class ClaudeCodeSessionParserTests: XCTestCase {
         XCTAssertEqual(parsed.sessionId, "11111111-1111-1111-1111-111111111111")
         XCTAssertEqual(parsed.workspaceRoot, "/Users/developer/Documents/GitHub/example")
         XCTAssertEqual(parsed.threadName, "Build the settings screen")
-        XCTAssertEqual(parsed.messages.count, 2)
+        XCTAssertEqual(parsed.messages.count, 3, "the prompt, the reply text, and one row for the tool call")
         XCTAssertEqual(parsed.messages[0].role, .user)
         XCTAssertEqual(parsed.messages[0].text, "Build the settings screen")
         XCTAssertEqual(parsed.messages[1].role, .assistant)
         XCTAssertEqual(parsed.messages[1].text, "I will inspect the app first.")
-        XCTAssertEqual(parsed.messages[1].pendingToolCalls.first?.toolName, "Bash")
+        XCTAssertEqual(parsed.messages[2].role, .tool)
+        XCTAssertEqual(parsed.messages[2].kind, .toolCall)
+        XCTAssertEqual(parsed.messages[2].pendingToolCalls.first?.toolName, "Bash")
+        XCTAssertEqual(parsed.messages[2].title, "ls")
     }
 
     func testTitleRecordsOutrankTheFirstPromptForCliSessions() {

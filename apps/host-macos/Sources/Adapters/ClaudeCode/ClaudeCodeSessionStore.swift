@@ -182,6 +182,8 @@ enum ClaudeCodeSessionParser {
         let threadName: String?
         let entrypoint: String?
         let messages: [AgentChatMessage]
+        /// Full tool output for messages whose snapshot text is a preview.
+        let messageDetails: [MessageID: String]
         /// Turn state derived from the transcript: an assistant record with
         /// `stop_reason == end_turn` ends a turn, `tool_use` and tool results
         /// mean Claude is still working, and an unanswered `AskUserQuestion`
@@ -213,6 +215,8 @@ enum ClaudeCodeSessionParser {
         var tools: [PendingToolCall]
         var toolResultIds: [String]
         var hasHumanText: Bool
+        let toolCalls: [ToolCallPart]
+        let toolResults: [ToolResultPart]
     }
 
     static let interruptedMarkerPrefix = "[Request interrupted by user"
@@ -268,6 +272,7 @@ enum ClaudeCodeSessionParser {
             threadName: threadName,
             entrypoint: headMetadata.entrypoint ?? recent.entrypoint,
             messages: recent.messages,
+            messageDetails: recent.messageDetails,
             status: recent.status,
             statusDetail: recent.statusDetail,
             pendingInputRequest: recent.pendingInputRequest,
@@ -304,6 +309,10 @@ enum ClaudeCodeSessionParser {
         /// not read as a new turn, or "Stopped" flips back to "working" until
         /// the next real prompt.
         var interruptedTurn = false
+        var messageDetails: [MessageID: String] = [:]
+        /// Tool calls still waiting for their result, for pairing and timing.
+        var toolCallStartedAt: [String: Int64] = [:]
+        var toolCallNames: [String: String] = [:]
 
         for (index, line) in jsonl.split(whereSeparator: \.isNewline).enumerated() {
             guard
@@ -339,7 +348,8 @@ enum ClaudeCodeSessionParser {
                         messageId: "\(agentID)-claude-\(index)",
                         role: .system,
                         text: "Stopped",
-                        atUnixMs: recordAt ?? Int64(Date().timeIntervalSince1970 * 1000)
+                        atUnixMs: recordAt ?? Int64(Date().timeIntervalSince1970 * 1000),
+                        kind: .event
                     ))
                     continue
                 }
@@ -384,17 +394,57 @@ enum ClaudeCodeSessionParser {
                 break
             }
 
-            if text.isEmpty, extracted.tools.isEmpty { continue }
-            let isToolOutput = role == .user && !extracted.toolResultIds.isEmpty
-            messages.append(
-                AgentChatMessage(
+            if text.isEmpty, extracted.toolCalls.isEmpty, extracted.toolResults.isEmpty { continue }
+            let at = recordAt ?? Int64(Date().timeIntervalSince1970 * 1000)
+            if !text.isEmpty {
+                messages.append(AgentChatMessage(
                     messageId: "\(agentID)-claude-\(index)",
-                    role: text.isEmpty || isToolOutput ? .tool : role,
-                    text: text.isEmpty ? extracted.tools.map(\.summary).joined(separator: "\n") : text,
-                    atUnixMs: recordAt ?? Int64(Date().timeIntervalSince1970 * 1000),
-                    pendingToolCalls: extracted.tools
-                )
-            )
+                    role: role,
+                    text: text,
+                    atUnixMs: at,
+                    kind: .text
+                ))
+            }
+            // One row per tool call. `text` keeps the old "Using X" wording for
+            // phones that predate the structured fields.
+            for (offset, call) in extracted.toolCalls.enumerated() {
+                toolCallStartedAt[call.id] = at
+                toolCallNames[call.id] = call.name
+                messages.append(AgentChatMessage(
+                    messageId: "\(agentID)-claude-\(index)-c\(offset)",
+                    role: .tool,
+                    text: "Using \(call.name)",
+                    atUnixMs: at,
+                    pendingToolCalls: [PendingToolCall(toolName: call.name, toolCallId: call.id, summary: "Using \(call.name)")],
+                    kind: .toolCall,
+                    toolName: call.name,
+                    toolCallId: call.id,
+                    title: toolTitle(name: call.name, input: call.input)
+                ))
+            }
+            // One row per result, paired with its call by id; the snapshot carries
+            // a preview and the full output stays available on request.
+            for (offset, result) in extracted.toolResults.enumerated() {
+                let preview = TranscriptPreview.make(result.text)
+                let messageId = "\(agentID)-claude-\(index)-r\(offset)"
+                let startedAt = toolCallStartedAt.removeValue(forKey: result.id)
+                messages.append(AgentChatMessage(
+                    messageId: messageId,
+                    role: .tool,
+                    text: preview.text,
+                    atUnixMs: at,
+                    kind: .toolResult,
+                    toolName: toolCallNames[result.id] ?? "",
+                    toolCallId: result.id,
+                    outputLineCount: preview.lineCount,
+                    durationMs: startedAt.map { max(0, at - $0) } ?? 0,
+                    isError: result.isError,
+                    truncated: preview.truncated
+                ))
+                if preview.truncated {
+                    messageDetails[messageId] = preview.detail
+                }
+            }
         }
 
         if messages.count > maxMessages {
@@ -412,6 +462,7 @@ enum ClaudeCodeSessionParser {
             threadName: metadata.threadName,
             entrypoint: metadata.entrypoint,
             messages: messages,
+            messageDetails: messageDetails.filter { detail in messages.contains { $0.messageId == detail.key } },
             status: status,
             statusDetail: statusDetail,
             pendingInputRequest: pendingInputRequest,
@@ -490,18 +541,32 @@ enum ClaudeCodeSessionParser {
         )
     }
 
+    struct ToolCallPart {
+        let id: String
+        let name: String
+        let input: [String: Any]
+    }
+
+    struct ToolResultPart {
+        let id: String
+        let text: String
+        let isError: Bool
+    }
+
     private static func extractContent(from rawContent: Any?) -> ExtractedContent {
         if let text = rawContent as? String {
-            return ExtractedContent(text: text, tools: [], toolResultIds: [], hasHumanText: !text.isEmpty)
+            return ExtractedContent(text: text, tools: [], toolResultIds: [], hasHumanText: !text.isEmpty, toolCalls: [], toolResults: [])
         }
 
         guard let parts = rawContent as? [[String: Any]] else {
-            return ExtractedContent(text: "", tools: [], toolResultIds: [], hasHumanText: false)
+            return ExtractedContent(text: "", tools: [], toolResultIds: [], hasHumanText: false, toolCalls: [], toolResults: [])
         }
 
         var texts: [String] = []
         var tools: [PendingToolCall] = []
         var toolResultIds: [String] = []
+        var toolCalls: [ToolCallPart] = []
+        var toolResults: [ToolResultPart] = []
         var hasHumanText = false
 
         for part in parts {
@@ -518,14 +583,14 @@ enum ClaudeCodeSessionParser {
                 let name = part["name"] as? String ?? "tool"
                 let id = part["id"] as? String ?? "\(name)-\(tools.count + 1)"
                 tools.append(PendingToolCall(toolName: name, toolCallId: id, summary: "Using \(name)"))
+                toolCalls.append(ToolCallPart(id: id, name: name, input: part["input"] as? [String: Any] ?? [:]))
             case "tool_result":
-                if let id = part["tool_use_id"] as? String, !id.isEmpty {
+                let id = part["tool_use_id"] as? String ?? ""
+                if !id.isEmpty {
                     toolResultIds.append(id)
                 }
-                let resultText = toolResultText(part["content"])
-                if !resultText.isEmpty {
-                    texts.append(String(resultText.prefix(toolResultTextLimit)))
-                }
+                let resultText = String(toolResultText(part["content"]).prefix(toolResultTextLimit))
+                toolResults.append(ToolResultPart(id: id, text: resultText, isError: part["is_error"] as? Bool == true))
             default:
                 continue
             }
@@ -535,8 +600,44 @@ enum ClaudeCodeSessionParser {
             text: texts.joined(separator: "\n\n"),
             tools: tools,
             toolResultIds: toolResultIds,
-            hasHumanText: hasHumanText
+            hasHumanText: hasHumanText,
+            toolCalls: toolCalls,
+            toolResults: toolResults
         )
+    }
+
+    /// One-line label for a tool call, from the arguments Claude passed it.
+    static func toolTitle(name: String, input: [String: Any]) -> String {
+        func string(_ key: String) -> String? {
+            guard let value = input[key] as? String, !value.isEmpty else { return nil }
+            return value
+        }
+        func fileName(_ key: String) -> String? {
+            string(key).map { ($0 as NSString).lastPathComponent }
+        }
+        switch name {
+        case "Bash":
+            return string("command").map { TranscriptPreview.singleLine($0) } ?? ""
+        case "Read", "Edit", "Write", "MultiEdit", "NotebookEdit":
+            return fileName("file_path") ?? fileName("notebook_path") ?? ""
+        case "Grep":
+            guard let pattern = string("pattern") else { return "" }
+            if let scope = fileName("path") { return TranscriptPreview.singleLine("\(pattern) in \(scope)") }
+            return TranscriptPreview.singleLine(pattern)
+        case "Glob":
+            return string("pattern").map { TranscriptPreview.singleLine($0) } ?? ""
+        case "WebFetch":
+            guard let url = string("url"), let parsed = URL(string: url), let host = parsed.host else { return "" }
+            return TranscriptPreview.singleLine(host + parsed.path, limit: 80)
+        case "WebSearch":
+            return string("query").map { TranscriptPreview.singleLine($0, limit: 80) } ?? ""
+        case "Task":
+            return string("description").map { TranscriptPreview.singleLine($0, limit: 80) } ?? ""
+        case "TodoWrite":
+            return "Update todos"
+        default:
+            return ""
+        }
     }
 
     private static func toolResultText(_ rawContent: Any?) -> String {

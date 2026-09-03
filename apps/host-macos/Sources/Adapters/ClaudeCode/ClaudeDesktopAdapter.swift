@@ -82,6 +82,8 @@ public final class ClaudeDesktopAdapter: AgentAdapter, @unchecked Sendable {
     private var sessionSummaries: [ClaudeCodeSessionSummary] = []
     private var selectedSessionId: String?
     private var currentMessages: [AgentChatMessage] = []
+    /// Full tool output for messages whose snapshot text is a preview.
+    private var currentMessageDetails: [MessageID: String] = [:]
     private var currentStatus: AgentStatus = .idle
     private var currentDetail = ""
     private var currentPendingInputRequest: AgentInputRequest?
@@ -302,6 +304,13 @@ public final class ClaudeDesktopAdapter: AgentAdapter, @unchecked Sendable {
         emitCurrentSnapshot()
     }
 
+    public func messageDetail(_ messageId: MessageID) -> AgentMessageDetail? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let text = currentMessageDetails[messageId] else { return nil }
+        return AgentMessageDetail(messageId: messageId, text: text, truncated: text.utf8.count >= TranscriptPreview.detailByteCount)
+    }
+
     public func interrupt() async throws {
         try ui.interrupt()
         clearHookOverride()
@@ -518,6 +527,7 @@ public final class ClaudeDesktopAdapter: AgentAdapter, @unchecked Sendable {
         selectedSessionId = selected?.sessionId
         if selectionChanged {
             currentMessages = []
+            currentMessageDetails = [:]
             parsedTranscript = nil
             hookStatusActivityUnixMs = nil
             currentPendingInputRequest = nil
@@ -542,6 +552,7 @@ public final class ClaudeDesktopAdapter: AgentAdapter, @unchecked Sendable {
             lock.lock()
             if selectedSessionId == selected.sessionId {
                 currentMessages = parsed.messages
+                currentMessageDetails = parsed.messageDetails
                 currentThreadName = parsed.threadName ?? selected.threadName
                 currentModel = parsed.model ?? currentModel
                 let activity = parsed.lastActivityUnixMs
@@ -721,6 +732,7 @@ public final class ClaudeDesktopAdapter: AgentAdapter, @unchecked Sendable {
         lock.lock()
         selectedSessionId = sessionId
         currentMessages = []
+            currentMessageDetails = [:]
         parsedTranscript = nil
         hookStatusActivityUnixMs = nil
         currentPendingInputRequest = nil

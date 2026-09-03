@@ -14,6 +14,7 @@ import {
   decodeDataChannelMessageJson,
   DEFAULT_STUN_URLS,
 } from '@glasstunnel/protocol';
+import type { MessageDetailRequest } from '@glasstunnel/protocol';
 import { createClientId } from '../lib/id';
 import { preferH264InAnswerSdp } from './sdpCodecs';
 
@@ -231,6 +232,14 @@ export class PeerConnection {
       messageId: createClientId(),
       atUnixMs: Date.now(),
       body: { kind: 'interruptRequest', interruptRequest: req },
+    });
+  }
+
+  sendMessageDetailRequest(req: MessageDetailRequest): boolean {
+    return this.send({
+      messageId: createClientId(),
+      atUnixMs: Date.now(),
+      body: { kind: 'messageDetailRequest', messageDetailRequest: req },
     });
   }
 

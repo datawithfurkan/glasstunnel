@@ -254,6 +254,13 @@ public final class SessionManager {
         }
     }
 
+    private func publishRelayMessageDetail(_ detail: MessageDetail, to clientDeviceID: DeviceID) {
+        guard let relay else { return }
+        Task { [relay, detail, clientDeviceID] in
+            try? await relay.publishMessageDetail(detail, to: clientDeviceID)
+        }
+    }
+
     private func connectSignaling() async throws {
         onState?(.connecting)
 
@@ -541,7 +548,7 @@ public final class SessionManager {
 
     // MARK: - Relay command routing
 
-    private func handleRelayCommand(_ msg: DataChannelMessage, from _: DeviceID?) {
+    private func handleRelayCommand(_ msg: DataChannelMessage, from clientDeviceID: DeviceID?) {
         autoLock.heartbeat()
 
         switch msg.body {
@@ -569,6 +576,17 @@ public final class SessionManager {
                     await MainActor.run {
                         self?.emitRelaySystemMessage(agentId: agentId, text: "interrupt failed: \(reason)")
                     }
+                }
+            }
+        case .messageDetailRequest(let request):
+            // Reading a message is not input: allowed in read-only mode, refused only while locked.
+            guard !autoLock.isLocked, let clientDeviceID else { return }
+            Task { [weak self, controller = remoteAppController, request, clientDeviceID] in
+                guard let detail = await controller.messageDetail(agentId: request.agentId, messageId: request.messageId) else {
+                    return
+                }
+                await MainActor.run {
+                    self?.publishRelayMessageDetail(detail, to: clientDeviceID)
                 }
             }
         case .targetSelectionRequest(let request):
@@ -665,6 +683,9 @@ public final class SessionManager {
             Task { [weak self] in
                 await self?.handleRelayImageAttachmentChunk(chunk)
             }
+        case .messageDetail:
+            // Mac → phone only; never arrives as a command.
+            return
         case .fileAttachmentChunk(let chunk):
             guard canAcceptRelayInput(agentId: chunk.agentId) else { return }
             Task { [weak self] in

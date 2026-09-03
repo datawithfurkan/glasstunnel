@@ -2064,6 +2064,15 @@ export class RelayHub extends DurableObject<Env> {
       case "relay_screen_frame":
         this.broadcastToClients(parsed);
         return;
+      case "relay_message_detail": {
+        // A reply to one client's request; never fanned out.
+        const clientDeviceId = parsed.client_device_id;
+        if (typeof clientDeviceId !== "string" || !clientDeviceId) return;
+        const target = this.clientSockets.get(clientDeviceId);
+        if (!target) return;
+        if (!sendToOpenSocket(target, JSON.stringify(parsed))) await this.unregisterRelaySocket(target);
+        return;
+      }
       case "relay_pong":
         return;
       default:

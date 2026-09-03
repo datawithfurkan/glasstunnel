@@ -147,14 +147,15 @@ async function decide(page: Page, choice: RegExp): Promise<void> {
  * prompt that the Mac types into the app's composer via Accessibility, answers
  * a permission prompt (with the session switched to the app's ask-first mode
  * for that step) and an AskUserQuestion from the phone, interrupts a running
- * turn from the phone, and checks that the Claude Code CLI card started
- * alongside never inherits the desktop session's hook events. Costs four
- * short turns on the signed-in account.
+ * turn from the phone, fetches a long tool output from the Mac on request,
+ * and checks that the Claude Code CLI card started alongside never inherits
+ * the desktop session's hook events. Costs five short turns on the signed-in
+ * account.
  */
 test('@claude-desktop-account prompts, answers permission and question dialogs, interrupts, and leaves the CLI card untouched', async ({
   page,
 }) => {
-  test.setTimeout(600_000);
+  test.setTimeout(720_000);
   const marker = `GT_CLAUDE_APP_${Date.now()}`;
 
   await signInAndLinkHost(page);
@@ -269,7 +270,30 @@ test('@claude-desktop-account prompts, answers permission and question dialogs, 
   });
   await turnFinished(page, `Beta_PICKED_${marker}`, 1);
 
-  // 4. Interrupt from the phone. A long reply is stopped through the app's
+  // 4. A long tool output arrives as a preview; the full text is fetched from
+  //    the Mac on request (the row opens on tap, then "Show all N lines").
+  const seqMarker = `${marker}_SEQ`;
+  await sendPrompt(
+    page,
+    `Run this shell command with your Bash tool and show me its output: seq 1 40 && echo ${seqMarker}`,
+  );
+  const seqPermission = page.getByText('Claude needs a decision', { exact: true }).filter({ visible: true });
+  if (await seqPermission.waitFor({ state: 'visible', timeout: 20_000 }).then(() => true).catch(() => false)) {
+    await decide(page, /Allow/);
+  }
+  await turnFinished(page, seqMarker, 2);
+  const seqRow = page.locator('.gt-tool-row', { hasText: 'seq 1 40' }).filter({ visible: true }).last();
+  await expect(seqRow).toBeVisible({ timeout: 30_000 });
+  const showAll = seqRow.getByRole('button', { name: /^Show all \d+ lines$/ });
+  if (!(await showAll.isVisible().catch(() => false))) await seqRow.locator('summary').click();
+  await expect(showAll).toBeVisible({ timeout: 10_000 });
+  const lineCount = Number((await showAll.innerText()).replace(/\D/g, ''));
+  expect(lineCount, 'the Mac reports the full line count with the preview').toBeGreaterThanOrEqual(40);
+  await showAll.click();
+  await expect(seqRow.locator('.gt-tool-output')).toContainText(/(^|\n)40(\n|$)/, { timeout: 30_000 });
+  await expect(showAll).toBeHidden();
+
+  // 5. Interrupt from the phone. A long reply is stopped through the app's
   //    own Stop control; the transcript then records the turn as stopped, so
   //    the card reads "idle" and the reply's closing marker never lands. (A
   //    long shell command is not a reliable target: Claude Code may run it in
@@ -289,7 +313,7 @@ test('@claude-desktop-account prompts, answers permission and question dialogs, 
   await expect(stop).toBeHidden();
   expect(await occurrences(page, doneMarker), 'the interrupted reply never reached its closing marker').toBe(1);
 
-  // 5. The CLI card owns a different session, so none of the above moved it.
+  // 6. The CLI card owns a different session, so none of the above moved it.
   await openTab(page, 'Code');
   await expect(page.getByText('Response ready', { exact: true })).toBeHidden();
   await expect(page.getByText('Claude needs a decision', { exact: true })).toBeHidden();

@@ -1348,6 +1348,43 @@ final class RemoteAppControllerTests: XCTestCase {
         XCTAssertEqual(claudeCard()?.enabled, true)
     }
 
+    func testMessageDetailIsRedactedLikeASnapshot() async throws {
+        let defaults = isolatedDefaults()
+        defaults.set([], forKey: "remoteApps.enabled.v1")
+        let adapter = StubAgentAdapter(agentID: "claude-desktop", kind: .claudeDesktop, label: "Claude")
+        adapter.detailTexts["m-7"] = "token ghp_" + String(repeating: "a", count: 36) + " printed by the tool"
+        let factory = AdapterFactoryRecorder(remoteAppId: "claude-desktop", adapter: adapter)
+        let controller = RemoteAppController(
+            defaults: defaults,
+            executableExists: { _ in false },
+            adapterFactory: { definition, window in
+                factory.makeAdapter(definition: definition, window: window)
+            }
+        )
+        controller.updateWindows([
+            CapturableWindow(
+                windowID: 300,
+                title: "Claude",
+                applicationName: "Claude",
+                applicationBundleID: "com.anthropic.claudefordesktop",
+                pid: 4321,
+                frame: .zero,
+                isOnScreen: true
+            ),
+        ])
+        controller.setEnabled(remoteAppId: "claude-desktop", enabled: true)
+        for _ in 0..<80 where adapter.startCalls() < 1 {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        let detail = try XCTUnwrap(controller.messageDetail(agentId: "claude-desktop", messageId: "m-7"))
+        XCTAssertFalse(detail.text.contains("ghp_aaaa"), "the token never leaves the Mac")
+        XCTAssertTrue(detail.redacted)
+        XCTAssertEqual(detail.redactionReasons, ["github_pat"])
+        XCTAssertNil(controller.messageDetail(agentId: "claude-desktop", messageId: "unknown"))
+        XCTAssertNil(controller.messageDetail(agentId: "codex", messageId: "m-7"))
+    }
+
     private func isolatedDefaults() -> UserDefaults {
         let suiteName = "RemoteAppControllerTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -1451,6 +1488,12 @@ private final class StubAgentAdapter: AgentAdapter, @unchecked Sendable {
     }
 
     func interrupt() async throws {}
+
+    /// Text served for `messageDetail`, keyed by message id.
+    var detailTexts: [MessageID: String] = [:]
+    func messageDetail(_ messageId: MessageID) -> AgentMessageDetail? {
+        detailTexts[messageId].map { AgentMessageDetail(messageId: messageId, text: $0, truncated: false) }
+    }
 
     func start() async throws {
         incrementStartCount()

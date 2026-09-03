@@ -110,6 +110,11 @@ public final class RelayClient: NSObject, URLSessionWebSocketDelegate, @unchecke
         try await sendEncodable(RelayAgentStateMessage(snapshot: snapshot))
     }
 
+    /// The full text of one message, for the phone that asked for it.
+    public func publishMessageDetail(_ detail: MessageDetail, to clientDeviceID: DeviceID) async throws {
+        try await sendEncodable(RelayMessageDetailMessage(client_device_id: clientDeviceID, detail: detail))
+    }
+
     public func publishScreenFrame(_ frame: RelayScreenFrameMessage) async throws {
         try await sendEncodable(frame)
     }
@@ -260,6 +265,12 @@ private struct RelayRemoteAppsMessage: Encodable {
 private struct RelayAgentStateMessage: Encodable {
     let type = "relay_agent_state"
     let snapshot: AgentStateSnapshot
+}
+
+private struct RelayMessageDetailMessage: Encodable {
+    let type = "relay_message_detail"
+    let client_device_id: DeviceID
+    let detail: MessageDetail
 }
 
 public struct RelayScreenFrameMessage: Encodable, Sendable {

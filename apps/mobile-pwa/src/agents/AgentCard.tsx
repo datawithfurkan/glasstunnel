@@ -674,7 +674,7 @@ export function AgentCard({
                 copy={`Once ${app.displayName} writes in this thread, the latest context will appear here.`}
               />
             )}
-            {messages.length > 0 && <TranscriptView messages={messages} />}
+            {messages.length > 0 && <TranscriptView agentId={app.agentId} messages={messages} />}
             {pendingInputRequest && (
               <PlanningRequestCard
                 appName={app.displayName}
