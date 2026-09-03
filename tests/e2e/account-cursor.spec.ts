@@ -72,7 +72,10 @@ test('@cursor-desktop-account switches to a dedicated chat, prompts, and interru
   await expect(cursorTab).toBeVisible({ timeout: 30_000 });
   await cursorTab.click();
 
+  // The card's body renders a moment after the tab switch (later on WebKit);
+  // give the Start button time to appear before deciding it is not needed.
   const startButton = page.getByRole('button', { name: 'Start', exact: true }).filter({ visible: true });
+  await startButton.waitFor({ state: 'visible', timeout: 15_000 }).catch(() => undefined);
   if (await startButton.isVisible().catch(() => false)) await startButton.click();
 
   // The card lists the app's chats; the dedicated one is either already in

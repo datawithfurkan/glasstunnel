@@ -72,7 +72,10 @@ test('@cursor-agent-account prompts, reads a file in plan mode, and interrupts C
   await expect(agentTab).toBeVisible({ timeout: 30_000 });
   await agentTab.click();
 
+  // The card's body renders a moment after the tab switch (later on WebKit);
+  // give the Start button time to appear before deciding it is not needed.
   const startButton = page.getByRole('button', { name: 'Start', exact: true }).filter({ visible: true });
+  await startButton.waitFor({ state: 'visible', timeout: 15_000 }).catch(() => undefined);
   if (await startButton.isVisible().catch(() => false)) await startButton.click();
 
   // The card lists the CLI's chats plus a "New chat" row once the Mac has
