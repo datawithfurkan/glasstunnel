@@ -69,6 +69,43 @@ final class CursorSQLiteReaderTests: XCTestCase {
         XCTAssertEqual(messages[0].text, "hello there")
     }
 
+    func testBubbleFormatChatTakesStatusFromTheComposerGenerationRecord() throws {
+        // An older chat that keeps growing in the bubble format: its last bubble
+        // is the prompt of an interrupted turn, which alone would read as a
+        // running turn; Cursor's own record on the composer says it was aborted.
+        let path = try createCursorDiskKVDatabase(rows: [
+            (
+                "composerData:composer-aborted",
+                """
+                {
+                  "composerId": "composer-aborted",
+                  "name": "Interrupted chat",
+                  "status": "aborted",
+                  "generatingBubbleIds": [],
+                  "createdAt": 1770000000000,
+                  "lastUpdatedAt": 1770000009000,
+                  "fullConversationHeadersOnly": [
+                    {"bubbleId": "b-user-1", "type": 1},
+                    {"bubbleId": "b-assistant-1", "type": 2},
+                    {"bubbleId": "b-user-2", "type": 1}
+                  ]
+                }
+                """
+            ),
+            ("bubbleId:composer-aborted:b-user-1", #"{"bubbleId": "b-user-1", "type": 1, "text": "Reply with OK", "createdAt": "2026-02-01T12:00:00.000Z"}"#),
+            ("bubbleId:composer-aborted:b-assistant-1", #"{"bubbleId": "b-assistant-1", "type": 2, "text": "OK", "createdAt": "2026-02-01T12:00:01.000Z"}"#),
+            ("bubbleId:composer-aborted:b-user-2", #"{"bubbleId": "b-user-2", "type": 1, "text": "Count to four hundred", "createdAt": "2026-02-01T12:00:02.000Z"}"#),
+        ])
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let reader = CursorDesktopStoreReader(stateDBPath: path, stateRoot: URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true))
+        let conversation = reader.conversation(composerId: "composer-aborted", agentID: "cursor", maxMessages: 20)
+        XCTAssertEqual(conversation?.messages.count, 3)
+        XCTAssertEqual(conversation?.messages.last?.text, "Count to four hundred")
+        XCTAssertEqual(conversation?.status, .idle, "the aborted record outranks the trailing prompt")
+        XCTAssertEqual(conversation?.statusDetail, CursorConversationBuilder.stoppedDetail)
+    }
+
     func testReadsModernCursorDiskKVComposerAndBubbles() throws {
         let path = try createCursorDiskKVDatabase(rows: [
             (

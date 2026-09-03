@@ -165,7 +165,7 @@ final class CursorDesktopStoreReader {
         }
         let last = messages.last
         let status: AgentStatus = last?.role == .assistant ? .done : (last == nil ? .idle : .working)
-        return CursorConversation(
+        let built = CursorConversation(
             messages: messages,
             messageDetails: [:],
             status: status,
@@ -173,6 +173,19 @@ final class CursorDesktopStoreReader {
             pendingInputRequest: nil,
             lastActivityUnixMs: lastUpdated ?? last?.atUnixMs
         )
+        // Older chats keep growing in the bubble format; the composer's own
+        // generation record settles their status the same way.
+        return Self.applyingGenerationState(
+            built,
+            status: object["status"] as? String,
+            isGenerating: !((object["generatingBubbleIds"] as? [Any]) ?? []).isEmpty
+        )
+    }
+
+    /// Cursor's record of the chat's last generation, for audits.
+    func generationRecord(composerId: String) -> (status: String?, generatingCount: Int, keys: [String])? {
+        guard let db = try? CursorSQLiteDatabase(path: stateDBPath), let object = composerData(composerId, in: db) else { return nil }
+        return (object["status"] as? String, ((object["generatingBubbleIds"] as? [Any]) ?? []).count, object.keys.sorted())
     }
 
     /// Cursor records the last generation's outcome on the composer itself

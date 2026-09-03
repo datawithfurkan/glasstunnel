@@ -625,7 +625,8 @@ extension CursorConversationStoreTests {
             let results = conversation?.messages.filter { $0.kind == .toolResult }.count ?? 0
             let users = conversation?.messages.filter { $0.role == .user }.count ?? 0
             let assistants = conversation?.messages.filter { $0.role == .assistant }.count ?? 0
-            print("REAL composer mode=\(composer.mode ?? "-") named=\(composer.title != nil) blocking=\(composer.hasBlockingPendingActions) messages=\(conversation?.messages.count ?? -1) user=\(users) assistant=\(assistants) calls=\(calls) results=\(results) details=\(conversation?.messageDetails.count ?? 0) status=\(conversation.map { String(describing: $0.status) } ?? "unreadable") model=\(reader.modelName(composerId: composer.composerId) != nil)")
+            if let record = reader.generationRecord(composerId: composer.composerId) { print("REAL record status=\(record.status ?? "nil") generating=\(record.generatingCount) hasStatusKey=\(record.keys.contains("status")) keyCount=\(record.keys.count)") }
+            print("REAL composer status=\(conversation.map { "\($0.status)/\($0.statusDetail)" } ?? "-") mode=\(composer.mode ?? "-") named=\(composer.title != nil) blocking=\(composer.hasBlockingPendingActions) messages=\(conversation?.messages.count ?? -1) user=\(users) assistant=\(assistants) calls=\(calls) results=\(results) details=\(conversation?.messageDetails.count ?? 0) status=\(conversation.map { String(describing: $0.status) } ?? "unreadable") model=\(reader.modelName(composerId: composer.composerId) != nil)")
         }
         let chats = CursorCLIChatCatalog.chats(limit: 40)
         print("REAL cli chats=\(chats.count) named=\(chats.filter { $0.name != nil }.count) withWorkspace=\(chats.filter { $0.workspacePath != nil }.count) withConversation=\(chats.filter(\.hasConversation).count)")
