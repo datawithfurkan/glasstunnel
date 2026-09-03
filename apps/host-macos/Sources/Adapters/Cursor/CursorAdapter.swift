@@ -40,6 +40,7 @@ public final class CursorAdapter: AgentAdapter, @unchecked Sendable {
     public static let doneDetail = "Response ready"
     public static let stoppedDetail = "Stopped"
     public static let failedDetail = "Cursor reported an error"
+    public static let undeliveredDetail = "Prompt not delivered"
     /// A turn stopped without a hook leaves "working" standing; silence this
     /// long means the turn is over.
     static let defaultStaleWorkingInterval: TimeInterval = 10 * 60
@@ -172,10 +173,16 @@ public final class CursorAdapter: AgentAdapter, @unchecked Sendable {
             // Typing into the wrong chat would be far worse than failing:
             // refuse whenever the front chat is readable and disagrees.
             if !confirmed, let front = readFrontTitle(force: true), !front.isEmpty {
+                recordDeliveryFailure(DeliveryError.chatNotInFront(selected.label))
                 throw DeliveryError.chatNotInFront(selected.label)
             }
         }
-        try ui.deliver(text: text, submit: submit)
+        do {
+            try ui.deliver(text: text, submit: submit)
+        } catch {
+            recordDeliveryFailure(error)
+            throw error
+        }
         guard submit, !prompt.isEmpty else { return }
 
         lock.lock()
@@ -695,6 +702,26 @@ public final class CursorAdapter: AgentAdapter, @unchecked Sendable {
     private static func projectPath(from subtitle: String) -> String? {
         let trimmed = subtitle.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.hasPrefix("/") || trimmed.hasPrefix("~") ? trimmed : nil
+    }
+
+    /// A prompt that never reached Cursor is reported in the transcript and
+    /// the status, not only as a rejected call, so the phone shows why.
+    private func recordDeliveryFailure(_ error: Error) {
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        let reason = String(describing: error)
+        lock.lock()
+        liveEvents.append(AgentChatMessage(
+            messageId: "\(agentID)-undelivered-\(now)",
+            role: .system,
+            text: "\(Self.undeliveredDetail): \(reason)",
+            atUnixMs: now,
+            kind: .event
+        ))
+        currentStatus = .error
+        currentDetail = Self.undeliveredDetail
+        lastActivityUnixMs = now
+        lock.unlock()
+        emitCurrentSnapshot()
     }
 
     private func setStatus(_ status: AgentStatus, detail: String) {

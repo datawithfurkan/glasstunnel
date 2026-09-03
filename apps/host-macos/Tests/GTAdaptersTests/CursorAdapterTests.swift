@@ -136,10 +136,31 @@ final class CursorAdapterTests: XCTestCase {
         }
         XCTAssertEqual(driver.delivered.count, 1)
         XCTAssertEqual(driver.shown, ["Release chat"], "the adapter tried to bring the chat in front first")
+        // The refusal is reported where the phone can see it, not only as a rejected call.
+        let refused = try await snapshots.wait(timeout: 5) { $0.statusDetail == CursorAdapter.undeliveredDetail }
+        XCTAssertEqual(refused.status, .error)
+        XCTAssertEqual(refused.recentMessages.last?.kind, .event)
+        XCTAssertTrue(refused.recentMessages.last?.text.contains("Switch Cursor to “Release chat”") ?? false)
 
         driver.frontTitle = nil
         try await adapter.sendInput("No title readable", submit: true)
         XCTAssertEqual(driver.delivered.count, 2, "without any readable title the composer is used")
+        _ = try await snapshots.wait(timeout: 5) { $0.status == .working }
+
+        // So is a write the window did not take.
+        driver.deliverError = CursorAccessibilityDriver.DriverError.unverifiedWrite
+        do {
+            try await adapter.sendInput("Lost prompt", submit: true)
+            XCTFail("a failed write must surface")
+        } catch {
+            XCTAssertTrue(String(describing: error).contains("did not take the text"))
+        }
+        let undelivered = try await snapshots.wait(timeout: 5) {
+            $0.statusDetail == CursorAdapter.undeliveredDetail && ($0.recentMessages.last?.text.contains("did not take the text") ?? false)
+        }
+        XCTAssertEqual(undelivered.status, .error)
+        XCTAssertEqual(undelivered.recentMessages.last?.kind, .event)
+        XCTAssertEqual(driver.delivered.count, 2, "nothing was typed")
     }
 
     func testSelectingAChatPressesItAndReportsWhetherTheAppFollowed() async throws {
@@ -294,6 +315,8 @@ private final class FakeCursorDriver: CursorDesktopUIDriving, @unchecked Sendabl
     private(set) var pressed: [String] = []
     /// When true, `showChat` makes the requested title the front title.
     var followsSwitch = true
+    /// When set, `deliver` fails with this error instead of recording the text.
+    var deliverError: Error?
 
     var frontTitle: String? {
         get { lock.lock(); defer { lock.unlock() }; return _frontTitle }
@@ -301,6 +324,7 @@ private final class FakeCursorDriver: CursorDesktopUIDriving, @unchecked Sendabl
     }
 
     func deliver(text: String, submit: Bool) throws {
+        if let deliverError { throw deliverError }
         lock.lock(); delivered.append(Delivery(text: text, submit: submit)); lock.unlock()
     }
 
