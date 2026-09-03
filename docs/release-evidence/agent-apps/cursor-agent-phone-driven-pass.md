@@ -1,10 +1,10 @@
 # Agent App Release Evidence
 
-- Date: 2026-09-03T12:36:12Z
+- Date: 2026-09-03T13:45:20Z
 - App: Cursor Agent
 - Result: pass
 - Environment: Local Test Lab host on the development Mac, phone-sized mobile Chromium (Pixel 7 emulation) and mobile WebKit (iPhone 15 emulation), real signed-in Cursor Agent CLI 2026.06.24 on gpt-5.4-nano
-- Glasstunnel commit: d5790f4a
+- Glasstunnel commit: 3e930f7d
 - Artifact: artifacts/cursor-agent-phone-driven.txt
 - Privacy review: pass
 
@@ -20,7 +20,10 @@ transcript); a prompt asking for the workspace's package.json produced a Read to
 row titled with the file and a reply carrying the package name. `/mode ask`
 switched back, and a long reply was interrupted from the phone: the turn ended as
 "Stopped", the closing marker never landed, and the composer accepted input again.
-The same lane passed on mobile WebKit (`pnpm lab:e2e:cursor-agent:safari`).
+The same lane passed on mobile WebKit (`pnpm lab:e2e:cursor-agent:safari`). Both
+browsers were re-run after the process runner was fixed to judge a turn only once
+its output was fully delivered (a race that CI and loaded local runs had exposed);
+the Cursor Agent code is identical between the Chromium re-run's commit and this one.
 
 ## Limitations
 

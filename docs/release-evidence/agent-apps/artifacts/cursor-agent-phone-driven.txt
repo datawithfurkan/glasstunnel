@@ -1,8 +1,8 @@
 Privacy-reviewed summary artifact.
 Date: 2026-09-03.
-Commit: d5790f4a.
+Commit: 3e930f7d (Cursor Agent code unchanged since eec9d7ce, where the mobile Chromium re-run passed).
 Scope: Cursor Agent CLI card driven from a phone-sized mobile Chromium and from mobile WebKit through the Local Test Lab against the real signed-in Cursor Agent CLI 2026.06.24 on the gpt-5.4-nano model.
-Result: pass (mobile Chromium and mobile WebKit, one pass each at this commit; the first run of the day, at 06a144bc, reached the same reply and mode switch and failed only on an exact-text locator, and its screenshot exposed the two card fixes made in 0c4ebd17).
+Result: pass (mobile Chromium and mobile WebKit; each browser passed twice today: once at d5790f4a and again after the process-runner fix in eec9d7ce. The first run of the day, at 06a144bc, reached the same reply and mode switch and failed only on an exact-text locator, and its screenshot exposed the two card fixes made in 0c4ebd17; CI then exposed the runner race).
 Evidence commands: pnpm lab:e2e:cursor-agent (Playwright project local-cursor-agent-mobile-chromium); pnpm lab:e2e:cursor-agent:safari (local-cursor-agent-mobile-webkit).
 Card state trail recorded by the lab host, identical in both browsers: Starting → loading Cursor Agent chats → ready → prompt submitted → Cursor Agent is working (streamed deltas) → Response ready → /mode plan → settings updated → file-read prompt → Cursor Agent is working (Read tool row for package.json) → Response ready → /mode ask → settings updated → long prompt → Cursor Agent is working → interrupted from the phone → Stopped.
 Raw stream events, chat ids, account-specific output, and screenshots are intentionally not retained in Git.
