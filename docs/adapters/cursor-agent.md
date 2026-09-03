@@ -27,6 +27,18 @@ knows itself. Targets carry the workspace as the project and the chat name as th
 thread; a "New chat" row per workspace creates one with
 `cursor-agent create-chat --workspace <path> --trust`, which works offline.
 
+When the card starts it resumes the newest chat of the folder it runs in. A folder
+without a chat starts one on the first prompt; chats from other folders stay listed as
+switches but are never adopted, because resuming one here would carry its history into
+a folder it never ran in (the CLI then keeps a second store for the same chat id under
+the new folder's hash, and the catalog shows the newest copy). Switching to another
+folder's chat moves the workspace to that folder.
+
+Cursor's own text travels as parts of the user message: the first user message is a
+block of tagged context (`<user_info>`, `<rules>`, …) and in ask or plan mode a
+`<system_reminder>` part precedes the typed prompt. Those parts are dropped part by
+part; only the typed words reach the transcript.
+
 The workspace a chat runs in is, in order: the folder the adapter was given, the host's
 own working directory when it is a real folder (the Local Test Lab runs the host in the
 repository), the most recently trusted Cursor workspace, else

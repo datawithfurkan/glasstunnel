@@ -13,8 +13,10 @@ versioning after the first public beta; pre-release compatibility may still chan
   their workspaces, resumes them, starts new ones, switches between ask and plan
   mode and between models from the phone (`/mode`, `/model`, the model chips),
   interrupts, reports a rejected login, and reads the chat's own store for
-  history, so it survives host restarts. It renders as a chat on the phone
-  instead of a terminal frame.
+  history, so it survives host restarts. It resumes the folder's newest chat,
+  starts one where none exists, keeps other folders' chats as switches, and
+  keeps Cursor's injected context and mode reminders out of the transcript. It
+  renders as a chat on the phone instead of a terminal frame.
 - The Cursor card reads Cursor 3.x's chat store (the chats that showed no
   messages before), including tool calls and results as structured rows, takes
   live turn state from Cursor's hooks (entries merged into `~/.cursor/hooks.json`
