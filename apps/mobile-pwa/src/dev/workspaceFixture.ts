@@ -270,12 +270,7 @@ export function workspaceFixtureState(fixtureId: WorkspaceFixtureId): Partial<Ap
     agents.cursor = cursorGeneratedLabelSnapshot();
   }
   if (fixtureId === 'workspace-cursor-agent-running') {
-    agents['cursor-agent'] = runningCliSnapshot(
-      'cursor-agent',
-      'Cursor Agent',
-      AdapterKind.CursorAgent,
-      'Cursor Agent\nmodel: gpt-5.4-nano-none\n\nI found one focused next fix.',
-    );
+    agents['cursor-agent'] = cursorAgentRunningSnapshot();
   }
   if (fixtureId === 'workspace-opencode-running') {
     agents.opencode = runningCliSnapshot(
@@ -1048,6 +1043,108 @@ function cliSnapshot(
       },
     ],
     ...overrides,
+  };
+}
+
+/**
+ * The Cursor Agent card mid-turn: the CLI streamed a file read as a structured
+ * row and the reply is arriving, with the CLI's chats and a "New chat" row.
+ */
+function cursorAgentRunningSnapshot(): AgentStateSnapshot {
+  const base = cliSnapshot('cursor-agent', 'Cursor Agent', AdapterKind.CursorAgent);
+  return {
+    ...base,
+    agentLabel: 'Cursor Agent',
+    status: AgentStatus.Working,
+    statusDetail: 'Working',
+    recentMessages: [
+      {
+        messageId: 'cursor-agent-running-user',
+        role: ChatRole.User,
+        text: 'Review the current diff and suggest one next fix.',
+        atUnixMs: 1_781_312_180_000,
+        redacted: false,
+        pendingToolCalls: [],
+        kind: ChatMessageKind.Text,
+      },
+      {
+        messageId: 'cursor-agent-running-c0',
+        role: ChatRole.Tool,
+        text: 'Using Read',
+        atUnixMs: 1_781_312_180_400,
+        redacted: false,
+        pendingToolCalls: [{ toolName: 'Read', toolCallId: 'read-1', summary: 'Using Read' }],
+        kind: ChatMessageKind.ToolCall,
+        toolName: 'Read',
+        toolCallId: 'read-1',
+        title: 'package.json',
+      },
+      {
+        messageId: 'cursor-agent-running-r0',
+        role: ChatRole.Tool,
+        text: '{\n  "name": "glasstunnel",\n  "version": "0.1.0-dev"\n}',
+        atUnixMs: 1_781_312_180_900,
+        redacted: false,
+        pendingToolCalls: [],
+        kind: ChatMessageKind.ToolResult,
+        toolName: 'Read',
+        toolCallId: 'read-1',
+        outputLineCount: 4,
+        durationMs: 500,
+      },
+      {
+        messageId: 'cursor-agent-running-reply',
+        role: ChatRole.Assistant,
+        text: 'I found one focused next fix: the package name is read from `package.json`, so the lane can assert on it.',
+        atUnixMs: 1_781_312_181_000,
+        redacted: false,
+        pendingToolCalls: [],
+        kind: ChatMessageKind.Text,
+      },
+    ],
+    availableTargets: [
+      {
+        targetId: 'cursor-agent-chat-1',
+        label: 'glasstunnel',
+        subtitle: 'Release notes check',
+        selected: true,
+        projectId: '/Users/tester/Documents/GitHub2/glasstunnel',
+        projectLabel: 'glasstunnel',
+        projectPath: '/Users/tester/Documents/GitHub2/glasstunnel',
+        threadId: 'cursor-agent-chat-1',
+        threadLabel: 'Release notes check',
+        targetKind: 'thread',
+        lastActivityUnixMs: 1_781_312_181_000,
+        isActive: true,
+        supportsNewThread: true,
+      },
+      {
+        targetId: 'cursor-agent-new-chat',
+        label: 'glasstunnel',
+        subtitle: 'New chat',
+        selected: false,
+        projectId: '/Users/tester/Documents/GitHub2/glasstunnel',
+        projectLabel: 'glasstunnel',
+        projectPath: '/Users/tester/Documents/GitHub2/glasstunnel',
+        threadId: 'cursor-agent-new-chat',
+        threadLabel: 'New chat',
+        targetKind: 'thread',
+        isActive: false,
+        supportsNewThread: true,
+      },
+    ],
+    runtimeControls: {
+      modelId: 'gpt-5.4-nano',
+      modelLabel: 'GPT-5.4 Nano',
+      modelOptions: [{ id: 'gpt-5.4-nano', label: 'GPT-5.4 Nano' }],
+      reasoningEffortOptions: [],
+      supportsModelSelection: true,
+      supportsReasoningEffort: false,
+      supportsFastMode: false,
+      editable: true,
+      appliesOn: 'immediate',
+      note: 'Ask mode (read-only). Send /mode plan to plan; agent mode is not enabled yet.',
+    },
   };
 }
 

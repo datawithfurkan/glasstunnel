@@ -165,7 +165,7 @@ describe('workspace mobile fixtures', () => {
   it('models running command surfaces for non-Codex CLI apps', () => {
     const cases = [
       ['workspace-opencode-running', 'opencode', 'OpenCode', 'provider/model: opencode/nemotron-3-ultra-free'],
-      ['workspace-cursor-agent-running', 'cursor-agent', 'Cursor Agent', 'model: gpt-5.4-nano-none'],
+      ['workspace-cursor-agent-running', 'cursor-agent', 'Cursor Agent', 'I found one focused next fix'],
       ['workspace-gemini-cli-running', 'gemini-cli', 'Gemini CLI', 'model: gemini-2.5-pro'],
       ['workspace-claude-code-running', 'claude-code', 'Claude Code', 'model: sonnet'],
     ] as const;
@@ -182,7 +182,7 @@ describe('workspace mobile fixtures', () => {
       expect(snapshot?.agentLabel).toBe(label);
       expect(snapshot?.status).toBe(AgentStatus.Working);
       expect(snapshot?.recentMessages[0]?.text).toBe('Review the current diff and suggest one next fix.');
-      expect(snapshot?.recentMessages[1]?.text).toContain(expectedOutput);
+      expect(snapshot?.recentMessages.some((message) => message.text.includes(expectedOutput))).toBe(true);
     }
   });
 
