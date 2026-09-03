@@ -31,6 +31,10 @@ enum CursorTestFixtures {
         var isSubagent = false
         var hasBlockingPendingActions = false
         var model: String? = "composer-2.5"
+        /// Cursor's record of the last generation: completed, aborted, none.
+        var status: String? = nil
+        /// Bubble ids Cursor is still generating; non-empty while a turn runs.
+        var generatingBubbleIds: [String] = []
         /// AI-SDK messages stored as agentKv blobs.
         var messages: [[String: Any]] = []
     }
@@ -69,6 +73,8 @@ enum CursorTestFixtures {
                 "unifiedMode": composer.mode,
             ]
             if let model = composer.model { composerData["modelConfig"] = ["modelName": model] }
+            if let status = composer.status { composerData["status"] = status }
+            composerData["generatingBubbleIds"] = composer.generatingBubbleIds
             if !state.isEmpty { composerData["conversationState"] = state.base64EncodedString() }
             if let name = composer.name { composerData["name"] = name }
             kvRows.append(("composerData:\(composer.composerId)", try JSONSerialization.data(withJSONObject: composerData)))

@@ -316,6 +316,31 @@ final class CursorConversationStoreTests: XCTestCase {
 
     // MARK: - Desktop store
 
+    func testDesktopStoreSettlesStatusFromCursorsGenerationRecord() throws {
+        let root = try CursorTestFixtures.temporaryDirectory("gt-cursor-generation-state")
+        let trailingPrompt: [[String: Any]] = [
+            ["role": "user", "content": [["type": "text", "text": "Count to four hundred"]]],
+        ]
+        let stateDB = try CursorTestFixtures.writeDesktopStore(
+            at: root,
+            composers: [
+                CursorTestFixtures.Composer(composerId: "aborted", name: "Aborted", workspaceId: "ws", createdAt: 1, lastUpdatedAt: 2, status: "aborted", messages: trailingPrompt),
+                CursorTestFixtures.Composer(composerId: "running", name: "Running", workspaceId: "ws", createdAt: 1, lastUpdatedAt: 3, status: "none", generatingBubbleIds: ["b1"], messages: trailingPrompt),
+                CursorTestFixtures.Composer(composerId: "completed", name: "Completed", workspaceId: "ws", createdAt: 1, lastUpdatedAt: 4, status: "completed", messages: trailingPrompt),
+                CursorTestFixtures.Composer(composerId: "unknown", name: "Unknown", workspaceId: "ws", createdAt: 1, lastUpdatedAt: 5, status: "none", messages: trailingPrompt),
+            ]
+        )
+        let reader = CursorDesktopStoreReader(stateDBPath: stateDB, stateRoot: root, fallbackWorkspacePath: nil)
+        func status(_ id: String) -> (AgentStatus, String)? {
+            reader.conversation(composerId: id, agentID: "cursor", maxMessages: 40).map { ($0.status, $0.statusDetail) }
+        }
+        XCTAssertEqual(status("aborted")?.0, .idle, "an aborted turn is not a running one")
+        XCTAssertEqual(status("aborted")?.1, CursorConversationBuilder.stoppedDetail)
+        XCTAssertEqual(status("running")?.0, .working, "bubbles still generating mean a running turn")
+        XCTAssertEqual(status("completed")?.0, .done, "a completed generation never reads as working")
+        XCTAssertEqual(status("unknown")?.0, .working, "without a record the message shapes decide, as before")
+    }
+
     func testDesktopStoreListsComposersAndDecodesTheBlobConversation() throws {
         let root = try temporaryDirectory("gt-cursor-desktop-store")
         defer { try? FileManager.default.removeItem(at: root) }

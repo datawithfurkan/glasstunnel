@@ -68,6 +68,8 @@ public final class CursorAdapter: AgentAdapter, @unchecked Sendable {
     /// aborted turn from one still running (both end with the prompt and no
     /// reply), so its "working" reading is ignored until a new turn starts.
     private var turnEndedByHook = false
+    /// The status and detail the ending stop hook reported.
+    private var hookVerdict: (AgentStatus, String)?
     private var liveRows: [LiveRow] = []
     private var liveEvents: [AgentChatMessage] = []
     private var turnStartMessageCount: Int?
@@ -466,6 +468,7 @@ public final class CursorAdapter: AgentAdapter, @unchecked Sendable {
             }
             optimisticPrompt = nil
             turnEndedByHook = true
+            hookVerdict = (currentStatus, currentDetail)
         case .other:
             lock.unlock()
             watcher.pollIfChanged()
@@ -534,6 +537,10 @@ public final class CursorAdapter: AgentAdapter, @unchecked Sendable {
             } else if turnEndedByHook, snapshot.status == .working {
                 // The store persisted the ended turn's prompt (and perhaps a
                 // partial reply); the stop hook already settled that turn.
+                if let hookVerdict {
+                    currentStatus = hookVerdict.0
+                    currentDetail = hookVerdict.1
+                }
             } else {
                 currentStatus = snapshot.status
                 currentDetail = snapshot.statusDetail

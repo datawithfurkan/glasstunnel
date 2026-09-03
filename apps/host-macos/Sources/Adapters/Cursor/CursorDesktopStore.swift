@@ -138,7 +138,12 @@ final class CursorDesktopStoreReader {
                 return CursorMessageCodec.decode(data)
             }
             if !stored.isEmpty {
-                return CursorConversationBuilder.build(messages: stored, agentID: agentID, maxMessages: maxMessages, lastActivityUnixMs: lastUpdated)
+                let built = CursorConversationBuilder.build(messages: stored, agentID: agentID, maxMessages: maxMessages, lastActivityUnixMs: lastUpdated)
+                return Self.applyingGenerationState(
+                    built,
+                    status: object["status"] as? String,
+                    isGenerating: !((object["generatingBubbleIds"] as? [Any]) ?? []).isEmpty
+                )
             }
         }
 
@@ -167,6 +172,43 @@ final class CursorDesktopStoreReader {
             statusDetail: status == .done ? CursorConversationBuilder.doneDetail : (status == .working ? CursorConversationBuilder.workingDetail : ""),
             pendingInputRequest: nil,
             lastActivityUnixMs: lastUpdated ?? last?.atUnixMs
+        )
+    }
+
+    /// Cursor records the last generation's outcome on the composer itself
+    /// (`status`: completed, aborted, none; `generatingBubbleIds` while it
+    /// runs). The message shapes alone cannot tell an aborted turn from a
+    /// running one, both end with the prompt and no reply, so the app's own
+    /// record decides: generating means working, aborted means stopped, and a
+    /// completed generation never reads as working.
+    static func applyingGenerationState(_ conversation: CursorConversation, status: String?, isGenerating: Bool) -> CursorConversation {
+        let outcome = status?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        var settledStatus = conversation.status
+        var settledDetail = conversation.statusDetail
+        var pending = conversation.pendingInputRequest
+        if isGenerating {
+            if settledStatus != .waitingInput {
+                settledStatus = .working
+                settledDetail = CursorConversationBuilder.workingDetail
+            }
+        } else if outcome == "aborted" || outcome == "cancelled" || outcome == "canceled" {
+            settledStatus = .idle
+            settledDetail = CursorConversationBuilder.stoppedDetail
+            pending = nil
+        } else if outcome == "completed", settledStatus == .working {
+            settledStatus = .done
+            settledDetail = CursorConversationBuilder.doneDetail
+        }
+        guard settledStatus != conversation.status || settledDetail != conversation.statusDetail || (pending == nil) != (conversation.pendingInputRequest == nil) else {
+            return conversation
+        }
+        return CursorConversation(
+            messages: conversation.messages,
+            messageDetails: conversation.messageDetails,
+            status: settledStatus,
+            statusDetail: settledDetail,
+            pendingInputRequest: pending,
+            lastActivityUnixMs: conversation.lastActivityUnixMs
         )
     }
 

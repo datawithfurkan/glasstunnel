@@ -60,7 +60,16 @@ Agent card the chats it created or resumed.
   "New chat" presses the app's New Chat control; the chat appears in the list after
   its first prompt.
 - **Interrupt** presses the Stop control, else sends Escape; the `stop` hook with
-  status `aborted` then reads as "Stopped".
+  status `aborted` then reads as "Stopped". The message shapes alone cannot tell an
+  aborted turn from a running one (both end with the prompt and no reply), so the
+  store's status comes from Cursor's own record on the composer (`status`:
+  completed, aborted, none; `generatingBubbleIds` while a turn runs), and a
+  hook-ended turn keeps the hook's verdict until a new turn starts: a
+  `beforeSubmitPrompt` hook, a prompt from the phone, or a chat switch.
+- **A prompt that never reached the window** (another chat in front, no composer,
+  or a write the composer did not take) is recorded as "Prompt not delivered:
+  <reason>" in the transcript and the card enters the error state, so the phone
+  shows why nothing happened.
 - **Questions** — an `AskQuestion` tool call becomes a decision on the phone; the
   answer presses the chosen option in the app and the question stays open until the
   store records the answer.
