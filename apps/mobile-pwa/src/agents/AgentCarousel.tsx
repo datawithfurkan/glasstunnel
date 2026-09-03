@@ -1466,6 +1466,7 @@ export function shouldShowCommandTargetSwitcher(app: RemoteApp): boolean {
     app.remoteAppId === 'terminal' ||
     app.remoteAppId === 'opencode' ||
     app.remoteAppId === 'cursor' ||
+    app.remoteAppId === 'cursor-agent' ||
     app.remoteAppId === 'codex' ||
     app.remoteAppId === 'claude-desktop' ||
     app.remoteAppId === 'claude-code'

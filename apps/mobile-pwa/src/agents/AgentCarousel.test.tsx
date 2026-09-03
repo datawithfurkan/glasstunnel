@@ -559,7 +559,7 @@ describe('AgentCarousel primary copy', () => {
     expect(terminalSessionActionCopy('newSession', { action: 'closeSession', atUnixMs: 10_000 })).toBe('New');
   });
 
-  it('shows focused target switching for Terminal, OpenCode, Cursor, Codex, and Claude', () => {
+  it('shows focused target switching for Terminal, OpenCode, Cursor, Cursor Agent, Codex, and Claude', () => {
     expect(shouldShowCommandTargetSwitcher(directApp('terminal'))).toBe(true);
     expect(shouldShowCommandTargetSwitcher(cliApp('opencode'))).toBe(true);
     expect(shouldShowCommandTargetSwitcher({ ...codexApp(), remoteAppId: 'cursor', agentId: 'cursor' })).toBe(true);
@@ -574,7 +574,7 @@ describe('AgentCarousel primary copy', () => {
     ).toBe(true);
     expect(shouldShowCommandTargetSwitcher(cliApp('claude-code'))).toBe(true);
     expect(shouldShowCommandTargetSwitcher(cliApp('codex-cli'))).toBe(false);
-    expect(shouldShowCommandTargetSwitcher(cliApp('cursor-agent'))).toBe(false);
+    expect(shouldShowCommandTargetSwitcher(cliApp('cursor-agent'))).toBe(true);
     expect(shouldShowCommandTargetSwitcher(cliApp('gemini-cli'))).toBe(false);
     expect(shouldShowCommandTargetSwitcher(directApp('screen'))).toBe(false);
   });

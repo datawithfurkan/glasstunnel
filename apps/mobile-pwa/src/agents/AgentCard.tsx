@@ -1427,12 +1427,10 @@ export function isCommandSurfaceApp(app: RemoteApp): boolean {
 function isCliBackedApp(app: RemoteApp): boolean {
   return (
     app.adapterKind === AdapterKind.CodexCli ||
-    app.adapterKind === AdapterKind.CursorAgent ||
     app.adapterKind === AdapterKind.OpenCode ||
     app.adapterKind === AdapterKind.ClaudeCode ||
     app.adapterKind === AdapterKind.GeminiCli ||
     app.remoteAppId === 'codex-cli' ||
-    app.remoteAppId === 'cursor-agent' ||
     app.remoteAppId === 'opencode' ||
     app.remoteAppId === 'claude-code' ||
     app.remoteAppId === 'gemini-cli'

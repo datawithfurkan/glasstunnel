@@ -29,6 +29,12 @@ test('projectsForMode isolates the opt-in Codex CLI account journey', () => {
   assert.deepEqual(projectsForMode('codex-cli-chromium'), ['local-codex-cli-mobile-chromium']);
 });
 
+test('projectsForMode isolates the opt-in Cursor Agent account journey', () => {
+  assert.deepEqual(projectsForMode('cursor-agent-chromium'), ['local-cursor-agent-mobile-chromium']);
+  assert.deepEqual(projectsForMode('cursor-agent-webkit'), ['local-cursor-agent-mobile-webkit']);
+  assert.deepEqual(projectsForMode('cursor-agent-safari'), ['local-cursor-agent-mobile-webkit']);
+});
+
 test('projectsForMode isolates the opt-in Claude account journeys', () => {
   assert.deepEqual(projectsForMode('claude-code-chromium'), ['local-claude-code-mobile-chromium']);
   assert.deepEqual(projectsForMode('claude-desktop-chromium'), [

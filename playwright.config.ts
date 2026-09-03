@@ -67,6 +67,20 @@ export default defineConfig({
       },
     },
     {
+      name: 'local-cursor-agent-mobile-chromium',
+      grep: /@cursor-agent-account/,
+      use: {
+        ...devices['Pixel 7'],
+      },
+    },
+    {
+      name: 'local-cursor-agent-mobile-webkit',
+      grep: /@cursor-agent-account/,
+      use: {
+        ...devices['iPhone 15'],
+      },
+    },
+    {
       name: 'local-claude-code-mobile-chromium',
       grep: /@claude-code-account/,
       use: {

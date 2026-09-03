@@ -59,7 +59,7 @@ describe('AgentCard terminal copy', () => {
     expect(isTerminalApp(remoteApp('terminal', AdapterKind.Terminal, 'Terminal'))).toBe(true);
     expect(isCommandSurfaceApp(remoteApp('terminal', AdapterKind.Terminal, 'Terminal'))).toBe(true);
     expect(isCommandSurfaceApp(remoteApp('codex-cli', AdapterKind.CodexCli, 'Codex CLI'))).toBe(true);
-    expect(isCommandSurfaceApp(remoteApp('cursor-agent', AdapterKind.CursorAgent, 'Cursor Agent'))).toBe(true);
+    expect(isCommandSurfaceApp(remoteApp('cursor-agent', AdapterKind.CursorAgent, 'Cursor Agent'))).toBe(false);
     expect(isCommandSurfaceApp(remoteApp('opencode', AdapterKind.OpenCode, 'OpenCode'))).toBe(true);
     expect(isCommandSurfaceApp(remoteApp('claude-code', AdapterKind.ClaudeCode, 'Claude Code'))).toBe(true);
     expect(isCommandSurfaceApp(remoteApp('gemini-cli', AdapterKind.GeminiCli, 'Gemini CLI'))).toBe(true);
