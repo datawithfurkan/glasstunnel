@@ -335,6 +335,51 @@ final class CursorSQLiteReaderTests: XCTestCase {
         XCTAssertEqual(snapshot.recentMessages.first?.text, "hello from Cursor")
     }
 
+    func testWatcherKeepsAnExplicitSelectionThroughAReadThatLacksIt() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("cursor-watcher-selection-\(UUID().uuidString)", isDirectory: true)
+        let dbURL = root
+            .appendingPathComponent("User", isDirectory: true)
+            .appendingPathComponent("globalStorage", isDirectory: true)
+            .appendingPathComponent("state.vscdb")
+        try FileManager.default.createDirectory(at: dbURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        func composer(_ id: String, name: String, updated: Int) -> (String, String) {
+            (
+                "composerData:\(id)",
+                """
+                {"composerId": "\(id)", "name": "\(name)", "lastUpdatedAt": \(updated), "fullConversationHeadersOnly": [{"bubbleId": "\(id)-u", "type": 1}]}
+                """
+            )
+        }
+        func bubble(_ id: String) -> (String, String) {
+            ("bubbleId:\(id):\(id)-u", #"{"bubbleId": "\#(id)-u", "type": 1, "text": "hello", "createdAt": "2026-02-01T12:00:00.000Z"}"#)
+        }
+        let both = [composer("composer-a", name: "Newest", updated: 1770000009000), bubble("composer-a"), composer("composer-b", name: "Older", updated: 1770000001000), bubble("composer-b")]
+        try createCursorDiskKVDatabase(path: dbURL.path, rows: both)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let watcher = CursorStateWatcher(stateDir: root)
+        watcher.refreshNow()
+        XCTAssertEqual(watcher.latestSnapshot()?.selectedTargetId, "composer-a", "a fresh watcher takes the newest chat")
+
+        watcher.selectTarget("composer-b")
+        watcher.refreshNow()
+        XCTAssertEqual(watcher.latestSnapshot()?.selectedTargetId, "composer-b")
+
+        // One read misses the selected chat: no selection is reported, and the
+        // request is kept instead of moving to another chat.
+        try FileManager.default.removeItem(at: dbURL)
+        try createCursorDiskKVDatabase(path: dbURL.path, rows: [composer("composer-a", name: "Newest", updated: 1770000009000), bubble("composer-a")])
+        watcher.refreshNow()
+        XCTAssertNil(watcher.latestSnapshot()?.selectedTargetId, "a partial read reports no selection rather than another chat")
+        XCTAssertEqual(watcher.currentSelectedTargetId(), "composer-b", "the request survives the partial read")
+
+        try FileManager.default.removeItem(at: dbURL)
+        try createCursorDiskKVDatabase(path: dbURL.path, rows: both)
+        watcher.refreshNow()
+        XCTAssertEqual(watcher.latestSnapshot()?.selectedTargetId, "composer-b", "the selected chat is back once the store shows it again")
+    }
+
     func testWatcherExposesHeaderOnlyCursorTargetWithoutClaimingMessageContent() throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("cursor-header-only-state-\(UUID().uuidString)", isDirectory: true)

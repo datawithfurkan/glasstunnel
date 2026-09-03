@@ -426,12 +426,18 @@ public final class CursorStateWatcher: @unchecked Sendable {
         if let requested, composers.contains(where: { $0.composerId == requested }) {
             return requested
         }
-        let fallback = composers.first?.composerId
-        if fallback != requested {
-            lock.lock()
-            selectedComposerId = fallback
-            lock.unlock()
+        // A read that lacks the requested chat (the store between writes, a
+        // database that could not be opened) must not move the selection to
+        // another chat: keep asking for the requested one and report no
+        // selection until it is back. Only a never-selected watcher takes the
+        // newest chat.
+        if requested != nil {
+            return nil
         }
+        let fallback = composers.first?.composerId
+        lock.lock()
+        selectedComposerId = fallback
+        lock.unlock()
         return fallback
     }
 

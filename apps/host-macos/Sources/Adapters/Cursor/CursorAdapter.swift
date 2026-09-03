@@ -428,6 +428,7 @@ public final class CursorAdapter: AgentAdapter, @unchecked Sendable {
         guard event.conversation == selectedId else {
             // Another chat moved; refresh the listing but never switch what
             // the phone is looking at.
+            debug("hook \(event.kind) for \(event.conversation.prefix(8)) ignored; selected \(selectedId?.prefix(8) ?? "nil")")
             watcher.pollIfChanged()
             return
         }
@@ -522,6 +523,7 @@ public final class CursorAdapter: AgentAdapter, @unchecked Sendable {
             newestUnseen = unseen.targetId
         }
         if selectionChanged {
+            debug("selection changed \(previousSelection ?? "nil") -> \(snapshot.selectedTargetId ?? "nil"); dropping turn state")
             optimisticPrompt = nil
             liveRows = []
             liveEvents = []
@@ -537,6 +539,7 @@ public final class CursorAdapter: AgentAdapter, @unchecked Sendable {
         // case the echo is the only record the phone has of it.
         if let echoed = optimisticPrompt,
            snapshot.messages.contains(where: { $0.role == .user && $0.text.trimmingCharacters(in: .whitespacesAndNewlines) == echoed.text }) {
+            debug("store shows the echoed prompt; dropping the echo")
             optimisticPrompt = nil
         }
         if let start = turnStartMessageCount, snapshot.messages.count > start {
@@ -608,6 +611,7 @@ public final class CursorAdapter: AgentAdapter, @unchecked Sendable {
         defer { lock.unlock() }
         guard currentStatus == .working, latest?.pendingInputRequest == nil else { return false }
         guard Date().timeIntervalSince(lastWorkingSince) > staleWorkingInterval else { return false }
+        debug("stale working turn marked idle; dropping the echo")
         currentStatus = .idle
         currentDetail = "Idle"
         hookAnchor = nil
@@ -773,6 +777,13 @@ public final class CursorAdapter: AgentAdapter, @unchecked Sendable {
         lastActivityUnixMs = now
         lock.unlock()
         emitCurrentSnapshot()
+    }
+
+    /// Opt-in trace of the decisions that drop turn state (GT_CURSOR_DEBUG=1).
+    private static let debugEnabled = ProcessInfo.processInfo.environment["GT_CURSOR_DEBUG"] == "1"
+    private func debug(_ message: @autoclosure () -> String) {
+        guard Self.debugEnabled else { return }
+        FileHandle.standardError.write(Data("CURSOR_DEBUG \(message())\n".utf8))
     }
 
     private func setStatus(_ status: AgentStatus, detail: String) {
