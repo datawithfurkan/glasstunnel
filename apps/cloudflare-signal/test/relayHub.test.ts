@@ -119,7 +119,7 @@ function deviceRow(identity: DeviceIdentity, kind: 'host' | 'phone'): Record<str
  * call. Pausing gives the test a deterministic window in which the socket under test
  * closes while the hub's auth handler is still awaiting.
  */
-function stubSupabase(options: { gateOn: SupabaseGatePoint; devices?: Record<string, unknown>[] }) {
+function stubSupabase(options: { gateOn?: SupabaseGatePoint; devices?: Record<string, unknown>[] }) {
   let release: () => void = () => {};
   const released = new Promise<void>((resolve) => {
     release = resolve;
@@ -364,5 +364,82 @@ describe('RelayHub message detail replies', () => {
     hostSocket.client.send(JSON.stringify({ type: 'relay_agent_state', snapshot: { agentId: 'claude-desktop' } }));
     await expect(socketB.nextMessage()).resolves.toMatchObject({ type: 'relay_agent_state' });
     await expect(socketA.nextMessage()).resolves.toMatchObject({ type: 'relay_agent_state' });
+  });
+});
+
+describe('RelayHub host liveness', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  async function connectHostAndPhone() {
+    const host = await createDeviceIdentity();
+    const phone = await createDeviceIdentity();
+    const stub = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
+    stubSupabase({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')] });
+
+    const hostSocket = await openHubSocket(stub, relayPath(host.deviceId));
+    hostSocket.client.send(await signedClientAuth(host, hostSocket.nonce, 'host'));
+    await expect(hostSocket.nextMessage()).resolves.toMatchObject({ type: 'auth_ok', device_id: host.deviceId });
+
+    const phoneSocket = await openHubSocket(stub, relayPath(host.deviceId));
+    phoneSocket.client.send(
+      await signedClientAuth(phone, phoneSocket.nonce, 'client', { access_token: 'phone-access-token' }),
+    );
+    await expect(phoneSocket.nextMessage()).resolves.toMatchObject({ type: 'auth_ok', device_id: phone.deviceId });
+    await expect(phoneSocket.nextMessage()).resolves.toMatchObject({ type: 'relay_presence', online: true });
+
+    return { stub, hostSocket, phoneSocket };
+  }
+
+  // A Mac whose network path died without a FIN keeps an OPEN socket here. Without this
+  // check phones kept seeing the Mac online and their screen start requests were acked
+  // into the void until the edge timed the connection out.
+  it('closes a host socket that stopped pinging and tells phones the Mac is offline', async () => {
+    const { stub, hostSocket, phoneSocket } = await connectHostAndPhone();
+
+    await runInDurableObject(stub, async (hub) => {
+      (hub as unknown as { lastHostSeenAt: number }).lastHostSeenAt = Date.now() - 70_000;
+      await hub.alarm();
+    });
+
+    await expect(hostSocket.closed).resolves.toEqual({ code: 1001, reason: 'host silent' });
+    await expect(phoneSocket.nextMessage()).resolves.toMatchObject({ type: 'relay_presence', online: false });
+    await runInDurableObject(stub, (hub) => {
+      expect(relayInternals(hub).hostSocket).toBeNull();
+      expect(relayInternals(hub).clientSockets.size).toBe(1);
+    });
+    await expect(hubHealth(stub)).resolves.toMatchObject({ hostOnline: false, clients: 1 });
+  });
+
+  it('keeps a host that pinged recently', async () => {
+    const { stub, hostSocket } = await connectHostAndPhone();
+
+    await runInDurableObject(stub, async (hub) => {
+      (hub as unknown as { lastHostSeenAt: number }).lastHostSeenAt = Date.now() - 10_000;
+      await hub.alarm();
+    });
+
+    await runInDurableObject(stub, (hub) => {
+      expect(relayInternals(hub).hostSocket?.readyState).toBe(WebSocket.READY_STATE_OPEN);
+    });
+    await expect(hubHealth(stub)).resolves.toMatchObject({ hostOnline: true, clients: 1 });
+    hostSocket.client.close(1000, 'done');
+  });
+
+  it('counts a relay ping as the host being seen', async () => {
+    const { stub, hostSocket } = await connectHostAndPhone();
+    await runInDurableObject(stub, (hub) => {
+      (hub as unknown as { lastHostSeenAt: number }).lastHostSeenAt = Date.now() - 70_000;
+    });
+
+    hostSocket.client.send(JSON.stringify({ type: 'relay_ping', at: Date.now() }));
+    await expect(hostSocket.nextMessage()).resolves.toMatchObject({ type: 'relay_pong' });
+
+    await runInDurableObject(stub, async (hub) => {
+      await hub.alarm();
+      expect(relayInternals(hub).hostSocket?.readyState).toBe(WebSocket.READY_STATE_OPEN);
+    });
+    hostSocket.client.close(1000, 'done');
   });
 });
