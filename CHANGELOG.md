@@ -5,6 +5,12 @@ versioning after the first public beta; pre-release compatibility may still chan
 
 ## Unreleased
 
+### Fixed
+
+- The Claude cards no longer flip from "Stopped" back to "Claude is working" when
+  the app files the interrupted tool's result after an interrupt; only a real
+  prompt or a reply starts the next turn.
+
 ### Changed
 
 - Chat-style cards (Claude, Codex, Cursor) render their transcripts for reading
