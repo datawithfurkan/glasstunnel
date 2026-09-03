@@ -159,6 +159,10 @@ public final class Session {
         try? peer.send(DataChannelMessage(body: .remoteAppsUpdate(RemoteAppsUpdate(remoteApps: remoteApps))))
     }
 
+    private func sendMessageDetail(_ detail: MessageDetail) {
+        try? peer.send(DataChannelMessage(body: .messageDetail(detail)))
+    }
+
     // MARK: - DataChannel incoming
 
     private func handleDataChannelMessage(_ msg: DataChannelMessage) {
@@ -203,6 +207,17 @@ public final class Session {
                     await MainActor.run {
                         self?.sendSystemMessage(agentId: agentId, text: "interrupt failed: \(reason)")
                     }
+                }
+            }
+        case .messageDetailRequest(let req):
+            // Reading a message is not input: allowed in read-only mode, refused only while locked.
+            guard !autoLock.isLocked else { return }
+            Task { [weak self, controller = remoteAppController, req] in
+                guard let detail = await controller.messageDetail(agentId: req.agentId, messageId: req.messageId) else {
+                    return
+                }
+                await MainActor.run {
+                    self?.sendMessageDetail(detail)
                 }
             }
         case .targetSelectionRequest(let req):

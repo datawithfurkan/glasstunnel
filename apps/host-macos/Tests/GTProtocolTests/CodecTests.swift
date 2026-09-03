@@ -355,4 +355,34 @@ final class CodecTests: XCTestCase {
         XCTAssertEqual(answer.sdp, "v=0")
         XCTAssertEqual(answer.sessionId, "session-1")
     }
+
+    func testChatMessagesWithoutStructuredFieldsStillDecode() throws {
+        let legacy = #"{"messageId":"m1","role":4,"text":"raw output","atUnixMs":5,"redacted":false,"pendingToolCalls":[],"redactionReasons":[]}"#
+        let message = try JSONDecoder().decode(AgentChatMessage.self, from: Data(legacy.utf8))
+        XCTAssertEqual(message.kind, .unspecified)
+        XCTAssertEqual(message.toolName, "")
+        XCTAssertFalse(message.truncated)
+
+        let structured = AgentChatMessage(
+            messageId: "m2", role: .tool, text: "preview", atUnixMs: 6,
+            kind: .toolResult, toolName: "Bash", toolCallId: "toolu_1", title: "git status",
+            outputLineCount: 40, durationMs: 2_400, isError: true, truncated: true
+        )
+        let data = try JSONEncoder().encode(structured)
+        let decoded = try JSONDecoder().decode(AgentChatMessage.self, from: data)
+        XCTAssertEqual(decoded, structured)
+        let json = try XCTUnwrap(String(data: data, encoding: .utf8))
+        XCTAssertTrue(json.contains("\"kind\":3"))
+    }
+
+    func testMessageDetailMessagesRoundTrip() throws {
+        let request = DataChannelMessage(body: .messageDetailRequest(MessageDetailRequest(agentId: "claude-desktop", messageId: "m2")))
+        let requestData = try JSONEncoder().encode(request)
+        XCTAssertTrue(try XCTUnwrap(String(data: requestData, encoding: .utf8)).contains("\"kind\":\"messageDetailRequest\""))
+        XCTAssertEqual(try JSONDecoder().decode(DataChannelMessage.self, from: requestData).body, request.body)
+
+        let detail = DataChannelMessage(body: .messageDetail(MessageDetail(agentId: "claude-desktop", messageId: "m2", text: "full", redacted: true, redactionReasons: ["github_pat"], truncated: false)))
+        let detailData = try JSONEncoder().encode(detail)
+        XCTAssertEqual(try JSONDecoder().decode(DataChannelMessage.self, from: detailData).body, detail.body)
+    }
 }

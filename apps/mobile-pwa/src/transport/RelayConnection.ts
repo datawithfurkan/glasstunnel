@@ -23,6 +23,7 @@ import {
   type TargetRenameRequest,
   type UserInput,
 } from '@glasstunnel/protocol';
+import type { MessageDetail, MessageDetailRequest } from '@glasstunnel/protocol';
 import { createClientId } from '../lib/id';
 import type { PairedHost } from '../lib/store';
 import { connectionStatusCopy } from '../lib/connectionCopy';
@@ -53,6 +54,7 @@ export interface RelayConnectionOptions {
   onHello?: (hello: Hello, cached: boolean) => void;
   onRemoteApps?: (remoteApps: RemoteApp[], cached: boolean) => void;
   onAgent?: (snapshot: AgentStateSnapshot, cached: boolean) => void;
+  onMessageDetail?: (detail: MessageDetail) => void;
   onScreenFrame?: (frame: RelayScreenFrame) => void;
   onClose?: (event: CloseEvent, intentional: boolean) => void;
 }
@@ -242,6 +244,14 @@ export class RelayConnection {
     });
   }
 
+  sendMessageDetailRequest(req: MessageDetailRequest): boolean {
+    return this.sendCommand({
+      messageId: createClientId(),
+      atUnixMs: Date.now(),
+      body: { kind: 'messageDetailRequest', messageDetailRequest: req },
+    });
+  }
+
   sendTargetSelection(req: TargetSelectionRequest): boolean {
     return this.sendCommand({
       messageId: createClientId(),
@@ -355,6 +365,9 @@ export class RelayConnection {
           this.opts.onState?.({ connected: true, online: true });
         }
         this.opts.onAgent?.(obj.snapshot as AgentStateSnapshot, obj.cached === true);
+        return;
+      case 'relay_message_detail':
+        this.opts.onMessageDetail?.(obj.detail as MessageDetail);
         return;
       case 'relay_screen_frame':
         if (this.hostOnline !== true) {

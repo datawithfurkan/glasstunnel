@@ -325,3 +325,44 @@ describe('SignalingHub auth when the socket closes mid-auth', () => {
     await expect(hubHealth(stub)).resolves.toMatchObject({ peers: 1 });
   });
 });
+
+describe('RelayHub message detail replies', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('forwards a relay_message_detail only to the client it names', async () => {
+    const host = await createDeviceIdentity();
+    const phoneA = await createDeviceIdentity();
+    const phoneB = await createDeviceIdentity();
+    const stub = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
+    const supabase = stubSupabase({
+      gateOn: 'last-seen-touch',
+      devices: [deviceRow(host, 'host'), deviceRow(phoneA, 'phone'), deviceRow(phoneB, 'phone')],
+    });
+    supabase.release();
+
+    const hostSocket = await openHubSocket(stub, relayPath(host.deviceId));
+    hostSocket.client.send(await signedClientAuth(host, hostSocket.nonce, 'host'));
+    await expect(hostSocket.nextMessage()).resolves.toMatchObject({ type: 'auth_ok' });
+
+    const clients = [];
+    for (const phone of [phoneA, phoneB]) {
+      const socket = await openHubSocket(stub, relayPath(host.deviceId));
+      socket.client.send(await signedClientAuth(phone, socket.nonce, 'client', { access_token: 'phone-access-token' }));
+      await expect(socket.nextMessage()).resolves.toMatchObject({ type: 'auth_ok', device_id: phone.deviceId });
+      await expect(socket.nextMessage()).resolves.toMatchObject({ type: 'relay_presence', online: true });
+      clients.push(socket);
+    }
+    const [socketA, socketB] = clients;
+
+    const detail = { agentId: 'claude-desktop', messageId: 'm-7', text: 'full output', redacted: false, truncated: false };
+    hostSocket.client.send(JSON.stringify({ type: 'relay_message_detail', client_device_id: phoneA.deviceId, detail }));
+    await expect(socketA.nextMessage()).resolves.toMatchObject({ type: 'relay_message_detail', detail });
+
+    // B never sees it: the next thing B receives is a broadcast sent afterwards.
+    hostSocket.client.send(JSON.stringify({ type: 'relay_agent_state', snapshot: { agentId: 'claude-desktop' } }));
+    await expect(socketB.nextMessage()).resolves.toMatchObject({ type: 'relay_agent_state' });
+    await expect(socketA.nextMessage()).resolves.toMatchObject({ type: 'relay_agent_state' });
+  });
+});

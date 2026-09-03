@@ -7,6 +7,7 @@ import type {
   DataChannelMessage,
   RemoteApp,
 } from '@glasstunnel/protocol';
+import type { MessageDetail } from '@glasstunnel/protocol';
 import { DEFAULT_STUN_URLS, CURRENT_PROTOCOL_VERSION } from '@glasstunnel/protocol';
 import { SignalingClient } from './SignalingClient';
 import { PeerConnection } from './PeerConnection';
@@ -27,6 +28,7 @@ export interface StartPeerFlowParams {
   onVideoTrack: (agentId: string, stream: MediaStream) => void;
   onLayout: (layout: GridLayout) => void;
   onRemoteApps: (remoteApps: RemoteApp[]) => void;
+  onMessageDetail?: (detail: MessageDetail) => void;
 }
 
 /**
@@ -49,6 +51,7 @@ export async function startPeerFlow(params: StartPeerFlowParams) {
     onVideoTrack,
     onLayout,
     onRemoteApps,
+    onMessageDetail,
   } = params;
 
   let sessionID = 'default';
@@ -187,6 +190,7 @@ export async function startPeerFlow(params: StartPeerFlowParams) {
         onAgent,
         onLayout,
         onRemoteApps,
+        onMessageDetail,
       );
     },
   });
@@ -301,6 +305,7 @@ function handleDataChannel(
   onAgent: (snap: AgentStateSnapshot) => void,
   onLayout: (layout: GridLayout) => void,
   onRemoteApps: (remoteApps: RemoteApp[]) => void,
+  onMessageDetail?: (detail: MessageDetail) => void,
 ) {
   switch (msg.body.kind) {
     case 'hello': {
@@ -329,6 +334,9 @@ function handleDataChannel(
       break;
     case 'remoteAppsUpdate':
       onRemoteApps(msg.body.remoteAppsUpdate.remoteApps);
+      break;
+    case 'messageDetail':
+      onMessageDetail?.(msg.body.messageDetail);
       break;
     default:
       break;

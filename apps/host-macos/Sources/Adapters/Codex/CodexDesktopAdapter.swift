@@ -38,6 +38,8 @@ public final class CodexDesktopAdapter: AgentAdapter, @unchecked Sendable {
 
     private var currentStatus: AgentStatus = .idle
     private var currentMessages: [AgentChatMessage] = []
+    /// Full tool output for messages whose snapshot text is a preview.
+    private var currentMessageDetails: [MessageID: String] = [:]
     private var currentPendingInputRequest: AgentInputRequest?
     private var currentThreadName: String?
     private var currentActiveDesktopThreadName: String?
@@ -262,6 +264,13 @@ public final class CodexDesktopAdapter: AgentAdapter, @unchecked Sendable {
         lock.unlock()
     }
 
+    public func messageDetail(_ messageId: MessageID) -> AgentMessageDetail? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let text = currentMessageDetails[messageId] else { return nil }
+        return AgentMessageDetail(messageId: messageId, text: text, truncated: text.utf8.count >= TranscriptPreview.detailByteCount)
+    }
+
     public func interrupt() async throws {
         keyboard.focusApplication(pid: (try? currentCodexPID()) ?? targetPID)
         keyboard.pressEscape()
@@ -444,6 +453,7 @@ public final class CodexDesktopAdapter: AgentAdapter, @unchecked Sendable {
 
         lock.lock()
         currentMessages = parsed.messages
+        currentMessageDetails = parsed.messageDetails
         currentPendingInputRequest = parsed.pendingInputRequest
         currentThreadName = resolvedThreadName
         currentActiveDesktopThreadName = liveThreadName
@@ -1073,6 +1083,8 @@ enum CodexDesktopSessionParser {
         let workspaceRoot: String?
         let threadName: String?
         let messages: [AgentChatMessage]
+        /// Full tool output for messages whose snapshot text is a preview.
+        let messageDetails: [MessageID: String]
         let pendingInputRequest: AgentInputRequest?
         let status: AgentStatus
         let statusDetail: String
@@ -1110,6 +1122,7 @@ enum CodexDesktopSessionParser {
             workspaceRoot: metadata.workspaceRoot ?? recent.workspaceRoot,
             threadName: metadata.threadName ?? recent.threadName,
             messages: recent.messages,
+            messageDetails: recent.messageDetails,
             pendingInputRequest: recent.pendingInputRequest,
             status: recent.status,
             statusDetail: recent.statusDetail
@@ -1133,12 +1146,62 @@ enum CodexDesktopSessionParser {
         return parseSummary(jsonl: head + "\n" + tail, path: path, modifiedAt: modifiedAt)
     }
 
+    /// One-line label for a Codex tool call from its JSON arguments: the
+    /// shell command for `shell`/`exec_command`, nothing for other tools.
+    static func codexToolTitle(name: String, arguments: String) -> String {
+        guard let data = arguments.data(using: .utf8),
+              let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return ""
+        }
+        if let cmd = parsed["cmd"] as? String, !cmd.isEmpty {
+            return TranscriptPreview.singleLine(cmd)
+        }
+        if let command = parsed["command"] as? [String] {
+            // ["bash", "-lc", "<script>"] reads better as the script itself.
+            let script = command.count == 3 && command[1] == "-lc" ? command[2] : command.joined(separator: " ")
+            return TranscriptPreview.singleLine(script)
+        }
+        if let command = parsed["command"] as? String, !command.isEmpty {
+            return TranscriptPreview.singleLine(command)
+        }
+        return ""
+    }
+
+    struct CodexToolOutput {
+        let text: String
+        let isError: Bool
+        let durationMs: Int64?
+    }
+
+    /// Codex writes tool output as a string that is sometimes JSON with
+    /// `output` and `metadata` (exit code, duration), sometimes plain text.
+    static func codexToolOutput(_ raw: Any?) -> CodexToolOutput {
+        guard let text = raw as? String else {
+            return CodexToolOutput(text: "", isError: false, durationMs: nil)
+        }
+        guard let data = text.data(using: .utf8),
+              let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return CodexToolOutput(text: text, isError: false, durationMs: nil)
+        }
+        let output = parsed["output"] as? String ?? text
+        let metadata = parsed["metadata"] as? [String: Any] ?? [:]
+        let exitCode = metadata["exit_code"] as? Int
+        var durationMs: Int64?
+        if let seconds = metadata["duration_seconds"] as? Double {
+            durationMs = Int64(seconds * 1000)
+        }
+        return CodexToolOutput(text: output, isError: (exitCode ?? 0) != 0, durationMs: durationMs)
+    }
+
     static func parse(jsonl: String, agentID: AgentID, maxMessages: Int) -> ParsedSession {
         let metadata = parseMetadata(jsonl: jsonl)
         var messages: [AgentChatMessage] = []
         var pendingInputRequest: AgentInputRequest?
         var status: AgentStatus = .idle
         var statusDetail = ""
+        var messageDetails: [MessageID: String] = [:]
+        var toolCallStartedAt: [String: Int64] = [:]
+        var toolCallNames: [String: String] = [:]
 
         for (index, line) in jsonl.split(whereSeparator: \.isNewline).enumerated() {
             guard
@@ -1190,6 +1253,50 @@ enum CodexDesktopSessionParser {
                 continue
             }
 
+            // Codex's shell and tool calls become rows, like Claude's.
+            if payloadType == "function_call", let callID = payload["call_id"] as? String, !callID.isEmpty {
+                let name = payload["name"] as? String ?? "tool"
+                let at = parseTimestamp(raw["timestamp"])
+                toolCallStartedAt[callID] = at
+                toolCallNames[callID] = name
+                messages.append(AgentChatMessage(
+                    messageId: "\(agentID)-codex-\(index)",
+                    role: .tool,
+                    text: "Using \(name)",
+                    atUnixMs: at,
+                    pendingToolCalls: [PendingToolCall(toolName: name, toolCallId: callID, summary: "Using \(name)")],
+                    kind: .toolCall,
+                    toolName: name,
+                    toolCallId: callID,
+                    title: codexToolTitle(name: name, arguments: payload["arguments"] as? String ?? "")
+                ))
+                continue
+            }
+            if payloadType == "function_call_output", let callID = payload["call_id"] as? String, !callID.isEmpty {
+                let at = parseTimestamp(raw["timestamp"])
+                let output = codexToolOutput(payload["output"])
+                let preview = TranscriptPreview.make(output.text)
+                let messageId = "\(agentID)-codex-\(index)"
+                let startedAt = toolCallStartedAt.removeValue(forKey: callID)
+                messages.append(AgentChatMessage(
+                    messageId: messageId,
+                    role: .tool,
+                    text: preview.text,
+                    atUnixMs: at,
+                    kind: .toolResult,
+                    toolName: toolCallNames[callID] ?? "",
+                    toolCallId: callID,
+                    outputLineCount: preview.lineCount,
+                    durationMs: output.durationMs ?? startedAt.map { max(0, at - $0) } ?? 0,
+                    isError: output.isError,
+                    truncated: preview.truncated
+                ))
+                if preview.truncated {
+                    messageDetails[messageId] = preview.detail
+                }
+                continue
+            }
+
             guard
                 payloadType == "message",
                 let roleString = payload["role"] as? String,
@@ -1225,6 +1332,7 @@ enum CodexDesktopSessionParser {
             workspaceRoot: metadata.workspaceRoot,
             threadName: metadata.threadName,
             messages: messages,
+            messageDetails: messageDetails.filter { detail in messages.contains { $0.messageId == detail.key } },
             pendingInputRequest: pendingInputRequest,
             status: status,
             statusDetail: statusDetail

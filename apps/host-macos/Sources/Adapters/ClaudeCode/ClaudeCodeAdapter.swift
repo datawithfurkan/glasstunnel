@@ -47,6 +47,8 @@ public final class ClaudeCodeAdapter: PTYAdapterBase, @unchecked Sendable {
     /// Whether the composer hint has been seen since the last launch or reset.
     private var composerSeenSinceLaunch = false
     private var currentMessages: [AgentChatMessage] = []
+    /// Full tool output for messages whose snapshot text is a preview.
+    private var currentMessageDetails: [MessageID: String] = [:]
     private var parsedTranscript: (path: String, modifiedAt: Date)?
     private var refreshTask: Task<Void, Never>?
     private var runtimeModelId: String?
@@ -297,6 +299,13 @@ public final class ClaudeCodeAdapter: PTYAdapterBase, @unchecked Sendable {
             return super.snapshotPendingInputRequest()
         }
         return Self.trustPromptInputRequest(cwd: cwd)
+    }
+
+    public func messageDetail(_ messageId: MessageID) -> AgentMessageDetail? {
+        sessionLock.lock()
+        defer { sessionLock.unlock() }
+        guard let text = currentMessageDetails[messageId] else { return nil }
+        return AgentMessageDetail(messageId: messageId, text: text, truncated: text.utf8.count >= TranscriptPreview.detailByteCount)
     }
 
     public override func sendInput(_ text: String, submit: Bool) async throws {
@@ -765,6 +774,7 @@ public final class ClaudeCodeAdapter: PTYAdapterBase, @unchecked Sendable {
         if selectionChanged || selected == nil {
             // Never show one session's messages under another session's name.
             currentMessages = []
+            currentMessageDetails = [:]
             parsedTranscript = nil
         }
         let needsParse = selected.map { selected in
@@ -786,6 +796,7 @@ public final class ClaudeCodeAdapter: PTYAdapterBase, @unchecked Sendable {
         let messagesUpdated = selectedSessionId == selected.sessionId
         if messagesUpdated {
             currentMessages = parsed.messages
+            currentMessageDetails = parsed.messageDetails
             parsedTranscript = (selected.path, selected.modifiedAt)
         }
         sessionLock.unlock()

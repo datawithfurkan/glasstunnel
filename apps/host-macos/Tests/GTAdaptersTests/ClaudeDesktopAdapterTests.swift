@@ -28,8 +28,11 @@ final class ClaudeDesktopAdapterTests: XCTestCase {
         XCTAssertEqual(parsed.statusDetail, "Response ready")
         XCTAssertEqual(parsed.model, "claude-opus-4-8")
         XCTAssertNil(parsed.pendingInputRequest)
-        XCTAssertEqual(parsed.messages.map(\.role), [.user, .assistant, .tool, .assistant])
-        XCTAssertEqual(parsed.messages[2].text, "file contents", "Tool results render as tool output, not as the user speaking.")
+        XCTAssertEqual(parsed.messages.map(\.role), [.user, .assistant, .tool, .tool, .assistant])
+        XCTAssertEqual(parsed.messages.map(\.kind), [.text, .text, .toolCall, .toolResult, .text])
+        XCTAssertEqual(parsed.messages[2].title, "x", "the call row is titled with the file name")
+        XCTAssertEqual(parsed.messages[3].text, "file contents", "Tool results render as tool output, not as the user speaking.")
+        XCTAssertEqual(parsed.messages[3].toolCallId, "toolu_1")
         XCTAssertFalse(parsed.messages.contains { $0.text == "subagent prompt" }, "Sidechain records are skipped.")
         XCTAssertEqual(parsed.lastActivityUnixMs, 1_788_256_809_500, "2026-09-01T10:00:09.500Z, the newest timestamped record")
     }

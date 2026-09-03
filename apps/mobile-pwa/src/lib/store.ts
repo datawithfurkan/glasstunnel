@@ -24,6 +24,7 @@ import {
   type ScreenShareQuality,
   type ScreenPointerInput,
 } from '@glasstunnel/protocol';
+import type { MessageDetail } from '@glasstunnel/protocol';
 import {
   AccountApiError,
   claimHostCode,
@@ -108,6 +109,8 @@ export interface AppState {
   hostHello: Hello | null;
   workspaceHostDeviceId: string | null;
   agents: Record<string, AgentStateSnapshot>;
+  /** Full text of messages fetched on request, keyed by message id. */
+  messageDetails: Record<string, MessageDetail>;
   videoStreams: Record<string, MediaStream>;
   relayScreenFrames: Record<string, RelayScreenFrame>;
   screenShareQuality: ScreenShareQuality;
@@ -156,6 +159,7 @@ export interface AppState {
   ) => Promise<boolean>;
   sendQuickReply: (agentId: string, kind: number) => void;
   sendInterrupt: (agentId: string) => void;
+  requestMessageDetail: (agentId: string, messageId: string) => boolean;
   selectTarget: (agentId: string, targetId: string) => boolean;
   renameTarget: (agentId: string, targetId: string, label: string) => boolean;
   updateRuntimeSettings: (
@@ -219,6 +223,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   hostHello: null,
   workspaceHostDeviceId: null,
   agents: {},
+  messageDetails: {},
   videoStreams: {},
   relayScreenFrames: {},
   screenShareQuality: loadScreenShareQuality(),
@@ -473,6 +478,10 @@ export const useAppStore = create<AppState>((set, get) => ({
           }
           flushPendingScreenStop(set, get);
           void persistRelayCache(get());
+        },
+        onMessageDetail: (detail) => {
+          if (!isCurrent()) return;
+          set((prev) => ({ messageDetails: { ...prev.messageDetails, [detail.messageId]: detail } }));
         },
         onScreenFrame: (frame) => {
           if (!isCurrent()) return;
@@ -984,6 +993,17 @@ export const useAppStore = create<AppState>((set, get) => ({
       return;
     }
     markInterruptRequested(set, agentId);
+  },
+
+  requestMessageDetail(agentId, messageId) {
+    if (get().messageDetails[messageId]) return true;
+    const relay = get().relay;
+    const peer = get().peer;
+    return (
+      relay?.sendMessageDetailRequest({ agentId, messageId }) ||
+      peer?.sendMessageDetailRequest({ agentId, messageId }) ||
+      false
+    );
   },
 
   selectTarget(agentId, targetId) {
@@ -1662,6 +1682,10 @@ async function startWebRtcPeerFlow(
           },
         }));
         void persistRelayCache(get());
+      },
+      onMessageDetail: (detail) => {
+        if (!isCurrent()) return;
+        set((prev) => ({ messageDetails: { ...prev.messageDetails, [detail.messageId]: detail } }));
       },
       onVideoTrack: (agentId, stream) => {
         if (!isCurrent()) return;

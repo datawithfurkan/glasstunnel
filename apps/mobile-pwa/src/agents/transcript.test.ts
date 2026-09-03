@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ChatRole, type AgentChatMessage } from '@glasstunnel/protocol';
+import { ChatMessageKind, ChatRole, type AgentChatMessage } from '@glasstunnel/protocol';
 import {
   activitySummary,
   buildTranscript,
@@ -112,7 +112,7 @@ describe('buildTranscript', () => {
 
 describe('tool row labels', () => {
   it('describes pending, empty, and sized results', () => {
-    const base = { id: 'r', toolName: 'Bash', output: '', detail: '', atUnixMs: T0, redacted: false };
+    const base = { id: 'r', toolName: 'Bash', title: '', output: '', detail: '', atUnixMs: T0, redacted: false, truncated: false, durationMs: 0, isError: false };
     expect(toolRowLabel({ ...base, lineCount: 0, pending: true })).toEqual({ title: 'Bash', meta: 'running' });
     expect(toolRowLabel({ ...base, lineCount: 0, pending: false })).toEqual({ title: 'Bash', meta: 'no output' });
     expect(toolRowLabel({ ...base, lineCount: 1, pending: false })).toEqual({ title: 'Bash', meta: '1 line' });
@@ -157,5 +157,70 @@ describe('prompt folding and density', () => {
         },
       }),
     ).toBe('focus');
+  });
+});
+
+describe('structured rows from a Mac that sends titles and previews', () => {
+  it('pairs results with their calls by id and shows the title, time, and failure', () => {
+    const items = buildTranscript([
+      message('a1', ChatRole.Assistant, 'Checking.', { kind: ChatMessageKind.Text }),
+      message('c1', ChatRole.Tool, 'Using Bash', {
+        kind: ChatMessageKind.ToolCall,
+        toolName: 'Bash',
+        toolCallId: 'toolu_1',
+        title: 'git status --short',
+        pendingToolCalls: [{ toolName: 'Bash', toolCallId: 'toolu_1', summary: 'Using Bash' }],
+      }),
+      message('c2', ChatRole.Tool, 'Using Read', {
+        kind: ChatMessageKind.ToolCall,
+        toolName: 'Read',
+        toolCallId: 'toolu_2',
+        title: 'Package.swift',
+        pendingToolCalls: [{ toolName: 'Read', toolCallId: 'toolu_2', summary: 'Using Read' }],
+      }),
+      // The second call answers first; ids keep the pairing right.
+      message('r2', ChatRole.Tool, '// swift-tools-version', {
+        kind: ChatMessageKind.ToolResult,
+        toolName: 'Read',
+        toolCallId: 'toolu_2',
+        outputLineCount: 40,
+        truncated: true,
+        durationMs: 120,
+      }),
+      message('r1', ChatRole.Tool, 'fatal: not a git repository', {
+        kind: ChatMessageKind.ToolResult,
+        toolName: 'Bash',
+        toolCallId: 'toolu_1',
+        outputLineCount: 1,
+        durationMs: 2_400,
+        isError: true,
+      }),
+    ]);
+    expect(items.map((item) => item.kind)).toEqual(['stamp', 'assistant', 'activity']);
+    const activity = items[2];
+    if (activity.kind !== 'activity') throw new Error('expected activity');
+    expect(activity.rows.map((row) => [row.toolName, row.title, row.pending, row.lineCount, row.truncated])).toEqual([
+      ['Bash', 'git status --short', false, 1, false],
+      ['Read', 'Package.swift', false, 40, true],
+    ]);
+    expect(toolRowLabel(activity.rows[0])).toEqual({ title: 'Bash', meta: '1 line · 2.4 s · failed' });
+    expect(toolRowLabel(activity.rows[1])).toEqual({ title: 'Read', meta: '40 lines' });
+    expect(activity.rows[1].resultMessageId).toBe('r2');
+  });
+
+  it('treats event-kind records as dividers whatever their role', () => {
+    const items = buildTranscript([
+      message('e1', ChatRole.User, 'Stopped', { kind: ChatMessageKind.Event }),
+    ]);
+    expect(items.map((item) => item.kind)).toEqual(['event']);
+  });
+
+  it('keeps output that names an unknown call as its own row', () => {
+    const items = buildTranscript([
+      message('r9', ChatRole.Tool, 'late output', { kind: ChatMessageKind.ToolResult, toolName: 'Bash', toolCallId: 'toolu_9' }),
+    ]);
+    const activity = items[0];
+    if (activity.kind !== 'activity') throw new Error('expected activity');
+    expect(activity.rows[0]).toMatchObject({ toolName: 'Bash', pending: false, lineCount: 1, toolCallId: 'toolu_9' });
   });
 });

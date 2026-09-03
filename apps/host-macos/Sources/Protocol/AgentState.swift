@@ -13,6 +13,16 @@ public struct PendingToolCall: Codable, Sendable, Hashable, Identifiable {
     }
 }
 
+/// What a transcript record is, for phones that render transcripts for
+/// reading. Older phones ignore it and render `text`.
+public enum ChatMessageKind: Int, Codable, Sendable, Hashable {
+    case unspecified = 0
+    case text = 1
+    case toolCall = 2
+    case toolResult = 3
+    case event = 4
+}
+
 public struct AgentChatMessage: Codable, Sendable, Hashable, Identifiable {
     public var id: String { messageId }
     public var messageId: MessageID
@@ -23,6 +33,18 @@ public struct AgentChatMessage: Codable, Sendable, Hashable, Identifiable {
     public var pendingToolCalls: [PendingToolCall]
     /// Pattern names that fired for this message (never the matched text).
     public var redactionReasons: [String]
+    public var kind: ChatMessageKind
+    public var toolName: String
+    /// Pairs a tool result with its call.
+    public var toolCallId: String
+    /// One-line label derived by the adapter (a command, a file name, a
+    /// pattern). Redacted like `text`.
+    public var title: String
+    public var outputLineCount: Int32
+    public var durationMs: Int64
+    public var isError: Bool
+    /// `text` is a preview; the full text is served on request.
+    public var truncated: Bool
 
     public init(
         messageId: MessageID,
@@ -31,7 +53,15 @@ public struct AgentChatMessage: Codable, Sendable, Hashable, Identifiable {
         atUnixMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
         redacted: Bool = false,
         pendingToolCalls: [PendingToolCall] = [],
-        redactionReasons: [String] = []
+        redactionReasons: [String] = [],
+        kind: ChatMessageKind = .unspecified,
+        toolName: String = "",
+        toolCallId: String = "",
+        title: String = "",
+        outputLineCount: Int32 = 0,
+        durationMs: Int64 = 0,
+        isError: Bool = false,
+        truncated: Bool = false
     ) {
         self.messageId = messageId
         self.role = role
@@ -40,6 +70,39 @@ public struct AgentChatMessage: Codable, Sendable, Hashable, Identifiable {
         self.redacted = redacted
         self.pendingToolCalls = pendingToolCalls
         self.redactionReasons = redactionReasons
+        self.kind = kind
+        self.toolName = toolName
+        self.toolCallId = toolCallId
+        self.title = title
+        self.outputLineCount = outputLineCount
+        self.durationMs = durationMs
+        self.isError = isError
+        self.truncated = truncated
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case messageId, role, text, atUnixMs, redacted, pendingToolCalls, redactionReasons
+        case kind, toolName, toolCallId, title, outputLineCount, durationMs, isError, truncated
+    }
+
+    /// Records written before the structured fields existed decode with defaults.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        messageId = try c.decode(MessageID.self, forKey: .messageId)
+        role = try c.decode(ChatRole.self, forKey: .role)
+        text = try c.decode(String.self, forKey: .text)
+        atUnixMs = try c.decodeIfPresent(Int64.self, forKey: .atUnixMs) ?? 0
+        redacted = try c.decodeIfPresent(Bool.self, forKey: .redacted) ?? false
+        pendingToolCalls = try c.decodeIfPresent([PendingToolCall].self, forKey: .pendingToolCalls) ?? []
+        redactionReasons = try c.decodeIfPresent([String].self, forKey: .redactionReasons) ?? []
+        kind = try c.decodeIfPresent(ChatMessageKind.self, forKey: .kind) ?? .unspecified
+        toolName = try c.decodeIfPresent(String.self, forKey: .toolName) ?? ""
+        toolCallId = try c.decodeIfPresent(String.self, forKey: .toolCallId) ?? ""
+        title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+        outputLineCount = try c.decodeIfPresent(Int32.self, forKey: .outputLineCount) ?? 0
+        durationMs = try c.decodeIfPresent(Int64.self, forKey: .durationMs) ?? 0
+        isError = try c.decodeIfPresent(Bool.self, forKey: .isError) ?? false
+        truncated = try c.decodeIfPresent(Bool.self, forKey: .truncated) ?? false
     }
 }
 

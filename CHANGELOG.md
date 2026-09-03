@@ -5,6 +5,17 @@ versioning after the first public beta; pre-release compatibility may still chan
 
 ## Unreleased
 
+### Added
+
+- Tool activity now arrives on the phone as structured rows (protocol 0.2.2):
+  the Mac names each call (a Bash command, a file name, a search pattern),
+  pairs results with their calls, and sends a 12-line preview with the full
+  line count, duration, and failure flag. The full output stays on the Mac and
+  is fetched on request from the row's "Show all" button, over the direct
+  connection or the relay. Older phones and Macs keep working: the fields are
+  optional and the old wording is still sent.
+- The Codex card shows the shell and tool calls Codex runs, as the same rows.
+
 ### Fixed
 
 - The Claude cards no longer flip from "Stopped" back to "Claude is working" when

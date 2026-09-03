@@ -40,6 +40,8 @@ public struct DataChannelMessage: Codable, Sendable, Hashable {
         case heartbeatPong(HeartbeatPong)
         case videoTrackHint(VideoTrackHint)
         case redactionPolicyUpdate(RedactionPolicyUpdate)
+        case messageDetailRequest(MessageDetailRequest)
+        case messageDetail(MessageDetail)
 
         private enum CodingKeys: String, CodingKey {
             case kind
@@ -65,6 +67,8 @@ public struct DataChannelMessage: Codable, Sendable, Hashable {
             case heartbeatPong
             case videoTrackHint
             case redactionPolicyUpdate
+            case messageDetailRequest
+            case messageDetail
         }
 
         public init(from decoder: Decoder) throws {
@@ -115,6 +119,10 @@ public struct DataChannelMessage: Codable, Sendable, Hashable {
                 self = .videoTrackHint(try container.decode(VideoTrackHint.self, forKey: .videoTrackHint))
             case "redactionPolicyUpdate":
                 self = .redactionPolicyUpdate(try container.decode(RedactionPolicyUpdate.self, forKey: .redactionPolicyUpdate))
+            case "messageDetailRequest":
+                self = .messageDetailRequest(try container.decode(MessageDetailRequest.self, forKey: .messageDetailRequest))
+            case "messageDetail":
+                self = .messageDetail(try container.decode(MessageDetail.self, forKey: .messageDetail))
             default:
                 throw DecodingError.dataCorruptedError(
                     forKey: .kind,
@@ -193,6 +201,12 @@ public struct DataChannelMessage: Codable, Sendable, Hashable {
             case .redactionPolicyUpdate(let v):
                 try container.encode("redactionPolicyUpdate", forKey: .kind)
                 try container.encode(v, forKey: .redactionPolicyUpdate)
+            case .messageDetailRequest(let v):
+                try container.encode("messageDetailRequest", forKey: .kind)
+                try container.encode(v, forKey: .messageDetailRequest)
+            case .messageDetail(let v):
+                try container.encode("messageDetail", forKey: .kind)
+                try container.encode(v, forKey: .messageDetail)
             }
         }
     }
@@ -380,6 +394,43 @@ public struct InterruptRequest: Codable, Sendable, Hashable {
 
     public init(agentId: AgentID) {
         self.agentId = agentId
+    }
+}
+
+/// Phone → Mac: the full text of a message whose snapshot copy was a preview.
+public struct MessageDetailRequest: Codable, Sendable, Hashable {
+    public var agentId: AgentID
+    public var messageId: MessageID
+
+    public init(agentId: AgentID, messageId: MessageID) {
+        self.agentId = agentId
+        self.messageId = messageId
+    }
+}
+
+/// Mac → phone: the full text of one message, redacted like a snapshot.
+public struct MessageDetail: Codable, Sendable, Hashable {
+    public var agentId: AgentID
+    public var messageId: MessageID
+    public var text: String
+    public var redacted: Bool
+    public var redactionReasons: [String]
+    public var truncated: Bool
+
+    public init(
+        agentId: AgentID,
+        messageId: MessageID,
+        text: String,
+        redacted: Bool = false,
+        redactionReasons: [String] = [],
+        truncated: Bool = false
+    ) {
+        self.agentId = agentId
+        self.messageId = messageId
+        self.text = text
+        self.redacted = redacted
+        self.redactionReasons = redactionReasons
+        self.truncated = truncated
     }
 }
 

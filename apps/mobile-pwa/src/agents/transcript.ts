@@ -1,4 +1,4 @@
-import { ChatRole, type AgentChatMessage } from '@glasstunnel/protocol';
+import { ChatMessageKind, ChatRole, type AgentChatMessage } from '@glasstunnel/protocol';
 
 /**
  * Turns the flat list of transcript messages a Mac sends into the items the
@@ -13,7 +13,9 @@ export interface ToolRow {
   id: string;
   /** Tool name from the pending call, or '' for output with no known call. */
   toolName: string;
-  /** Full output text, '' while the call is still running. */
+  /** One-line label from the Mac (a command, a file name, a pattern), or ''. */
+  title: string;
+  /** Output text as carried by the snapshot: the full text, or a preview when `truncated`. */
   output: string;
   /** First meaningful line of the output, trimmed for a one-line row. */
   detail: string;
@@ -22,6 +24,13 @@ export interface ToolRow {
   atUnixMs: number;
   redacted: boolean;
   redactionReasons?: string[];
+  /** Id of the result message, for fetching the full text when `truncated`. */
+  resultMessageId?: string;
+  truncated: boolean;
+  durationMs: number;
+  isError: boolean;
+  /** Id shared by the call and its result when the Mac sends structured rows. */
+  toolCallId?: string;
 }
 
 export type TranscriptItem =
@@ -70,36 +79,50 @@ export function buildTranscript(messages: AgentChatMessage[]): TranscriptItem[] 
     for (const call of message.pendingToolCalls) {
       activity.rows.push({
         id: `${message.messageId}-${call.toolCallId}`,
-        toolName: call.toolName,
+        toolName: message.toolName || call.toolName,
+        title: message.title ?? '',
         output: '',
         detail: '',
         lineCount: 0,
         pending: true,
         atUnixMs: message.atUnixMs,
         redacted: false,
+        truncated: false,
+        durationMs: 0,
+        isError: false,
+        toolCallId: message.toolCallId || call.toolCallId,
       });
     }
   };
 
   const addResult = (message: AgentChatMessage) => {
     const activity = openActivity(message);
-    const target = activity.rows.find((row) => row.pending);
+    // A structured result names its call; older Macs leave pairing to order.
+    const target = message.toolCallId
+      ? findPendingRow(items, message.toolCallId)
+      : activity.rows.find((row) => row.pending);
     const output = message.text;
     const filled: Partial<ToolRow> = {
       output,
       detail: firstMeaningfulLine(output),
-      lineCount: countLines(output),
+      lineCount: message.outputLineCount || countLines(output),
       pending: false,
       redacted: message.redacted,
       redactionReasons: message.redactionReasons,
+      resultMessageId: message.messageId,
+      truncated: message.truncated === true,
+      durationMs: message.durationMs ?? 0,
+      isError: message.isError === true,
     };
     if (target) {
       Object.assign(target, filled);
+      if (!target.toolName && message.toolName) target.toolName = message.toolName;
       return;
     }
     activity.rows.push({
       id: `${message.messageId}-output`,
-      toolName: '',
+      toolName: message.toolName ?? '',
+      title: '',
       atUnixMs: message.atUnixMs,
       output,
       detail: filled.detail ?? '',
@@ -107,14 +130,23 @@ export function buildTranscript(messages: AgentChatMessage[]): TranscriptItem[] 
       pending: false,
       redacted: message.redacted,
       redactionReasons: message.redactionReasons,
+      resultMessageId: message.messageId,
+      truncated: filled.truncated ?? false,
+      durationMs: filled.durationMs ?? 0,
+      isError: filled.isError ?? false,
+      toolCallId: message.toolCallId,
     });
   };
 
   for (const message of messages) {
     const hasCalls = message.pendingToolCalls.length > 0;
+    if (message.kind === ChatMessageKind.Event) {
+      items.push({ kind: 'event', id: message.messageId, message });
+      continue;
+    }
     switch (message.role) {
       case ChatRole.Tool:
-        if (hasCalls) {
+        if (hasCalls || message.kind === ChatMessageKind.ToolCall) {
           stampIfNeeded(message);
           addCalls(message);
         } else {
@@ -141,12 +173,31 @@ export function buildTranscript(messages: AgentChatMessage[]): TranscriptItem[] 
   return items;
 }
 
-/** One-line label for a tool row: the tool's name and, once it ran, its size. */
+/** One-line label for a tool row: the tool's name and, once it ran, its size and time. */
 export function toolRowLabel(row: ToolRow): { title: string; meta: string } {
   const title = row.toolName || 'Output';
   if (row.pending) return { title, meta: 'running' };
-  if (row.lineCount === 0) return { title, meta: 'no output' };
-  return { title, meta: row.lineCount === 1 ? '1 line' : `${row.lineCount} lines` };
+  const size = row.lineCount === 0 ? 'no output' : row.lineCount === 1 ? '1 line' : `${row.lineCount} lines`;
+  const parts = [size];
+  if (row.durationMs >= 1000) parts.push(`${formatSeconds(row.durationMs)} s`);
+  if (row.isError) parts.push('failed');
+  return { title, meta: parts.join(' · ') };
+}
+
+export function formatSeconds(durationMs: number): string {
+  const seconds = durationMs / 1000;
+  return seconds >= 10 ? String(Math.round(seconds)) : seconds.toFixed(1);
+}
+
+/** The most recent still-pending row with this call id, in any activity block. */
+function findPendingRow(items: TranscriptItem[], toolCallId: string): ToolRow | undefined {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (item.kind !== 'activity') continue;
+    const row = item.rows.find((candidate) => candidate.pending && candidate.toolCallId === toolCallId);
+    if (row) return row;
+  }
+  return undefined;
 }
 
 export function activitySummary(rows: ToolRow[]): string {
