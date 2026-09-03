@@ -49,6 +49,18 @@ final class CursorConversationStoreTests: XCTestCase {
         XCTAssertEqual(injected?.text, "")
         let wrapped = CursorMessageCodec.decode(object: ["role": "user", "content": "<user_query>hello</user_query>"])
         XCTAssertEqual(wrapped?.isInjectedContext, false)
+
+        // The CLI sends mode reminders as a tagged part next to the typed prompt.
+        let reminder = "\n<system_reminder>\nAsk mode is active. Answer questions only.\n</system_reminder>\n"
+        let withReminder = CursorMessageCodec.decode(object: [
+            "role": "user",
+            "content": [["type": "text", "text": reminder], ["type": "text", "text": "Reply with exactly GT_OK"]],
+        ])
+        XCTAssertEqual(withReminder?.text, "Reply with exactly GT_OK", "only the reminder part is dropped")
+        XCTAssertEqual(withReminder?.isInjectedContext, false)
+        let reminderOnly = CursorMessageCodec.decode(object: ["role": "user", "content": [["type": "text", "text": reminder]]])
+        XCTAssertEqual(reminderOnly?.isInjectedContext, true, "a message made only of Cursor's parts is context")
+        XCTAssertEqual(reminderOnly?.text, "")
         XCTAssertEqual(wrapped?.text, "hello")
         let listed = CursorMessageCodec.decode(object: ["role": "user", "content": [["type": "text", "text": "Reply with OK"]]])
         XCTAssertEqual(listed?.text, "Reply with OK")

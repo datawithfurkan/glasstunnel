@@ -221,8 +221,12 @@ enum CursorCLIChatCatalog {
                 ))
             }
         }
+        // Resuming a chat in another folder makes the CLI keep a second store
+        // for it under that folder's hash; the newest copy stands for the chat.
+        var seen = Set<String>()
         return summaries
             .sorted { ($0.updatedAtUnixMs ?? 0) > ($1.updatedAtUnixMs ?? 0) }
+            .filter { seen.insert($0.chatId).inserted }
             .prefix(max(0, limit))
             .map { $0 }
     }

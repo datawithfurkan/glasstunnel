@@ -169,10 +169,19 @@ enum CursorMessageCodec {
         var texts: [String] = []
         var calls: [CursorStoredMessage.ToolCall] = []
         var results: [CursorStoredMessage.ToolResult] = []
+        var droppedInjectedPart = false
         for part in parts {
             switch (part["type"] as? String) ?? "" {
             case "text":
                 if let text = part["text"] as? String, !text.isEmpty {
+                    // Cursor's own tagged blocks (the context block, mode
+                    // reminders such as `<system_reminder>`) travel as parts
+                    // of the same message as the typed prompt; only those
+                    // parts are dropped.
+                    if role == .user, isInjectedContext(text) {
+                        droppedInjectedPart = true
+                        continue
+                    }
                     texts.append(userQuery(in: text))
                 }
             case "tool-call", "tool_use", "tool-use":
@@ -203,7 +212,8 @@ enum CursorMessageCodec {
         }
 
         let joined = texts.joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        let injected = role == .user && calls.isEmpty && results.isEmpty && isInjectedContext(joined)
+        let injected = role == .user && calls.isEmpty && results.isEmpty
+            && (isInjectedContext(joined) || (joined.isEmpty && droppedInjectedPart))
         return CursorStoredMessage(
             role: role,
             text: injected ? "" : joined,

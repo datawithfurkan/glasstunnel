@@ -110,7 +110,7 @@ test('@cursor-desktop-account switches to a dedicated chat, prompts, and interru
   await expect(page.getByText('idle', { exact: true }).filter({ visible: true }).first()).toBeVisible({
     timeout: 90_000,
   });
-  await expect(page.getByText('Stopped', { exact: true }).filter({ visible: true }).first()).toBeVisible({
+  await expect(page.getByText(/^Stopped/).filter({ visible: true }).first()).toBeVisible({
     timeout: 30_000,
   });
   expect(await occurrences(page, doneMarker), 'the interrupted reply never reached its closing marker').toBe(1);

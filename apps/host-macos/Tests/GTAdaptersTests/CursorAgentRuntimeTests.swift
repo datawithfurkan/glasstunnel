@@ -186,6 +186,34 @@ final class CursorAgentRuntimeTests: XCTestCase {
         await adapter.stop()
     }
 
+    func testChatsFromOtherFoldersAreListedButNotAdopted() async throws {
+        let fixture = try FakeCursorAgent.make(prefix: "gt-cursor-agent-foreign", behavior: "turn")
+        defer { fixture.cleanUp() }
+        // A chat the CLI ran in some other folder: offered as a switch, never resumed here.
+        let foreignId = "99999999-8888-4777-8666-555555555555"
+        let foreignDir = fixture.cursorRoot
+            .appendingPathComponent("chats/0123456789abcdef0123456789abcdef/\(foreignId)", isDirectory: true)
+        try FileManager.default.createDirectory(at: foreignDir, withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: foreignDir.appendingPathComponent("store.db").path, contents: Data())
+        try #"{"createdAtMs":1700000000000,"updatedAtMs":1900000000000,"hasConversation":true}"#
+            .write(to: foreignDir.appendingPathComponent("meta.json"), atomically: true, encoding: .utf8)
+        let adapter = fixture.adapter()
+        let snapshots = SnapshotCollector(adapter.observeState())
+
+        try await adapter.start()
+        let ready = try await snapshots.wait(timeout: 5) { $0.status == .idle && $0.statusDetail == "ready" }
+        XCTAssertTrue(String(describing: ready.availableTargets).contains(foreignId), "the other folder's chat is offered as a switch")
+        XCTAssertNil(adapter.selectedChatIdForTesting(), "nothing is resumed in a folder without a chat of its own")
+
+        try await adapter.sendInput("Read the README", submit: true)
+        _ = try await snapshots.wait(timeout: 10) { $0.status == .done }
+        XCTAssertEqual(adapter.selectedChatIdForTesting(), FakeCursorAgent.chatId, "the first prompt starts a chat of its own")
+        let arguments = try fixture.recordedArguments()
+        XCTAssertEqual(value(after: "--resume", in: arguments), FakeCursorAgent.chatId)
+        XCTAssertEqual(value(after: "--workspace", in: arguments), fixture.workspace.path)
+        await adapter.stop()
+    }
+
     func testLocalCommandsSwitchModeAndModelAndAgentModeStaysOff() async throws {
         let fixture = try FakeCursorAgent.make(prefix: "gt-cursor-agent-mode", behavior: "turn")
         defer { fixture.cleanUp() }

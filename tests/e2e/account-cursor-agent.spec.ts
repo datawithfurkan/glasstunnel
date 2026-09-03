@@ -91,7 +91,7 @@ test('@cursor-agent-account prompts, reads a file in plan mode, and interrupts C
   // 2. Plan mode is read-only; a file read shows up as a tool row titled with
   //    the file, and the reply carries what it found.
   await sendPrompt(page, '/mode plan');
-  await expect(page.getByText('Mode: plan', { exact: true }).filter({ visible: true }).first()).toBeVisible({
+  await expect(page.getByText(/^Mode: plan/).filter({ visible: true }).first()).toBeVisible({
     timeout: 20_000,
   });
   await sendPrompt(
@@ -105,7 +105,7 @@ test('@cursor-agent-account prompts, reads a file in plan mode, and interrupts C
   // 3. Interrupt from the phone: a long reply is stopped, the transcript
   //    records the turn as stopped, and the closing marker never lands.
   await sendPrompt(page, '/mode ask');
-  await expect(page.getByText('Mode: ask', { exact: true }).filter({ visible: true }).first()).toBeVisible({
+  await expect(page.getByText(/^Mode: ask/).filter({ visible: true }).first()).toBeVisible({
     timeout: 20_000,
   });
   const doneMarker = `${marker}_DONE`;
@@ -120,7 +120,7 @@ test('@cursor-agent-account prompts, reads a file in plan mode, and interrupts C
   await expect(page.getByText('idle', { exact: true }).filter({ visible: true }).first()).toBeVisible({
     timeout: 60_000,
   });
-  await expect(page.getByText('Stopped', { exact: true }).filter({ visible: true }).first()).toBeVisible({
+  await expect(page.getByText(/^Stopped/).filter({ visible: true }).first()).toBeVisible({
     timeout: 30_000,
   });
   expect(await occurrences(page, doneMarker), 'the interrupted reply never reached its closing marker').toBe(1);

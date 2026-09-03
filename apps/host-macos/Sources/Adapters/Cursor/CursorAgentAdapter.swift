@@ -583,8 +583,11 @@ public final class CursorAgentAdapter: AgentAdapter, @unchecked Sendable {
     }
 
     /// Re-reads the chat list. With `selectNewest`, the newest chat in the
-    /// current workspace (else the newest anywhere) becomes the selection when
-    /// none is set. Returns true when the published list changed.
+    /// current workspace becomes the selection when none is set. Chats from
+    /// other folders stay listed for an explicit switch; adopting one here
+    /// would carry its history into a folder it never ran in, so a folder
+    /// without a chat starts a new one on the first prompt instead. Returns
+    /// true when the published list changed.
     @discardableResult
     private func refreshChats(selectNewest: Bool) -> Bool {
         let workspace = currentWorkspace()
@@ -594,7 +597,7 @@ public final class CursorAgentAdapter: AgentAdapter, @unchecked Sendable {
         chats = listed
         if selectedChatId == nil, selectNewest {
             let hash = CursorCLIChatCatalog.workspaceHash(workspace)
-            let candidate = listed.first { $0.workspaceHash == hash && $0.hasConversation } ?? listed.first { $0.hasConversation } ?? listed.first
+            let candidate = listed.first { $0.workspaceHash == hash && $0.hasConversation } ?? listed.first { $0.workspaceHash == hash }
             if let candidate {
                 selectedChatId = candidate.chatId
                 ownedChatIds.insert(candidate.chatId)
