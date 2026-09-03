@@ -39,7 +39,7 @@ Everything between Mac and phone is end-to-end encrypted via WebRTC DTLS-SRTP. T
 Pre-1.0 public beta. The account-first product journey, Mac Screen, scoped
 Terminal control, Developer ID signing, Apple notarization, Gatekeeper launch,
 and production permission/auth relaunch flow have release evidence. The signed,
-notarized `0.1.7` public beta release is available through GitHub Releases and Homebrew.
+notarized `0.1.8` public beta release is available through GitHub Releases and Homebrew.
 
 The public-beta support tiers are:
 
