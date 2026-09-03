@@ -65,7 +65,11 @@ Agent card the chats it created or resumed.
   store's status comes from Cursor's own record on the composer (`status`:
   completed, aborted, none; `generatingBubbleIds` while a turn runs), and a
   hook-ended turn keeps the hook's verdict until a new turn starts: a
-  `beforeSubmitPrompt` hook, a prompt from the phone, or a chat switch.
+  `beforeSubmitPrompt` hook, a prompt from the phone, or a chat switch. While a
+  turn runs, that record still names the previous generation, so its stale
+  "aborted" does not stop the running turn. The prompt echoed from the phone
+  stays in the transcript until the store shows the turn itself, even when a
+  stop hook ends the turn first.
 - **A prompt that never reached the window** (another chat in front, no composer,
   or a write the composer did not take) is recorded as "Prompt not delivered:
   <reason>" in the transcript and the card enters the error state, so the phone
