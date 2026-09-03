@@ -268,6 +268,8 @@ working → done from hooks, see the reply and tool rows, interrupt a long reply
 
 ## Status (2026-09-03)
 
+- 2026-09-03 evening: `pnpm lab:e2e:cursor` and `:safari` pass against the local test chat "GT cursor submit response" (the user's permission to operate Cursor); record `docs/release-evidence/agent-apps/cursor-phone-driven-pass.md` at a28f4852. The runs forced seven fixes in the card's state model (undelivered-prompt reporting, status from Cursor's generation record on both store formats, running-turn and hook-verdict rules, no chat switch on a partial read, echo kept until the store shows the same words). Both cards now have phone-driven records; PR #22 leaves draft.
+
 - 2026-09-03 afternoon: `pnpm lab:e2e:cursor-agent` and `:safari` pass on the real CLI (nano model); public record `docs/release-evidence/agent-apps/cursor-agent-phone-driven-pass.md` at d5790f4a. The first live run exposed and fixed the per-part reminder filter and the per-folder chat selection. The desktop lane still waits for a local (not Cloud) chat named "Glasstunnel live evidence".
 
 Draft PR: https://github.com/datawithfurkan/glasstunnel/pull/22.
