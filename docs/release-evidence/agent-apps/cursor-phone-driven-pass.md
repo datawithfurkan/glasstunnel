@@ -1,10 +1,10 @@
 # Agent App Release Evidence
 
-- Date: 2026-09-03T15:08:38Z
+- Date: 2026-09-03T15:30:08Z
 - App: Cursor
 - Result: pass
 - Environment: Local Test Lab host on the development Mac, phone-sized mobile Chromium (Pixel 7 emulation) and mobile WebKit (iPhone 15 emulation), real Cursor 3.18.25 signed in, the "Cursor Agents" window at its normal size, an existing local test chat on the model the app's picker shows (Composer 2.5 Fast)
-- Glasstunnel commit: a28f4852
+- Glasstunnel commit: 7ffe2d45
 - Artifact: artifacts/cursor-phone-driven.txt
 - Privacy review: pass
 
@@ -27,6 +27,8 @@ showed the app's current model. The same lane passed on mobile WebKit
 (`pnpm lab:e2e:cursor:safari`), so the card behaves the same in an iPhone-class
 browser. Prompts run in the foreground window; the lane does not cover a
 backgrounded window.
+Re-recorded at the merged commit 7ffe2d45: both browsers passed the lane again on
+main.
 
 ## Limitations
 

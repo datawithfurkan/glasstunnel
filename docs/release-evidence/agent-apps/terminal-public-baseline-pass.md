@@ -1,10 +1,10 @@
 # Agent App Release Evidence
 
-- Date: 2026-09-03T12:53:20Z
+- Date: 2026-09-03T15:30:08Z
 - App: Terminal
 - Result: pass
 - Environment: local PTY and shared-screen-session regression coverage
-- Glasstunnel commit: 1ff17e4f
+- Glasstunnel commit: 7ffe2d45
 - Artifact: artifacts/terminal-public-baseline.txt
 - Privacy review: pass
 
@@ -19,6 +19,8 @@ and cleanup behavior passed without leaving host-owned attachment clients stale.
 Re-recorded at 1ff17e4f after the screen-sharing stability fixes changed the
 host transport and the phone app (pull request #23); the Terminal path itself
 is unchanged.
+Re-recorded at 7ffe2d45 after the Cursor cards (pull request #22) changed the lab
+lanes and the phone app; `pnpm qa:terminal` passed again at that commit.
 
 ## Limitations
 
