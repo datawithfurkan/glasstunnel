@@ -3,7 +3,7 @@
 Notable user-facing changes are recorded here. Glasstunnel follows semantic
 versioning after the first public beta; pre-release compatibility may still change.
 
-## 0.1.9 - Unreleased
+## 0.1.9 - Cursor cards, Codex parity, and steady screen sharing
 
 ### Fixed
 

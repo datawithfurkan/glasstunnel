@@ -1,10 +1,10 @@
 # Agent App Release Evidence
 
-- Date: 2026-09-03T12:27:41Z
+- Date: 2026-09-03T18:52:17Z
 - App: Codex desktop
 - Result: pass
 - Environment: Local Test Lab host on the development Mac (Accessibility-trusted), phone-sized mobile Chromium (Pixel 7 emulation) and mobile WebKit (iPhone 15 emulation), real Codex desktop inside ChatGPT.app 26.831.21537 (bundle `com.openai.codex`) with a dedicated thread named "Glasstunnel live" in a project folder; the Codex home held about 9,000 rollouts
-- Glasstunnel commit: 86fad19c
+- Glasstunnel commit: f660996b
 - Artifact: artifacts/codex-desktop-phone-driven.txt
 - Privacy review: pass
 

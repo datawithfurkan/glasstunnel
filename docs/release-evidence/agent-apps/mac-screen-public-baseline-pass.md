@@ -1,10 +1,10 @@
 # Agent App Release Evidence
 
-- Date: 2026-09-03T15:30:08Z
+- Date: 2026-09-03T18:49:07Z
 - App: Mac Screen
 - Result: pass
 - Environment: local lab host with authenticated mobile Chromium and WebKit screen E2E plus automated state regression coverage
-- Glasstunnel commit: 7ffe2d45
+- Glasstunnel commit: f660996b
 - Artifact: artifacts/mac-screen-public-baseline.txt
 - Privacy review: pass
 
@@ -26,6 +26,8 @@ coverage now also includes the liveness tracker, sender reuse on the peer,
 capture restart after a stream error, and the relay hub's host-liveness alarm.
 Re-recorded at 7ffe2d45 after the Cursor cards (pull request #22) changed the lab
 lanes and the phone app; both Mac Screen lanes and `pnpm qa:screen-state` passed again.
+Re-recorded at f660996b after the Codex desktop parity merge (pull request #21)
+changed the host, the accessibility injector, and the lab lanes.
 
 ## Limitations
 

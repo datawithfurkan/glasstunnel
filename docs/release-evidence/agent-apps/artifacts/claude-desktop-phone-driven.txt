@@ -1,7 +1,7 @@
 Privacy-reviewed summary artifact.
 Date: 2026-09-03.
-Commit: 2e4b25ff.
-Scope: Claude desktop card driven from a phone-sized mobile Chromium and from mobile WebKit through the Local Test Lab against the real Claude desktop app 1.40609.1, using a dedicated app session titled "Glasstunnel live evidence".
+Commit: f660996b.
+Scope: Claude desktop card driven from a phone-sized mobile Chromium and from mobile WebKit through the Local Test Lab against the real Claude desktop app 1.44121.4, using a dedicated app session titled "Glasstunnel live evidence".
 Result: pass.
 Evidence commands: pnpm lab:e2e:claude-desktop (Playwright project local-claude-desktop-mobile-chromium); pnpm lab:e2e:claude-desktop:safari (local-claude-desktop-mobile-webkit).
 Card state trail recorded by the lab host: Opening on Mac → loading Claude context → switched the app to the dedicated session (sidebar press verified through the rename control) → prompt typed into the app's composer via Accessibility → Claude is working → Response ready (Stop hook) → session switched to the Manual permission mode by the lane → file-write prompt → Claude needs your permission to use Write (Notification hook, published as a decision) → Allowed from the phone (the Mac pressed the app's Allow control) → Response ready → mode restored to Auto → AskUserQuestion prompt → Waiting for your answer (question published from the transcript) → answer sent (option pressed inside the session pane) → Response ready with the picked label → 40-line shell command → Response ready (12-line preview row; full output fetched from the Mac on request) → long reply → Claude is working → Stop pressed from the phone (the Mac pressed the app's Stop control) → Stopping → Stopped (and still Stopped after the interrupted turn's tool result was filed). The Claude Code CLI card started alongside never showed Response ready or a decision.

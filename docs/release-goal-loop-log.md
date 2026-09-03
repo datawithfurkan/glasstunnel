@@ -115,3 +115,19 @@ changes or a blocker is materially narrowed.
 - Next action: Deploy the web surfaces and the Worker from `main`, create `v0.1.8`, upload the immutable and stable DMG assets, then verify the public download URL and a Homebrew upgrade.
 - End commit: The final release documentation and cask commit is the result of record.
 - CI/deploy: CI is green on `2e4b25ff`; Deploy run 33732026929 from `2e4b25ff` succeeded for the web surfaces and the Signaling Worker (protocol 0.2.2 relay forwarding); the release documentation and cask commit is checked by one CI run before `v0.1.8` is tagged.
+
+## 2026-09-03 19:27 - Cursor cards, Codex parity, and steady screen sharing release
+
+- Start commit: f660996b
+- Release gate: Ship the Mac Screen liveness fixes (protocol 0.2.3), the Cursor desktop and Cursor Agent cards, and the Codex desktop parity work in one signed, notarized 0.1.9 build, with the web app, the marketing site, and the Signaling Worker deployed from the same `main`.
+- Why chosen: Three sessions landed on `main` the same day (PRs #22, #23/#24, #25, #21); the installed app, the phone, and the Worker must move together because the screen keepalive needs both sides on 0.2.3 and the Codex rows need the new host.
+- Files changed: Mac host (screen capture keepalive, sender reuse, capture restart, Codex parser and adapter, Cursor adapters, accessibility injector), phone (liveness watchdog, single mounted layout, Cursor cards, store), Worker (host-silence alarm), marketing site (support rows), lab lanes (Codex desktop, Cursor), release docs, cask metadata.
+- Validation: CI (five checks) on every merged PR and on `main` at `f660996b`; `pnpm release:readiness`; agent-app evidence re-recorded at `f660996b` for Terminal, Mac Screen, Codex desktop, Claude Code, Claude desktop, Cursor Agent, and Cursor desktop (each phone-driven lane on mobile Chromium and mobile WebKit); Developer ID signing, Apple notarization, stapling, Gatekeeper assessment, isolated install/reinstall and 0.1.8 → 0.1.9 upgrade smoke; cask metadata validation and a disposable-cask install.
+- Manual testing: The notarized `0.1.9` DMG was installed over the running `0.1.8` app on the development Mac by dragging it into Applications: the app relaunched signed in and linked with no sign-in, device-link, or permission prompt, and its settings showed version 0.1.9 (recorded as the permission-onboarding and auth-relaunch Mac-app records at `f660996b`).
+- Evidence recorded: The DMG is tied to source commit `f660996b`; SHA-256 is `a8210efa726c2d31cc3abf3928cb214a96c2857c2f17a329cb7ac4e5bbc29ca2`; Apple submission ID is `aa181dca-f61e-49fe-9ded-31b633c2d626`.
+- Outcome: passed
+- Uncertainty: The strict screen watchdog only engages once the Mac runs 0.1.9 (older hosts go silent on a static screen); a live phone check of the screen fixes against the signed app (VPN drop, display change, app switch) is still to be done. In-app Codex and Cursor approval dialogs are not yet published to the phone. The Cursor desktop lane's WebKit pass needed a different app model after two runs lost the interrupted prompt's echo, and the Claude desktop lane's session-switch step can race on WebKit (follow-up filed).
+- Stale-loop risk: Low; one notarization submission, one tag, one release, and one consolidated docs/cask push are used.
+- Next action: Create `v0.1.9` on the release documentation commit, upload the immutable and stable DMG assets, then verify the public download URL and a Homebrew upgrade.
+- End commit: The final release documentation and cask commit is the result of record.
+- CI/deploy: CI is green on `f660996b`; Deploy run 33796452115 from `f660996b` succeeded for the web app, the marketing site (support table now lists the Claude cards as Preview), and the Signaling Worker; the release documentation and cask commit is checked by one CI run before `v0.1.9` is tagged.
