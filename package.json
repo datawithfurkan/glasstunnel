@@ -145,6 +145,8 @@
     "qa:cursor:open-surfaces": "bash scripts/cursor-open-surfaces-audit.sh",
     "qa:cursor:target-opening-truth": "GT_CURSOR_OPEN_SURFACES_REQUIRE_TARGET_TRUTH=1 bash scripts/cursor-open-surfaces-audit.sh",
     "qa:cursor:workspace-prompt-policy": "bash scripts/check-cursor-workspace-prompt-policy.sh",
+    "qa:cursor-agent": "bash scripts/cursor-agent-smoke.sh",
+    "qa:cursor-agent:require-login": "GT_CURSOR_AGENT_SMOKE_REQUIRE_LOGIN=1 bash scripts/cursor-agent-smoke.sh",
     "qa:cursor:agent-cli": "bash scripts/cursor-agent-cli-audit.sh",
     "qa:cursor:agent-account": "bash scripts/cursor-agent-account-audit.sh",
     "qa:cursor:agent-prompt": "bash scripts/cursor-agent-prompt-smoke.sh",

@@ -110,7 +110,7 @@ against Cursor 3.18.25 and Cursor Agent CLI 2026.06.24.
 
 ## Stage 0 — Shared foundations (host)
 
-- [ ] **T0.1 Hook installer** (S) — `CursorHookInstaller` merges Glasstunnel entries
+- [x] **T0.1 Hook installer** (S) — `CursorHookInstaller` merges Glasstunnel entries
   for `beforeSubmitPrompt`, `preToolUse`, `postToolUse`, `postToolUseFailure`, and
   `stop` into `~/.cursor/hooks.json` (creating `{"version":1,"hooks":{}}` when absent),
   preserving user entries verbatim and replacing only entries whose command names the
@@ -120,11 +120,11 @@ against Cursor 3.18.25 and Cursor Agent CLI 2026.06.24.
   to `~/Library/Application Support/Glasstunnel/cursor.sock`; prompt text and tool
   output never travel through the hook. An unparsable user file is left alone and
   reported, never overwritten.
-- [ ] **T0.2 Hook listener and router** (S) — a generic `HookSocketListener` (bind,
+- [x] **T0.2 Hook listener and router** (S) — a generic `HookSocketListener` (bind,
   accept, read to EOF, one JSON line per event) and `CursorHookRouter.shared`, which
   owns the single socket process-wide and routes by `conversation_id` ownership,
   mirroring `ClaudeHookRouter` so both Cursor cards can subscribe at once.
-- [ ] **T0.3 Conversation store** (L) — `CursorConversationStore` turns either store
+- [x] **T0.3 Conversation store** (L) — `CursorConversationStore` turns either store
   into `[AgentChatMessage]` with the 0.2.2 structured fields: the protobuf root /
   `conversationState` walk (field 1 = message ids), JSON message decoding, injected
   context skipped, `tool-call` → `.toolCall` rows titled from the arguments (`command`,
@@ -135,10 +135,10 @@ against Cursor 3.18.25 and Cursor Agent CLI 2026.06.24.
   Old-style bubbles keep working through the existing reader; the agent transcript
   JSONL is the third fallback. Everything is read-only and privacy-safe (no content
   in logs).
-- [ ] **T0.4 Tests** (M) — fixtures for both stores built in temp SQLite files (the
+- [x] **T0.4 Tests** (M) — fixtures for both stores built in temp SQLite files (the
   `CursorSQLiteReaderTests` pattern), the protobuf walk, injected-context detection,
   tool titles, previews, status, and the hook installer's merge/idempotency.
-- [ ] **T0.5 Diagnostics** (S) — `pnpm qa:cursor:live-state` reports the new store
+- [~] **T0.5 Diagnostics** (S, live-state done; `qa:cursor-agent` and `qa:cursor:hooks` below) — `pnpm qa:cursor:live-state` reports the new store
   path (counts only) so "Selected target messages readable" can turn to yes; a
   `pnpm qa:cursor:hooks` check reads `~/.cursor/hooks.json` back.
 
@@ -148,14 +148,14 @@ live snapshot on this Mac lists 4 real chats with messages and per-call tool row
 
 ## Stage 1 — Cursor Agent card (CLI)
 
-- [ ] **T1.1 Chats and workspaces** (M) — list CLI chats from `~/.cursor/chats`
+- [x] **T1.1 Chats and workspaces** (M) — list CLI chats from `~/.cursor/chats`
   (title from the store's `name`, mode, last update from `meta.json`), grouped by
   workspace path resolved through `.workspace-trusted`; targets carry
   `projectPath`, `threadLabel`, `supportsNewThread: true`. The selected chat is
   remembered; "New chat" runs `create-chat --workspace … --trust`. The default
   workspace is the most recently trusted one, else the existing
   `~/Library/Application Support/Glasstunnel/CursorAgent` folder.
-- [ ] **T1.2 Streaming turn** (L) — `sendInput` spawns
+- [x] **T1.2 Streaming turn** (L) — `sendInput` spawns
   `cursor-agent -p --output-format stream-json --stream-partial-output --trust
   --workspace <ws> --resume <chatId> [--mode ask|plan] [--model <id>] <prompt>` and
   parses events live: the prompt is echoed as the user bubble, assistant deltas grow
@@ -164,16 +164,16 @@ live snapshot on this Mac lists 4 real chats with messages and per-call tool row
   "Authentication required" reports "Sign in with `cursor-agent login` on the Mac".
   After the turn the chat's `store.db` is re-read so history is durable across host
   restarts and equals what the CLI shows.
-- [ ] **T1.3 Interrupt** (S) — terminates the process group; the turn ends as
+- [x] **T1.3 Interrupt** (S) — terminates the process group; the turn ends as
   "Stopped" (system event) and the composer recovers.
-- [ ] **T1.4 Runtime controls** (M) — model options from `--list-models` (cached per
+- [~] **T1.4 Runtime controls** (M, model and mode done; the `--list-models` cache waits for a valid login) — model options from `--list-models` (cached per
   start, nano first) with the cli-config default preselected, editable and applied on
   the next prompt; mode (ask / plan) as the second control; agent mode listed but
   refused with the D3 note until Stage 3 lands.
-- [ ] **T1.5 Hooks as confirmation** (S) — subscribe for the live chat id so a `stop`
+- [x] **T1.5 Hooks as confirmation** (S) — subscribe for the live chat id so a `stop`
   event confirms the turn end even if the stream is cut, and so the CLI adapter never
   reacts to desktop chats.
-- [ ] **T1.6 Tests** (M) — a fake `cursor-agent` script that prints documented
+- [x] **T1.6 Tests** (M) — a fake `cursor-agent` script that prints documented
   stream-json events (started/completed tool calls, partial deltas, result, an auth
   failure), chat listing from fixture directories, interrupt, and runtime validation.
 
@@ -183,23 +183,23 @@ card's history reloads after a host restart.
 
 ## Stage 2 — Cursor desktop card
 
-- [ ] **T2.1 Chat list and selection** (M) — targets from `composerHeaders` (name,
+- [x] **T2.1 Chat list and selection** (M) — targets from `composerHeaders` (name,
   workspace path via `workspaceStorage/<id>/workspace.json`, drafts and archived
   chats hidden, mode shown), messages from T0.3, the selected chat remembered;
   optimistic echo on send.
-- [ ] **T2.2 Accessibility driver** (L) — `CursorDesktopUIDriving` (fake in tests):
+- [x] **T2.2 Accessibility driver** (L) — `CursorDesktopUIDriving` (fake in tests):
   enables `AXManualAccessibility` and waits for the web area; finds the composer by
   the placeholder vocabulary or by the "Add agents, context, tools" toolbar next to
   it; reads the front chat's title (control learned from a live inventory with a chat
   open); presses a chat's sidebar entry to switch and re-checks; presses the Stop
   control to interrupt (Escape fallback). All AX writes verify by reading back.
-- [ ] **T2.3 Live status** (M) — hooks for the selected composer: `beforeSubmitPrompt`
+- [x] **T2.3 Live status** (M) — hooks for the selected composer: `beforeSubmitPrompt`
   → working, `preToolUse` → a running row, `postToolUse` → its result, `stop` →
   done / Stopped / error; the store poll (2 s, mtime-gated) fills in text and pairs
   rows; `hasBlockingPendingActions` → waiting for the user in Cursor.
-- [ ] **T2.4 Questions** (M, stretch) — `AskQuestion` tool calls become a decision on
+- [~] **T2.4 Questions** (M, stretch: options are pressed in the app; not yet seen live) — `AskQuestion` tool calls become a decision on
   the phone; the answer presses the option inside the chat pane.
-- [ ] **T2.5 Tests and doc** (M) — adapter tests with a fake driver and hook source,
+- [x] **T2.5 Tests and doc** (M) — adapter tests with a fake driver and hook source,
   a real-state opt-in test (`GT_CURSOR_REAL_STATE=1`), `docs/adapters/cursor.md`
   rewritten to the truth above.
 
@@ -209,22 +209,22 @@ working → done from hooks, see the reply and tool rows, interrupt a long reply
 
 ## Stage 3 — Mobile PWA
 
-- [ ] **T3.1 Chat-style Cursor Agent** (S) — `isCliBackedApp` drops `cursor-agent`, so
+- [x] **T3.1 Chat-style Cursor Agent** (S) — `isCliBackedApp` drops `cursor-agent`, so
   the card renders `TranscriptView` and the decision card; the chat switcher shows for
   `cursor-agent` (`shouldShowCommandTargetSwitcher`); attachments stay off.
 - [ ] **T3.2 Runtime controls** (S) — the mode control rides on the existing effort
   control slot with Cursor labels; model chips list the cheap models first.
-- [ ] **T3.3 Cursor desktop targets** (S) — "Browse only" becomes "Switch" with the
+- [x] **T3.3 Cursor desktop targets** (S) — "Browse only" becomes "Switch" with the
   Claude-style retry (`shouldRequestTargetSelection` for `cursor` when
   `isActive === false`); the composer gate only blocks while a switch is unverified.
-- [ ] **T3.4 Fixtures and tests** (S) — `workspace-all-apps` fixture rows for both
+- [~] **T3.4 Fixtures and tests** (S, tests updated; the dev fixture rows are still the old shape) — `workspace-all-apps` fixture rows for both
   cards with structured rows; AgentCard, AgentCarousel, store, and fixture tests.
 - [ ] **T3.5 Permission routing** (L, stretch) — `preToolUse` hook answered from the
   phone (Allow / Deny) for both cards, which is what unlocks agent mode on the CLI card.
 
 ## Stage 4 — Lanes, evidence, promotion
 
-- [ ] **T4.1 Lanes** (M) — `tests/e2e/account-cursor-agent.spec.ts`
+- [x] **T4.1 Lanes** (M) — `tests/e2e/account-cursor-agent.spec.ts`
   (`@cursor-agent-account`: start, a nano prompt answered with a marker, a plan-mode
   read producing a tool row, interrupt, history after reselecting the chat) and
   `tests/e2e/account-cursor.spec.ts` (`@cursor-desktop-account`: switch to the
@@ -265,6 +265,14 @@ working → done from hooks, see the reply and tool rows, interrupt a long reply
   edits placed next to the Codex entries; new Cursor tests live in new files.
 - **Account budget.** Lanes run the nano model with one-line prompts; nothing runs on
   a schedule.
+
+## Status (2026-09-03)
+
+Stages 0–2 and the phone changes are implemented and unit-tested (`swift test`
+412 green, `pnpm --filter=@glasstunnel/mobile-pwa test` 202 green); the two lanes are
+written and wired but have not run live: the CLI lane waits for `cursor-agent login`,
+the desktop lane for a dedicated chat in a normal-sized Cursor window. Evidence records
+and the matrix rows change only after those runs.
 
 ## Sequencing
 
