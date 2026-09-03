@@ -1,6 +1,6 @@
 # Public release readiness
 
-Last updated: 2026-09-02.
+Last updated: 2026-09-03.
 
 This checklist is the current release baseline. Historical investigations and raw
 test artifacts are intentionally not stored in the public repository.
@@ -66,3 +66,12 @@ install/reinstall and 0.1.6 → 0.1.7 upgrade, stable latest-download asset prep
 cask metadata validation passed. It adds the Claude desktop and Claude Code cards in Preview
 with recorded real-app evidence, and fixes the relay authentication race and the Mac Screen
 reconnect bug.
+
+The `0.1.8` public beta release is the current public beta. Its signed and notarized DMG is tied
+to source commit `2e4b25ff` and SHA-256
+`524ed129b10f4440ac2f37d60060f2baab0094e0da7fc3b68e9db41e7535ad97`.
+Developer ID signing/notarization, stapling, Gatekeeper verification, isolated
+install/reinstall and 0.1.7 → 0.1.8 upgrade, stable latest-download asset preparation, and
+cask metadata validation passed. It makes agent transcripts readable on the phone
+(structured tool rows with previews and on-demand full output, protocol 0.2.2) and fixes
+the stuck "working" state after an interrupt.

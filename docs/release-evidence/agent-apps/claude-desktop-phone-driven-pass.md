@@ -1,10 +1,10 @@
 # Agent App Release Evidence
 
-- Date: 2026-09-03T07:17:07Z
+- Date: 2026-09-03T08:10:40Z
 - App: Claude desktop
 - Result: pass
 - Environment: Local Test Lab host on the development Mac (Accessibility-trusted), phone-sized mobile Chromium (Pixel 7 emulation) and mobile WebKit (iPhone 15 emulation), real Claude desktop app 1.40609.1 with a dedicated session titled "Glasstunnel live evidence"
-- Glasstunnel commit: 18e53e67
+- Glasstunnel commit: 2e4b25ff
 - Artifact: artifacts/claude-desktop-phone-driven.txt
 - Privacy review: pass
 
@@ -31,7 +31,7 @@ output reached the phone as a 12-line preview row titled with its command;
 "Show all 40 lines" fetched the full text from the Mac on request. The lane
 passed on mobile Chromium and on mobile WebKit, rendering the transcript with the
 reading layout (Markdown replies, structured tool rows with titles, sizes, and
-durations).
+durations, copy buttons, and coloured diffs).
 
 ## Limitations
 

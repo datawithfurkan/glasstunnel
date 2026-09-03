@@ -3,7 +3,7 @@
 Notable user-facing changes are recorded here. Glasstunnel follows semantic
 versioning after the first public beta; pre-release compatibility may still change.
 
-## Unreleased
+## 0.1.8 - Readable transcripts
 
 ### Added
 

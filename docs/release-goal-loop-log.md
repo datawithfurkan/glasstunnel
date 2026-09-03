@@ -99,3 +99,19 @@ changes or a blocker is materially narrowed.
 - Next action: Deploy the web surfaces from `main`, create `v0.1.7`, upload the immutable and stable DMG assets, then verify the public download URL and a Homebrew upgrade.
 - End commit: The final release documentation and cask commit is the result of record.
 - CI/deploy: CI is green on `dbf8a90d`; Deploy run 33670831232 from `dbf8a90d` succeeded for the web surfaces and the Signaling Worker; the release documentation and cask commit is checked by one CI run before `v0.1.7` is tagged.
+
+## 2026-09-03 10:20 - Readable transcripts release
+
+- Start commit: 2e4b25ff
+- Release gate: Ship the readable transcript rendering (Markdown replies, structured tool rows with previews and on-demand full output, transcript polish) and the interrupt fix so the installed app, the phone, and the Worker are on the same protocol (0.2.2).
+- Why chosen: The maintainer flagged that chat cards printed raw tool output as walls of monospace text; the fix spans the phone, the Mac parsers, the protocol, and the Worker, so all three surfaces must ship together.
+- Files changed: Phone transcript renderer and store, protocol schema and types, Claude and Codex parsers, adapter/controller/session/relay detail path, Worker relay forwarding, lab lanes, release docs, cask metadata.
+- Validation: CI (five checks) on every merged PR; `pnpm release:readiness`; agent-app evidence at `2e4b25ff` for Claude desktop, Claude Code, Terminal, and Mac Screen; Developer ID signing, Apple notarization, stapling, Gatekeeper assessment, isolated install/reinstall and 0.1.7 → 0.1.8 upgrade smoke; cask metadata validation.
+- Manual testing: The notarized `0.1.8` DMG was installed over the running `0.1.7` app on the development Mac by dragging it into Applications: the app showed version 0.1.8 and relaunched signed in with its permissions intact; the production web app, already deployed from the same commit, showed the Claude card with the new transcript rows.
+- Evidence recorded: The DMG is tied to source commit `2e4b25ff`; SHA-256 is `524ed129b10f4440ac2f37d60060f2baab0094e0da7fc3b68e9db41e7535ad97`; Apple submission ID is `b415d3bc-26e7-4d94-85a3-8dc05dc643b3`.
+- Outcome: passed
+- Uncertainty: The structured rows depend on both sides being 0.1.8; a 0.1.7 phone against a 0.1.8 Mac shows previews without titles, and a 0.1.8 phone against a 0.1.7 Mac falls back to the first-line heuristic.
+- Stale-loop risk: Low; one notarization submission, one tag, one release, and one consolidated docs/cask push are used.
+- Next action: Deploy the web surfaces and the Worker from `main`, create `v0.1.8`, upload the immutable and stable DMG assets, then verify the public download URL and a Homebrew upgrade.
+- End commit: The final release documentation and cask commit is the result of record.
+- CI/deploy: CI is green on `2e4b25ff`; Deploy run 33732026929 from `2e4b25ff` succeeded for the web surfaces and the Signaling Worker (protocol 0.2.2 relay forwarding); the release documentation and cask commit is checked by one CI run before `v0.1.8` is tagged.
