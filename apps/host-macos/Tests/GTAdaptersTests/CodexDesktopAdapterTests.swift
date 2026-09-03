@@ -652,4 +652,30 @@ final class CodexDesktopRealStateTests: XCTestCase {
         let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         return Set((json["projectless-thread-ids"] as? [String] ?? []).map { $0.lowercased() })
     }
+
+    func testCatalogScanOpensOnlyTheNewestRollouts() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let day = root.appendingPathComponent("2026/09/03", isDirectory: true)
+        try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
+        for index in 0..<8 {
+            let file = day.appendingPathComponent("rollout-2026-09-03T10-00-0\(index)-0000000\(index)-0000-4000-8000-000000000000.jsonl")
+            try "{\"type\":\"session_meta\",\"payload\":{\"cwd\":\"/repo\"}}\n".write(to: file, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes(
+                [.modificationDate: Date(timeIntervalSince1970: 1_000 + Double(index) * 60)],
+                ofItemAtPath: file.path
+            )
+        }
+        try "not a rollout".write(to: day.appendingPathComponent("notes.txt"), atomically: true, encoding: .utf8)
+
+        let newest = CodexDesktopAdapter.recentSessionFiles(in: root, limit: 3)
+        XCTAssertEqual(newest.map { $0.url.lastPathComponent.prefix(29) }, [
+            "rollout-2026-09-03T10-00-07-0",
+            "rollout-2026-09-03T10-00-06-0",
+            "rollout-2026-09-03T10-00-05-0",
+        ])
+        XCTAssertEqual(CodexDesktopAdapter.recentSessionFiles(in: root, limit: 100).count, 8)
+        XCTAssertTrue(CodexDesktopAdapter.recentSessionFiles(in: root.appendingPathComponent("missing"), limit: 3).isEmpty)
+        XCTAssertGreaterThanOrEqual(CodexDesktopAdapter.maxScannedSessions, 100, "recent threads across a few projects must fit")
+    }
 }

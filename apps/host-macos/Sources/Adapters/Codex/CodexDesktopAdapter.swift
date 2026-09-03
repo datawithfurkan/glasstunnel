@@ -15,7 +15,10 @@ import GTProtocol
 /// - switch the real Codex UI via Accessibility when the phone picks a target
 public final class CodexDesktopAdapter: AgentAdapter, @unchecked Sendable {
     public static let bundleID = "com.openai.codex"
+    /// Placeholders the composer has carried across Codex releases; the
+    /// ChatGPT-hosted shell (2026) says "Do anything".
     private static let composerHints = [
+        "Do anything",
         "Ask for follow-up changes",
         "Ask Codex",
         "Send a prompt",
@@ -40,6 +43,8 @@ public final class CodexDesktopAdapter: AgentAdapter, @unchecked Sendable {
     private var currentMessages: [AgentChatMessage] = []
     /// Full tool output for messages whose snapshot text is a preview.
     private var currentMessageDetails: [MessageID: String] = [:]
+    /// Model and effort the selected thread actually runs, from its rollout.
+    private var currentRuntimeSelection: CodexRuntimeSelection?
     private var currentPendingInputRequest: AgentInputRequest?
     private var currentThreadName: String?
     private var currentActiveDesktopThreadName: String?
@@ -82,8 +87,15 @@ public final class CodexDesktopAdapter: AgentAdapter, @unchecked Sendable {
     }
 
     public func runtimeControls() -> AgentRuntimeControls? {
-        CodexRuntimeCatalog.controls(
-            selection: CodexRuntimeCatalog.defaultSelection(),
+        // The thread's own records beat the global config: each Codex thread
+        // can run a different model and effort than `config.toml` defaults to.
+        let threadSelection: CodexRuntimeSelection? = {
+            lock.lock()
+            defer { lock.unlock() }
+            return currentRuntimeSelection
+        }()
+        return CodexRuntimeCatalog.controls(
+            selection: threadSelection ?? CodexRuntimeCatalog.defaultSelection(),
             editable: false,
             appliesOn: .managedLocally,
             note: "Managed in Codex"
@@ -143,7 +155,9 @@ public final class CodexDesktopAdapter: AgentAdapter, @unchecked Sendable {
 
     private func deliverInputToCodex(_ text: String, submit: Bool) throws {
         var accessibilityError: Error?
-        for hint in Self.composerHints {
+        // The hints name the composer's placeholder; the window has a single
+        // editable field, so a final try without a hint covers a renamed one.
+        for hint in Self.composerHints.map(Optional.some) + [nil] {
             do {
                 try accessibility.deliver(
                     bundleID: Self.bundleID,
@@ -271,11 +285,24 @@ public final class CodexDesktopAdapter: AgentAdapter, @unchecked Sendable {
         return AgentMessageDetail(messageId: messageId, text: text, truncated: text.utf8.count >= TranscriptPreview.detailByteCount)
     }
 
+    /// Labels of the app's own stop control, tried before falling back to
+    /// the Escape key that the Codex TUI understands.
+    static let interruptLabels = ["Stop", "Stop streaming", "Stop generating", "Stop response", "Interrupt"]
+
     public func interrupt() async throws {
-        keyboard.focusApplication(pid: (try? currentCodexPID()) ?? targetPID)
-        keyboard.pressEscape()
+        var pressed: String?
+        for label in Self.interruptLabels {
+            if (try? accessibility.press(bundleID: Self.bundleID, matching: label, exact: true)) != nil {
+                pressed = label
+                break
+            }
+        }
+        if pressed == nil {
+            keyboard.focusApplication(pid: (try? currentCodexPID()) ?? targetPID)
+            keyboard.pressEscape()
+        }
         setStatus(.working)
-        emitCurrentSnapshot(detail: "Stopping")
+        emitCurrentSnapshot(detail: pressed.map { "Stopping (pressed \($0))" } ?? "Stopping (Escape)")
     }
 
     private func focusCodexComposer() throws {
@@ -454,6 +481,7 @@ public final class CodexDesktopAdapter: AgentAdapter, @unchecked Sendable {
         lock.lock()
         currentMessages = parsed.messages
         currentMessageDetails = parsed.messageDetails
+        currentRuntimeSelection = parsed.runtimeSelection
         currentPendingInputRequest = parsed.pendingInputRequest
         currentThreadName = resolvedThreadName
         currentActiveDesktopThreadName = liveThreadName
@@ -541,32 +569,17 @@ public final class CodexDesktopAdapter: AgentAdapter, @unchecked Sendable {
         lock.unlock()
         guard shouldRefresh else { return cachedSummaryList }
 
-        let fm = FileManager.default
         lock.lock()
         let cachedSummaryMap = sessionSummaryCache
         lock.unlock()
         let indexedThreadNames = CodexSessionIndex.loadThreadNames(from: sessionIndexURL)
-        guard let enumerator = fm.enumerator(
-            at: sessionsRoot,
-            includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey],
-            options: [.skipsHiddenFiles]
-        ) else {
-            return cachedSummaryList
-        }
 
         var summaries: [CodexSessionSummary] = []
         var nextCache: [String: CodexSessionSummary] = [:]
 
-        for case let url as URL in enumerator {
-            guard url.pathExtension == "jsonl" else { continue }
-            guard
-                let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .contentModificationDateKey]),
-                values.isRegularFile == true,
-                let modifiedAt = values.contentModificationDate
-            else {
-                continue
-            }
-
+        // A Codex home can hold thousands of rollouts (gigabytes); only the
+        // newest ones can be current threads, so the rest are never opened.
+        for (url, modifiedAt) in Self.recentSessionFiles(in: sessionsRoot, limit: Self.maxScannedSessions) {
             let path = url.path
             if let cached = cachedSummaryMap[path], cached.modifiedAt == modifiedAt {
                 summaries.append(cached)
@@ -597,6 +610,35 @@ public final class CodexDesktopAdapter: AgentAdapter, @unchecked Sendable {
         sessionSummaryCache = nextCache
         lock.unlock()
         return summaries
+    }
+
+    /// How many of the newest rollout files the catalog scan opens.
+    static let maxScannedSessions = 200
+
+    /// The newest rollout files under `root`, newest first. Only file
+    /// attributes are read here; nothing is opened.
+    static func recentSessionFiles(in root: URL, limit: Int) -> [(url: URL, modifiedAt: Date)] {
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return []
+        }
+        var files: [(url: URL, modifiedAt: Date)] = []
+        for case let url as URL in enumerator {
+            guard url.pathExtension == "jsonl" else { continue }
+            guard
+                let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .contentModificationDateKey]),
+                values.isRegularFile == true,
+                let modifiedAt = values.contentModificationDate
+            else {
+                continue
+            }
+            files.append((url, modifiedAt))
+        }
+        files.sort { $0.modifiedAt > $1.modifiedAt }
+        return Array(files.prefix(max(0, limit)))
     }
 
     private func makeProtocolTargets(
@@ -1088,6 +1130,9 @@ enum CodexDesktopSessionParser {
         let pendingInputRequest: AgentInputRequest?
         let status: AgentStatus
         let statusDetail: String
+        /// Model, effort, and speed tier from the thread's newest `turn_context`
+        /// or `thread_settings_applied` record; nil when the thread has neither.
+        let runtimeSelection: CodexRuntimeSelection?
     }
 
     private struct ParsedMetadata {
@@ -1095,10 +1140,14 @@ enum CodexDesktopSessionParser {
         let threadName: String?
         let isSubagent: Bool
         let isDesktopUserThread: Bool
+        let runtimeSelection: CodexRuntimeSelection?
     }
 
     private static let metadataPreviewByteCount = 256 * 1024
     private static let recentMessagesTailByteCount = AgentHistoryLimits.jsonlTailByteCount
+    /// A summary needs the head (session_meta) and the newest thread name;
+    /// the session index covers names anyway, so the tail stays small.
+    private static let summaryTailByteCount = 256 * 1024
 
     static func parseRecentFile(at url: URL, agentID: AgentID, maxMessages: Int) -> ParsedSession? {
         guard let fileSize = fileSize(at: url) else { return nil }
@@ -1125,30 +1174,45 @@ enum CodexDesktopSessionParser {
             messageDetails: recent.messageDetails,
             pendingInputRequest: recent.pendingInputRequest,
             status: recent.status,
-            statusDetail: recent.statusDetail
+            statusDetail: recent.statusDetail,
+            runtimeSelection: metadata.runtimeSelection ?? recent.runtimeSelection
         )
     }
 
     static func parseSummaryPreview(at url: URL, path: String, modifiedAt: Date) -> CodexSessionSummary? {
         guard let fileSize = fileSize(at: url) else { return nil }
 
-        if fileSize <= UInt64(metadataPreviewByteCount + recentMessagesTailByteCount),
+        if fileSize <= UInt64(metadataPreviewByteCount + summaryTailByteCount),
            let jsonl = readChunk(at: url, offset: 0, length: Int(fileSize)) {
             return parseSummary(jsonl: jsonl, path: path, modifiedAt: modifiedAt)
         }
 
         let head = readChunk(at: url, offset: 0, length: metadataPreviewByteCount) ?? ""
-        let tailOffset = fileSize > UInt64(recentMessagesTailByteCount)
-            ? fileSize - UInt64(recentMessagesTailByteCount)
+        let tailOffset = fileSize > UInt64(summaryTailByteCount)
+            ? fileSize - UInt64(summaryTailByteCount)
             : 0
-        let tail = readChunk(at: url, offset: tailOffset, length: recentMessagesTailByteCount) ?? ""
+        let tail = readChunk(at: url, offset: tailOffset, length: summaryTailByteCount) ?? ""
         guard !head.isEmpty || !tail.isEmpty else { return nil }
         return parseSummary(jsonl: head + "\n" + tail, path: path, modifiedAt: modifiedAt)
     }
 
-    /// One-line label for a Codex tool call from its JSON arguments: the
-    /// shell command for `shell`/`exec_command`, nothing for other tools.
+    /// One-line label for a Codex tool call: the shell command for `shell`,
+    /// `exec_command`, and `exec` scripts, the files a patch touches, or the
+    /// most descriptive argument of other tools.
     static func codexToolTitle(name: String, arguments: String) -> String {
+        switch name {
+        case "exec":
+            if let command = execScriptCommand(arguments) {
+                return TranscriptPreview.singleLine(command)
+            }
+            return TranscriptPreview.singleLine(firstLine(of: arguments))
+        case "apply_patch":
+            return patchTitle(arguments)
+        case "update_plan":
+            return "Update plan"
+        default:
+            break
+        }
         guard let data = arguments.data(using: .utf8),
               let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return ""
@@ -1164,7 +1228,51 @@ enum CodexDesktopSessionParser {
         if let command = parsed["command"] as? String, !command.isEmpty {
             return TranscriptPreview.singleLine(command)
         }
+        for key in ["path", "file_path", "task_name", "target", "url", "prompt", "code", "chars"] {
+            if let value = parsed[key] as? String, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let label = key == "path" || key == "file_path" ? (value as NSString).lastPathComponent : firstLine(of: value)
+                return TranscriptPreview.singleLine(label)
+            }
+        }
         return ""
+    }
+
+    private static let execCommandPattern = try? NSRegularExpression(
+        pattern: #"\bcmd"?\s*:\s*"((?:[^"\\]|\\.)*)""#
+    )
+
+    /// The `cmd` inside an `exec` script such as
+    /// `const r = await tools.exec_command({cmd:"pnpm test","workdir":"/x"})`.
+    static func execScriptCommand(_ script: String) -> String? {
+        guard let pattern = execCommandPattern,
+              let match = pattern.firstMatch(in: script, range: NSRange(script.startIndex..., in: script)),
+              let range = Range(match.range(at: 1), in: script) else {
+            return nil
+        }
+        let escaped = String(script[range])
+        // The command is a JavaScript string literal: undo its escapes.
+        guard let data = "\"\(escaped)\"".data(using: .utf8),
+              let decoded = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) as? String else {
+            return escaped
+        }
+        return decoded
+    }
+
+    /// The file names a Codex patch touches, in order, each once.
+    static func patchTitle(_ patch: String) -> String {
+        let markers = ["*** Update File: ", "*** Add File: ", "*** Delete File: ", "*** Move to: "]
+        var names: [String] = []
+        for line in patch.split(whereSeparator: \.isNewline) {
+            for marker in markers where line.hasPrefix(marker) {
+                let name = (String(line.dropFirst(marker.count)).trimmingCharacters(in: .whitespaces) as NSString).lastPathComponent
+                if !name.isEmpty, !names.contains(name) { names.append(name) }
+            }
+        }
+        return TranscriptPreview.singleLine(names.joined(separator: ", "))
+    }
+
+    private static func firstLine(of text: String) -> String {
+        text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty } ?? ""
     }
 
     struct CodexToolOutput {
@@ -1173,15 +1281,31 @@ enum CodexDesktopSessionParser {
         let durationMs: Int64?
     }
 
-    /// Codex writes tool output as a string that is sometimes JSON with
-    /// `output` and `metadata` (exit code, duration), sometimes plain text.
+    /// Codex writes tool output as a string or a list of content parts. The
+    /// text is sometimes JSON with `output` and `metadata` (exit code,
+    /// duration), and usually plain text under a header such as
+    /// `Exit code: 0` / `Wall time: 1.2 seconds` / `Output:`.
     static func codexToolOutput(_ raw: Any?) -> CodexToolOutput {
-        guard let text = raw as? String else {
+        let text: String
+        if let string = raw as? String {
+            text = string
+        } else if let parts = raw as? [[String: Any]] {
+            text = parts.compactMap { part -> String? in
+                switch part["type"] as? String {
+                case "input_text", "output_text", "text":
+                    return part["text"] as? String
+                case "input_image", "image":
+                    return "[image]"
+                default:
+                    return nil
+                }
+            }.joined(separator: "\n")
+        } else {
             return CodexToolOutput(text: "", isError: false, durationMs: nil)
         }
         guard let data = text.data(using: .utf8),
               let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return CodexToolOutput(text: text, isError: false, durationMs: nil)
+            return parseOutputHeader(text)
         }
         let output = parsed["output"] as? String ?? text
         let metadata = parsed["metadata"] as? [String: Any] ?? [:]
@@ -1191,6 +1315,44 @@ enum CodexDesktopSessionParser {
             durationMs = Int64(seconds * 1000)
         }
         return CodexToolOutput(text: output, isError: (exitCode ?? 0) != 0, durationMs: durationMs)
+    }
+
+    private static let exitCodePattern = try? NSRegularExpression(pattern: #"^(?:Exit code|Process exited with code):? (-?\d+)$"#)
+    private static let wallTimePattern = try? NSRegularExpression(pattern: #"^Wall time:? ([0-9.]+) seconds?$"#)
+    private static let headerNoisePrefixes = ["Script ", "Chunk ID: ", "Original token count: ", "Process running with session ID "]
+
+    /// Splits the header Codex puts above `Output:` from the output itself.
+    /// Text without that header is returned unchanged.
+    static func parseOutputHeader(_ text: String) -> CodexToolOutput {
+        let lines = text.components(separatedBy: "\n")
+        var exitCode: Int?
+        var durationMs: Int64?
+        var scriptFailed = false
+        for (offset, line) in lines.prefix(8).enumerated() {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed == "Output:" {
+                guard offset > 0 else { return CodexToolOutput(text: text, isError: false, durationMs: nil) }
+                var body = lines[(offset + 1)...].joined(separator: "\n")
+                while body.hasPrefix("\n") { body.removeFirst() }
+                let failed = scriptFailed || (exitCode ?? 0) != 0
+                return CodexToolOutput(text: body, isError: failed, durationMs: durationMs)
+            }
+            let range = NSRange(trimmed.startIndex..., in: trimmed)
+            if let match = exitCodePattern?.firstMatch(in: trimmed, range: range),
+               let codeRange = Range(match.range(at: 1), in: trimmed) {
+                exitCode = Int(trimmed[codeRange])
+            } else if let match = wallTimePattern?.firstMatch(in: trimmed, range: range),
+                      let secondsRange = Range(match.range(at: 1), in: trimmed),
+                      let seconds = Double(trimmed[secondsRange]) {
+                durationMs = Int64((seconds * 1000).rounded())
+            } else if headerNoisePrefixes.contains(where: { trimmed.hasPrefix($0) }) {
+                if trimmed.hasPrefix("Script failed") { scriptFailed = true }
+            } else {
+                // Not a header line: this is ordinary text that mentions "Output:" later.
+                return CodexToolOutput(text: text, isError: false, durationMs: nil)
+            }
+        }
+        return CodexToolOutput(text: text, isError: false, durationMs: nil)
     }
 
     static func parse(jsonl: String, agentID: AgentID, maxMessages: Int) -> ParsedSession {
@@ -1225,6 +1387,13 @@ enum CodexDesktopSessionParser {
                 case "turn_aborted":
                     status = .idle
                     statusDetail = "Stopped"
+                    messages.append(AgentChatMessage(
+                        messageId: "\(agentID)-codex-\(index)",
+                        role: .system,
+                        text: "Stopped",
+                        atUnixMs: parseTimestamp(raw["timestamp"]),
+                        kind: .event
+                    ))
                 default:
                     break
                 }
@@ -1253,9 +1422,13 @@ enum CodexDesktopSessionParser {
                 continue
             }
 
-            // Codex's shell and tool calls become rows, like Claude's.
-            if payloadType == "function_call", let callID = payload["call_id"] as? String, !callID.isEmpty {
+            // Codex's shell and tool calls become rows, like Claude's. Current
+            // Codex writes shell commands and patches as `custom_tool_call`
+            // records whose `input` is a script or a patch, not JSON arguments.
+            let isToolCall = payloadType == "function_call" || payloadType == "custom_tool_call"
+            if isToolCall, let callID = payload["call_id"] as? String, !callID.isEmpty {
                 let name = payload["name"] as? String ?? "tool"
+                let arguments = payload["arguments"] as? String ?? payload["input"] as? String ?? ""
                 let at = parseTimestamp(raw["timestamp"])
                 toolCallStartedAt[callID] = at
                 toolCallNames[callID] = name
@@ -1268,11 +1441,12 @@ enum CodexDesktopSessionParser {
                     kind: .toolCall,
                     toolName: name,
                     toolCallId: callID,
-                    title: codexToolTitle(name: name, arguments: payload["arguments"] as? String ?? "")
+                    title: codexToolTitle(name: name, arguments: arguments)
                 ))
                 continue
             }
-            if payloadType == "function_call_output", let callID = payload["call_id"] as? String, !callID.isEmpty {
+            let isToolOutput = payloadType == "function_call_output" || payloadType == "custom_tool_call_output"
+            if isToolOutput, let callID = payload["call_id"] as? String, !callID.isEmpty {
                 let at = parseTimestamp(raw["timestamp"])
                 let output = codexToolOutput(payload["output"])
                 let preview = TranscriptPreview.make(output.text)
@@ -1305,7 +1479,11 @@ enum CodexDesktopSessionParser {
                 continue
             }
 
-            let text = extractText(from: payload["content"])
+            // The app's composer stores what the person typed as Markdown, so
+            // a plain "GT_APP" arrives as "GT\_APP"; show it the way the app does.
+            let text = role == .user
+                ? unescapeMarkdown(extractText(from: payload["content"]))
+                : extractText(from: payload["content"])
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.isEmpty { continue }
 
@@ -1335,7 +1513,8 @@ enum CodexDesktopSessionParser {
             messageDetails: messageDetails.filter { detail in messages.contains { $0.messageId == detail.key } },
             pendingInputRequest: pendingInputRequest,
             status: status,
-            statusDetail: statusDetail
+            statusDetail: statusDetail,
+            runtimeSelection: metadata.runtimeSelection
         )
     }
 
@@ -1357,6 +1536,7 @@ enum CodexDesktopSessionParser {
         var isSubagent = false
         var originator: String?
         var source: String?
+        var runtimeSelection: CodexRuntimeSelection?
 
         for line in jsonl.split(whereSeparator: \.isNewline) {
             guard
@@ -1381,12 +1561,44 @@ enum CodexDesktopSessionParser {
                 continue
             }
 
-            if recordType == "event_msg",
-               let payload = raw["payload"] as? [String: Any],
-               payload["type"] as? String == "thread_name_updated",
+            if recordType == "turn_context",
+               let payload = raw["payload"] as? [String: Any] {
+                // Every turn records the model it ran with; the newest one is
+                // what the thread runs now.
+                if let model = payload["model"] as? String, !model.isEmpty {
+                    runtimeSelection = CodexRuntimeSelection(
+                        modelId: model,
+                        reasoningEffort: nonEmpty(payload["effort"] as? String),
+                        fastMode: runtimeSelection?.fastMode ?? false
+                    )
+                }
+                continue
+            }
+
+            guard recordType == "event_msg",
+                  let payload = raw["payload"] as? [String: Any],
+                  let eventType = payload["type"] as? String else {
+                continue
+            }
+
+            if eventType == "thread_name_updated",
                let nextThreadName = payload["thread_name"] as? String,
                !nextThreadName.isEmpty {
                 threadName = nextThreadName
+                continue
+            }
+
+            // Changing the model or effort in the Codex UI writes this before
+            // the next turn, so it can be newer than any `turn_context`.
+            if eventType == "thread_settings_applied",
+               let settings = payload["thread_settings"] as? [String: Any],
+               let model = settings["model"] as? String, !model.isEmpty {
+                let tier = settings["service_tier"] as? String
+                runtimeSelection = CodexRuntimeSelection(
+                    modelId: model,
+                    reasoningEffort: nonEmpty(settings["reasoning_effort"] as? String),
+                    fastMode: tier == nil ? (runtimeSelection?.fastMode ?? false) : tier == "fast"
+                )
             }
         }
 
@@ -1395,8 +1607,14 @@ enum CodexDesktopSessionParser {
             workspaceRoot: workspaceRoot,
             threadName: threadName,
             isSubagent: isSubagent,
-            isDesktopUserThread: isDesktopUserThread
+            isDesktopUserThread: isDesktopUserThread,
+            runtimeSelection: runtimeSelection
         )
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
+        return value
     }
 
     private static func isSubagentMetadata(_ payload: [String: Any]) -> Bool {
@@ -1447,12 +1665,53 @@ enum CodexDesktopSessionParser {
             guard let type = part["type"] as? String else { return nil }
             switch type {
             case "input_text", "output_text":
-                return part["text"] as? String
+                guard let text = part["text"] as? String, !isInjectedContext(text) else { return nil }
+                return text
+            case "input_image":
+                return "[image]"
             default:
                 return nil
             }
         }
         return texts.joined(separator: "\n\n")
+    }
+
+    /// Removes CommonMark backslash escapes (`\_` → `_`, `\*` → `*`, …).
+    static func unescapeMarkdown(_ text: String) -> String {
+        guard text.contains("\\") else { return text }
+        var result = ""
+        result.reserveCapacity(text.count)
+        var iterator = text.makeIterator()
+        while let character = iterator.next() {
+            if character == "\\", let next = iterator.next() {
+                if next.isASCII, next.isPunctuation || next.isSymbol {
+                    result.append(next)
+                } else {
+                    result.append(character)
+                    result.append(next)
+                }
+            } else {
+                result.append(character)
+            }
+        }
+        return result
+    }
+
+    private static let injectedContextPrefixes = [
+        "<environment_context", "<recommended_plugins", "<skill", "<image ", "<image>", "</image",
+        "<turn_aborted", "<user_instructions", "<permissions", "<app_context", "<collaboration_mode",
+        "<INSTRUCTIONS", "# Files mentioned by the user",
+    ]
+    private static let injectedTagPattern = try? NSRegularExpression(pattern: #"^<([a-z][a-z0-9-]*_[a-z0-9_-]*)[\s>]"#)
+
+    /// Codex prepends machine-written blocks to user turns; they are not
+    /// something the person typed and must not render as their message.
+    static func isInjectedContext(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        if injectedContextPrefixes.contains(where: { trimmed.hasPrefix($0) }) { return true }
+        guard trimmed.hasPrefix("<"), let pattern = injectedTagPattern else { return false }
+        return pattern.firstMatch(in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed)) != nil
     }
 
     private static func parseInputRequest(callID: String, arguments: String) -> AgentInputRequest? {

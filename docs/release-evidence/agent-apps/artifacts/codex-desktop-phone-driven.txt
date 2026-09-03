@@ -1,0 +1,8 @@
+Privacy-reviewed summary artifact.
+Date: 2026-09-03.
+Commit: 86fad19c.
+Scope: Codex desktop card driven from a phone-sized mobile Chromium and from mobile WebKit through the Local Test Lab against the real Codex desktop app (inside ChatGPT.app 26.831.21537), using a dedicated thread named "Glasstunnel live".
+Result: pass.
+Evidence commands: pnpm lab:e2e:codex-desktop (Playwright project local-codex-desktop-mobile-chromium); pnpm lab:e2e:codex-desktop:safari (local-codex-desktop-mobile-webkit).
+Card state trail recorded by the lab host: Opening on Mac → loading Codex context → loading message history → opening the project → thread selected from the phone (the Mac opened its codex:// link; title and project label updated) → model chip checked against the thread's newest turn_context record → prompt typed into the app's composer via Accessibility → Codex is working → Response ready (task_complete; the reply in the dedicated thread's rollout) → shell command → Response ready (structured row titled with the command from the exec script; full 41-line output fetched from the Mac on request) → long reply → Codex is working → Stop pressed from the phone → Stopping (pressed Stop) → Stopped (turn_aborted; "idle" pill and "Stopped" divider, no closing marker). Injected context never rendered as user text.
+Raw transcripts, thread ids, account-specific output, and screenshots are intentionally not retained in Git.
