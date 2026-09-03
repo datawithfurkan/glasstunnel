@@ -13,15 +13,15 @@ The Mac log confirms the duplicate-panel behaviour (two `start` actions for the 
 
 ## Implementation status
 
-Fixes landed on the audit branch after the report was written (commits in
-branch order):
+Fixes merged to `main` on 2026-09-03 through pull request #23 (merged at
+`1ff17e4f`), in branch order:
 
 | Fix | Findings | Commit | Where |
 | --- | --- | --- | --- |
-| One panel mounted per layout, video kept across relay and signaling drops, signaling keepalive, retry with backoff, resume after hidden, Error status no longer tears down a live stream, Retry path cleanup, cached-workspace flag | S1, S5, S6, S9, S10, part of S4 | `c0470e5a` | PWA |
-| Frame-liveness watchdog with "Screen paused" and automatic restart; a rendering picture outranks stale error text | S2 | `e061996a` | PWA |
-| One sender per phone (track swap instead of remove/add), idle-frame keepalive at 1 fps, capture restart with backoff, display/wake/login observers, fallback pause while phones report live video, fallback rebuilt after relay reconnect, publish only on change, notice-level logging; protocol 0.2.3 | S3, S4, S7, S8, S12 | `e3b012e2` | Mac, protocol |
-| Relay hub closes a Mac socket that missed three pings, alarm moved at most every 5 s, signaling hub queues for a silent host | S11 | `95adb5bc` | Worker |
+| One panel mounted per layout, video kept across relay and signaling drops, signaling keepalive, retry with backoff, resume after hidden, Error status no longer tears down a live stream, Retry path cleanup, cached-workspace flag | S1, S5, S6, S9, S10, part of S4 | `4ed7b118` | PWA |
+| Frame-liveness watchdog with "Screen paused" and automatic restart; a rendering picture outranks stale error text | S2 | `64c7db09` | PWA |
+| One sender per phone (track swap instead of remove/add), idle-frame keepalive at 1 fps, capture restart with backoff, display/wake/login observers, fallback pause while phones report live video, fallback rebuilt after relay reconnect, publish only on change, notice-level logging; protocol 0.2.3 | S3, S4, S7, S8, S12 | `f2a3ca57` | Mac, protocol |
+| Relay hub closes a Mac socket that missed three pings, alarm moved at most every 5 s, signaling hub queues for a silent host | S11 | `2c2ee9de` | Worker |
 
 Still open: S13 (same-profile duplicate tabs) and the S14 items.
 

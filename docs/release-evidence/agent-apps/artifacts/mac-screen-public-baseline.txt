@@ -1,6 +1,6 @@
 Privacy-reviewed summary artifact.
 Date: 2026-09-03.
-Commit: 2e4b25ff.
+Commit: 1ff17e4f.
 Scope: Mac Screen local mobile-browser lifecycle and automated state regression.
 Result: pass.
 Evidence commands: pnpm lab:e2e:screen; pnpm lab:e2e:screen:safari; pnpm qa:screen-state.
