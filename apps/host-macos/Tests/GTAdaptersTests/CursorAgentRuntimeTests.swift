@@ -136,6 +136,16 @@ final class CursorAgentRuntimeTests: XCTestCase {
         fullReply.feed(#"{"type":"assistant","message":{"content":[{"type":"text","text":"Hello"}]}}"# + "\n")
         fullReply.feed(#"{"type":"assistant","message":{"content":[{"type":"text","text":"Hello world"}]}}"# + "\n")
         XCTAssertEqual(fullReply.assistantText, "Hello world", "a growing full text replaces rather than repeats")
+
+        // The real CLI: timestamped deltas, then the whole reply once more without a timestamp.
+        let real = CursorAgentStreamParser(agentID: "x", turnId: "t4")
+        real.feed(#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"GT"}]},"session_id":"s","timestamp_ms":1788437377768}"# + "\n")
+        real.feed(#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"_OK"}]},"session_id":"s","timestamp_ms":1788437377833}"# + "\n")
+        real.feed(#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"GT_OK"}]},"session_id":"s"}"# + "\n")
+        XCTAssertEqual(real.assistantText, "GT_OK", "the final repeat replaces the deltas instead of doubling the reply")
+        real.feed(#"{"type":"result","subtype":"success","duration_ms":9772,"is_error":false,"result":"GT_OK","session_id":"s","request_id":"r","usage":{"inputTokens":19481,"outputTokens":9}}"# + "\n")
+        XCTAssertEqual(real.outcome?.text, "GT_OK")
+        XCTAssertEqual(real.outcome?.durationMs, 9_772)
     }
 
     // MARK: - Adapter with a fake CLI

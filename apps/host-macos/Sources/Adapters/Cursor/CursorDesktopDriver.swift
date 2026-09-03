@@ -45,6 +45,8 @@ struct CursorAccessibilityDriver: CursorDesktopUIDriving {
     static let composerToolbarHints = ["Add agents, context, tools", "Add context"]
     static let stopLabels = ["Stop", "Stop generating", "Cancel generation", "Stop generation"]
     static let newChatLabels = ["New Chat", "New chat"]
+    /// The header control that names the chat in front ("Chat title. <name>").
+    static let chatTitlePrefixes = ["Chat title.", "Chat title:", "Chat title"]
     /// Window titles that name no chat.
     static let genericWindowTitles: Set<String> = ["cursor", "cursor agents", ""]
     static let treeWaitSeconds: TimeInterval = 6
@@ -90,7 +92,19 @@ struct CursorAccessibilityDriver: CursorDesktopUIDriving {
             if let match = candidates.first(where: { Self.titlesMatch(title, $0) }) { return match }
             if candidates.isEmpty { return title }
         }
-        // 2. A selected sidebar entry or tab carrying a known title.
+        // 2. The chat pane's own title control ("Chat title. <name>").
+        var titled: String?
+        Self.walk(window) { element, _ in
+            for label in Self.labels(of: element) {
+                if let name = Self.chatTitle(fromControlLabel: label) { titled = name; return false }
+            }
+            return true
+        }
+        if let titled {
+            if let match = candidates.first(where: { Self.titlesMatch(titled, $0) }) { return match }
+            return titled
+        }
+        // 3. A selected sidebar entry or tab carrying a known title.
         var selectedTexts: [String] = []
         Self.walk(window) { element, _ in
             let role = Self.string(element, kAXRoleAttribute)
@@ -104,7 +118,7 @@ struct CursorAccessibilityDriver: CursorDesktopUIDriving {
         for candidate in candidates {
             if selectedTexts.contains(where: { Self.titlesMatch($0, candidate) }) { return candidate }
         }
-        // 3. A heading inside the chat pane.
+        // 4. A heading inside the chat pane.
         var headings: [String] = []
         Self.walk(window) { element, _ in
             if Self.string(element, kAXRoleAttribute) == "AXHeading" {
@@ -120,23 +134,35 @@ struct CursorAccessibilityDriver: CursorDesktopUIDriving {
 
     func showChat(titled title: String) throws {
         let (_, window) = try frontWindow(activate: true)
-        // Prefer navigation controls; the newest match sits lowest in the
-        // sidebar, and message bubbles that merely quote the title are text.
-        var matches: [AXUIElement] = []
+        // Sidebar entries are buttons inside a list, titled "<name> <age>". The
+        // pane's "Chat title." header and message bubbles that quote the title
+        // must never be pressed instead.
+        var inList: [AXUIElement] = []
+        var elsewhere: [AXUIElement] = []
         Self.walk(window) { element, ancestors in
             let role = Self.string(element, kAXRoleAttribute)
             guard ["AXRow", "AXTab", "AXButton", "AXLink", "AXCell", "AXStaticText"].contains(role) else { return true }
-            guard Self.labels(of: element).contains(where: { Self.titlesMatch($0, title) }) else { return true }
-            if Self.isPressable(element) {
-                matches.append(element)
-            } else if let ancestor = ancestors.reversed().first(where: Self.isPressable) {
-                matches.append(ancestor)
-            }
+            let labels = Self.labels(of: element)
+            guard !labels.contains(where: { Self.chatTitle(fromControlLabel: $0) != nil }) else { return true }
+            guard labels.contains(where: { Self.titlesMatch($0, title) }) else { return true }
+            let pressable = Self.isPressable(element) ? element : ancestors.reversed().first(where: Self.isPressable)
+            guard let pressable else { return true }
+            let listed = ancestors.contains { Self.string($0, kAXRoleAttribute) == "AXList" }
+            if listed { inList.append(pressable) } else { elsewhere.append(pressable) }
             return true
         }
-        guard let target = matches.last else { throw DriverError.noControl(title) }
+        guard let target = inList.last ?? elsewhere.last else { throw DriverError.noControl(title) }
         let result = AXUIElementPerformAction(target, kAXPressAction as CFString)
         guard result == .success else { throw DriverError.noControl(title) }
+    }
+
+    /// "Chat title. Release notes" → "Release notes"; nil for any other label.
+    static func chatTitle(fromControlLabel label: String) -> String? {
+        for prefix in chatTitlePrefixes where label.hasPrefix(prefix) {
+            let name = label.dropFirst(prefix.count).trimmingCharacters(in: .whitespacesAndNewlines)
+            return name.isEmpty ? nil : name
+        }
+        return nil
     }
 
     func newChat() throws {

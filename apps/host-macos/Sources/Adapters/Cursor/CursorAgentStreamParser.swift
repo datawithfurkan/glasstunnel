@@ -43,6 +43,7 @@ final class CursorAgentStreamParser {
     private(set) var sessionId: String?
     private(set) var model: String?
     private(set) var assistantText = ""
+    private var sawDelta = false
     /// Rows in arrival order; the dictionary keeps the index by call id.
     private(set) var rows: [ToolRow] = []
     private var rowIndex: [String: Int] = [:]
@@ -104,7 +105,17 @@ final class CursorAgentStreamParser {
         case "assistant":
             let text = Self.textParts(of: object["message"]).joined()
             guard !text.isEmpty else { return false }
-            appendAssistant(text)
+            // With --stream-partial-output every delta carries `timestamp_ms`;
+            // the CLI then repeats the whole reply once more without it.
+            let isDelta = object["timestamp_ms"] != nil
+            if isDelta {
+                sawDelta = true
+                assistantText += text
+            } else if sawDelta {
+                assistantText = text
+            } else {
+                appendAssistant(text)
+            }
             return true
         case "tool_call":
             return handleToolCall(object)

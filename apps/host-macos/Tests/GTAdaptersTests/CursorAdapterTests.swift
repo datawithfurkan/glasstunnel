@@ -104,6 +104,16 @@ final class CursorAdapterTests: XCTestCase {
         XCTAssertEqual(CursorAdapter.modelLabel("default"), "Default")
     }
 
+    func testChatTitleControlLabelsAreParsed() {
+        XCTAssertEqual(CursorAccessibilityDriver.chatTitle(fromControlLabel: "Chat title. Glasstunnel live evidence"), "Glasstunnel live evidence")
+        XCTAssertEqual(CursorAccessibilityDriver.chatTitle(fromControlLabel: "Chat title: Release"), "Release")
+        XCTAssertNil(CursorAccessibilityDriver.chatTitle(fromControlLabel: "Glasstunnel live evidence 1m"))
+        XCTAssertNil(CursorAccessibilityDriver.chatTitle(fromControlLabel: "Chat title."))
+        XCTAssertTrue(CursorAccessibilityDriver.titlesMatch("Glasstunnel live evidence 1m", "Glasstunnel live evidence"), "sidebar rows carry the age after the name")
+        XCTAssertTrue(CursorAccessibilityDriver.stopLabels.contains("Stop generation"))
+        XCTAssertTrue(CursorAccessibilityDriver.composerPlaceholders.contains("Send follow-up"))
+    }
+
     func testPromptIsTypedOnlyIntoTheConfirmedChat() async throws {
         try await adapter.start()
         _ = try await snapshots.wait(timeout: 5) { $0.status == .done }
