@@ -1,8 +1,9 @@
 Privacy-reviewed summary artifact.
 Date: 2026-09-03.
-Commit: a28f4852.
+Commit: 7ffe2d45.
 Scope: Cursor desktop card driven from a phone-sized mobile Chromium and from mobile WebKit through the Local Test Lab against the real Cursor 3.18.25 app, typing into an existing local test chat (no folder attached) on the model the app's picker shows.
 Result: pass (mobile Chromium and mobile WebKit at this commit). Earlier runs of the day exposed and fixed, in order: a lane that checked for the card's Start button before it rendered; a prompt whose failure left no trace (the card now records "Prompt not delivered: <reason>"); an interrupted chat that read as a running turn at card start because the store cannot tell the two apart from message shapes (status now comes from Cursor's own generation record on the composer, on both store formats); a running turn flipped to "Stopped" by that record's stale value from the previous generation; a stop hook's verdict overridden by the store's later "done"; a read that found no chats mistaken for a chat switch; and the echoed prompt dropped by the stop hook before the store had it.
 Evidence commands: pnpm lab:e2e:cursor (Playwright project local-cursor-desktop-mobile-chromium); pnpm lab:e2e:cursor:safari (local-cursor-desktop-mobile-webkit). Both with GT_LAB_CURSOR_CHAT naming the test chat.
 Card state trail recorded by the lab host: Opening on Mac → loading Cursor context → (chat state from the store) → opening <chat> (sidebar press, title confirmed) → prompt typed and submitted → Cursor is working (beforeSubmitPrompt hook) → Response ready (stop hook, completed) → second prompt → Cursor is working → Stopping (Stop control pressed) → Stopped (stop hook, aborted).
 Raw transcripts, chat ids, account-specific output, and screenshots are intentionally not retained in Git.
+Re-run at the merged commit 7ffe2d45: mobile Chromium and mobile WebKit passed.

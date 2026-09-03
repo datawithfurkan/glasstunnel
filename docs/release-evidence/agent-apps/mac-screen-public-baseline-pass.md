@@ -1,10 +1,10 @@
 # Agent App Release Evidence
 
-- Date: 2026-09-03T12:53:20Z
+- Date: 2026-09-03T15:30:08Z
 - App: Mac Screen
 - Result: pass
 - Environment: local lab host with authenticated mobile Chromium and WebKit screen E2E plus automated state regression coverage
-- Glasstunnel commit: 1ff17e4f
+- Glasstunnel commit: 7ffe2d45
 - Artifact: artifacts/mac-screen-public-baseline.txt
 - Privacy review: pass
 
@@ -24,6 +24,8 @@ relay and signaling drops, and the Mac keeps one video sender per phone and
 repeats the last frame once a second while idle (protocol 0.2.3). Automated
 coverage now also includes the liveness tracker, sender reuse on the peer,
 capture restart after a stream error, and the relay hub's host-liveness alarm.
+Re-recorded at 7ffe2d45 after the Cursor cards (pull request #22) changed the lab
+lanes and the phone app; both Mac Screen lanes and `pnpm qa:screen-state` passed again.
 
 ## Limitations
 

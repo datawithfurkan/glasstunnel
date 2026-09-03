@@ -1,10 +1,10 @@
 # Agent App Release Evidence
 
-- Date: 2026-09-03T13:45:20Z
+- Date: 2026-09-03T15:30:08Z
 - App: Cursor Agent
 - Result: pass
 - Environment: Local Test Lab host on the development Mac, phone-sized mobile Chromium (Pixel 7 emulation) and mobile WebKit (iPhone 15 emulation), real signed-in Cursor Agent CLI 2026.06.24 on gpt-5.4-nano
-- Glasstunnel commit: 3e930f7d
+- Glasstunnel commit: 7ffe2d45
 - Artifact: artifacts/cursor-agent-phone-driven.txt
 - Privacy review: pass
 
@@ -24,6 +24,8 @@ The same lane passed on mobile WebKit (`pnpm lab:e2e:cursor-agent:safari`). Both
 browsers were re-run after the process runner was fixed to judge a turn only once
 its output was fully delivered (a race that CI and loaded local runs had exposed);
 the Cursor Agent code is identical between the Chromium re-run's commit and this one.
+Re-recorded at the merged commit 7ffe2d45: both browsers passed the lane again on
+main.
 
 ## Limitations
 
