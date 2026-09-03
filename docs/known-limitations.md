@@ -19,6 +19,14 @@ disclosures, not hidden implementation details.
   Glasstunnel installs in `~/.claude/settings.json`. Current Claude builds keep their
   `claude://code` deep links gated off, so switching sessions from the phone relies on
   Accessibility, and a prompt is refused when the app verifiably shows another session.
+- The Cursor card drives the real Cursor window through Accessibility after enabling
+  Electron's accessibility switch (Cursor may behave as if an assistive client were
+  attached while the card runs); it offers no window video, keeps runtime controls
+  read-only, takes live turn state from hooks Glasstunnel merges into
+  `~/.cursor/hooks.json`, and refuses a prompt when the window verifiably shows
+  another chat. The Cursor Agent card runs the CLI headless in ask or plan mode only
+  (agent mode stays off until tool permissions can reach the phone), needs a valid
+  `cursor-agent login`, and spends account credit on every turn.
 
 ## Mobile and network
 

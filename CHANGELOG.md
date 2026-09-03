@@ -3,6 +3,34 @@
 Notable user-facing changes are recorded here. Glasstunnel follows semantic
 versioning after the first public beta; pre-release compatibility may still change.
 
+## Unreleased
+
+### Added
+
+- The Cursor Agent card streams each turn (`cursor-agent --print --output-format
+  stream-json`): the reply grows in place and every tool call becomes a row with
+  its result, duration, and failure flag. The card lists the CLI's chats with
+  their workspaces, resumes them, starts new ones, switches between ask and plan
+  mode and between models from the phone (`/mode`, `/model`, the model chips),
+  interrupts, reports a rejected login, and reads the chat's own store for
+  history, so it survives host restarts. It renders as a chat on the phone
+  instead of a terminal frame.
+- The Cursor card reads Cursor 3.x's chat store (the chats that showed no
+  messages before), including tool calls and results as structured rows, takes
+  live turn state from Cursor's hooks (entries merged into `~/.cursor/hooks.json`
+  next to yours), switches chats from the phone by pressing them in the app and
+  confirming the window shows them, refuses to type into a chat the window
+  verifiably does not show, offers "New chat", and interrupts through the app's
+  Stop control.
+- Phone-driven Local Test Lab lanes for both Cursor cards
+  (`pnpm lab:e2e:cursor-agent` and `pnpm lab:e2e:cursor`, each with a `:safari`
+  variant) and a privacy-safe `pnpm qa:cursor-agent` smoke.
+
+### Changed
+
+- Cursor chats on the phone are switchable ("Switch to", "Open chat" until the
+  app confirms, "Current chat") instead of "Browse only".
+
 ## 0.1.8 - Readable transcripts
 
 ### Added
