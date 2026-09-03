@@ -442,8 +442,8 @@ final class CursorConversationStoreTests: XCTestCase {
 
         let source = FakeHookLineSource()
         let router = CursorHookRouter(makeListener: { source })
-        var cli: [CursorHookEvent] = []
-        var desktop: [CursorHookEvent] = []
+        let cli = HookEventBox()
+        let desktop = HookEventBox()
         let cliId = try router.subscribe(ownsConversation: { $0 == "chat-1" }, handler: { cli.append($0) })
         let desktopId = try router.subscribe(ownsConversation: { $0 == "composer-1" }, handler: { desktop.append($0) })
         XCTAssertEqual(source.startCount, 1, "one socket serves every subscriber")
@@ -451,8 +451,8 @@ final class CursorConversationStoreTests: XCTestCase {
         source.onLine?("{\"kind\":\"beforeSubmitPrompt\",\"conversation\":\"chat-1\"}")
         source.onLine?("{\"kind\":\"stop\",\"conversation\":\"composer-1\",\"status\":\"aborted\"}")
         source.onLine?("{\"kind\":\"stop\",\"conversation\":\"nobody\"}")
-        XCTAssertEqual(cli.map(\.kind), [.beforeSubmitPrompt])
-        XCTAssertEqual(desktop.map(\.status), ["aborted"])
+        XCTAssertEqual(cli.events.map(\.kind), [.beforeSubmitPrompt])
+        XCTAssertEqual(desktop.events.map(\.status), ["aborted"])
 
         router.unsubscribe(cliId)
         XCTAssertEqual(source.stopCount, 0)
@@ -545,6 +545,19 @@ final class CursorConversationStoreTests: XCTestCase {
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw NSError(domain: "CursorConversationStoreTests", code: 4, userInfo: [NSLocalizedDescriptionKey: String(cString: sqlite3_errmsg(db))])
         }
+    }
+}
+
+private final class HookEventBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [CursorHookEvent] = []
+
+    func append(_ event: CursorHookEvent) {
+        lock.withLock { stored.append(event) }
+    }
+
+    var events: [CursorHookEvent] {
+        lock.withLock { stored }
     }
 }
 

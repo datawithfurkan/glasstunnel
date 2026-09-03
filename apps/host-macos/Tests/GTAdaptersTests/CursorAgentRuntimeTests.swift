@@ -407,16 +407,17 @@ private final class SnapshotCollector: @unchecked Sendable {
     func wait(timeout: TimeInterval, where predicate: @escaping (AgentStateSnapshot) -> Bool) async throws -> AgentStateSnapshot {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            lock.lock()
-            let start = cursor
-            let pending = Array(snapshots[start...])
-            if let index = pending.firstIndex(where: predicate) {
-                cursor = start + index + 1
-                lock.unlock()
-                return pending[index]
+            let match: AgentStateSnapshot? = lock.withLock {
+                let start = cursor
+                let pending = Array(snapshots[start...])
+                if let index = pending.firstIndex(where: predicate) {
+                    cursor = start + index + 1
+                    return pending[index]
+                }
+                cursor = snapshots.count
+                return nil
             }
-            cursor = snapshots.count
-            lock.unlock()
+            if let match { return match }
             try await Task.sleep(nanoseconds: 40_000_000)
         }
         let summary = all.suffix(6).map { "\($0.status)/\($0.statusDetail)" }.joined(separator: " → ")
