@@ -312,3 +312,39 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .gt-tool-caret { transition: none; }
 }
+
+/* Tier 3 polish: copy buttons, diff colouring, and the new-messages chip. */
+.gt-md-pre-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin: -0.35em 0 0.6em;
+}
+.gt-copy {
+  padding: 1px 7px;
+  border: 1px solid var(--gt-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--gt-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.gt-copy:active {
+  color: var(--gt-text);
+}
+.gt-diff-add { color: #7ee2a0; }
+.gt-diff-del { color: #ff8a80; }
+.gt-diff-hunk { color: #8fc7ff; }
+.gt-diff-meta { color: var(--gt-muted); }
+.gt-jump {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 auto 8px;
+  padding: 4px 10px;
+  border: 1px solid rgba(0, 122, 255, 0.5);
+  border-radius: 999px;
+  background: rgba(0, 122, 255, 0.16);
+  color: var(--gt-text);
+  font-size: 12px;
+  line-height: 1.4;
+}

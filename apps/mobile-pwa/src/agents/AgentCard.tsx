@@ -21,6 +21,7 @@ import { HorizontalScrollStrip } from '../ui/HorizontalScrollStrip';
 import { VideoTile } from './VideoTile';
 import { TranscriptView } from './TranscriptView';
 import { formatMessageTimestamp } from './messageTimestamp';
+import { shouldAutoScroll } from './transcript';
 
 interface Props {
   app: RemoteApp;
@@ -289,6 +290,11 @@ export function AgentCard({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messageEndRef = useRef<HTMLDivElement>(null);
+  const transcriptScrollRef = useRef<HTMLElement>(null);
+  /// Whether the reader is at the end of the transcript; new messages only
+  /// pull the view along while this holds, otherwise a chip offers the jump.
+  const followingRef = useRef(true);
+  const [unseenMessages, setUnseenMessages] = useState(false);
   const attachmentsRef = useRef<PendingAttachment[]>([]);
 
   const status = snapshot?.status ?? AgentStatus.Working;
@@ -349,8 +355,18 @@ export function AgentCard({
   }, [prompt]);
 
   useEffect(() => {
+    // A different card starts at its end.
+    followingRef.current = true;
+    setUnseenMessages(false);
+  }, [app.agentId]);
+
+  useEffect(() => {
     const target = messageEndRef.current;
     if (!target) return;
+    if (!commandSurfaceMode && !followingRef.current) {
+      setUnseenMessages(true);
+      return;
+    }
 
     const scroll = () => {
       target.scrollIntoView({
@@ -362,7 +378,21 @@ export function AgentCard({
     scroll();
     const frame = window.requestAnimationFrame(scroll);
     return () => window.cancelAnimationFrame(frame);
-  }, [app.agentId, hasLatestMessage, latestMessage?.messageId, latestMessage?.text, messages.length]);
+  }, [app.agentId, commandSurfaceMode, hasLatestMessage, latestMessage?.messageId, latestMessage?.text, messages.length]);
+
+  const handleTranscriptScroll = () => {
+    const el = transcriptScrollRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    followingRef.current = shouldAutoScroll(distance);
+    if (followingRef.current) setUnseenMessages(false);
+  };
+
+  const jumpToLatest = () => {
+    followingRef.current = true;
+    setUnseenMessages(false);
+    messageEndRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
+  };
 
   useEffect(() => {
     attachmentsRef.current = attachments;
@@ -620,7 +650,7 @@ export function AgentCard({
         </button>
       )}
 
-      <section className={mainSurfaceClass}>
+      <section ref={transcriptScrollRef} onScroll={commandSurfaceMode ? undefined : handleTranscriptScroll} className={mainSurfaceClass}>
         {commandSurfaceMode ? (
           <div className="flex h-full min-h-0 flex-col gap-3">
             <div className="flex min-h-0 flex-1 flex-col">
@@ -695,6 +725,13 @@ export function AgentCard({
       </section>
 
       <footer className={footerClass}>
+        {!commandSurfaceMode && unseenMessages && (
+          <div className="flex justify-center">
+            <button type="button" onClick={jumpToLatest} className="gt-jump" aria-label="Jump to the latest messages">
+              ↓ New messages
+            </button>
+          </div>
+        )}
         {commandSurfaceMode && (
           <div className="mb-2 rounded-[10px] border border-emerald-300/15 bg-emerald-300/[0.06] px-3 py-2 font-mono text-[11px] leading-5 text-emerald-100/80">
             {commandSurfaceNotice(app)}
