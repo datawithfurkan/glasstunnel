@@ -38,19 +38,63 @@ describe('screen video status', () => {
     expect(status.canControl).toBe(true);
   });
 
-  it('prioritizes screen disconnection over stale streams', () => {
+  it('keeps a rendering picture ready despite stale error text', () => {
     const status = describeScreenVideoStatus({
       screenEnabled: true,
       hostOnline: true,
-      captureError: null,
+      captureError: 'Screen unavailable',
       connectionError: 'Screen stream disconnected. Retry screen to reconnect.',
       hasStream: true,
       renderPhase: 'ready',
     });
 
+    expect(status.label).toBe('Screen ready');
+    expect(status.canControl).toBe(true);
+  });
+
+  it('shows the disconnect once the picture is gone', () => {
+    const status = describeScreenVideoStatus({
+      screenEnabled: true,
+      hostOnline: true,
+      captureError: null,
+      connectionError: 'Screen stream disconnected. Retry screen to reconnect.',
+      hasStream: false,
+      renderPhase: 'idle',
+    });
+
     expect(status.label).toBe('Screen disconnected');
     expect(status.tone).toBe('error');
     expect(status.canControl).toBe(false);
+  });
+
+  it('pauses control while a stream that rendered before receives no frames', () => {
+    const status = describeScreenVideoStatus({
+      screenEnabled: true,
+      hostOnline: true,
+      captureError: null,
+      connectionError: null,
+      hasStream: true,
+      renderPhase: 'frozen',
+    });
+
+    expect(status.label).toBe('Screen paused');
+    expect(status.tone).toBe('warning');
+    expect(status.canControl).toBe(false);
+    expect(status.issue).toBe('frozen');
+  });
+
+  it('surfaces a capture error once the frozen stream stops rendering', () => {
+    const status = describeScreenVideoStatus({
+      screenEnabled: true,
+      hostOnline: true,
+      captureError: 'Screen unavailable',
+      connectionError: null,
+      hasStream: true,
+      renderPhase: 'frozen',
+    });
+
+    expect(status.label).toBe('Screen error');
+    expect(status.issue).toBe('capture');
   });
 
   it('shows an off state when screen sharing is disabled remotely', () => {

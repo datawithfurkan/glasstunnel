@@ -17,6 +17,20 @@ import {
   type ScreenVideoStatus,
 } from './screenVideoStatus';
 import { collectScreenVideoDiagnostics } from './screenVideoDiagnostics';
+import {
+  hostSupportsFrameKeepalive,
+  inboundVideoFramesDecoded,
+  LIVE_RESET_MS,
+  LIVENESS_SAMPLE_MS,
+  RESTART_AFTER_MS,
+  restartBackoffMs,
+  ScreenVideoLivenessTracker,
+} from './screenVideoLiveness';
+
+type VideoWithFrameCallback = HTMLVideoElement & {
+  requestVideoFrameCallback?: (callback: () => void) => number;
+  cancelVideoFrameCallback?: (handle: number) => void;
+};
 
 interface ScreenRemotePanelProps {
   app: RemoteApp;
@@ -28,7 +42,6 @@ interface ScreenRemotePanelProps {
 }
 
 const VIDEO_FRAME_TIMEOUT_MS = 7_000;
-const VIDEO_RESUME_RESTART_MS = 6_000;
 const VIDEO_ATTACH_RETRY_MS = 1_200;
 const VIDEO_FRAME_PROBE_MS = 250;
 const VIDEO_DIAGNOSTICS_MS = 1_500;
@@ -55,10 +68,12 @@ export function ScreenRemotePanel({
   const sendText = useAppStore((s) => s.sendText);
   const peer = useAppStore((s) => s.peer);
   const pairedHostDeviceId = useAppStore((s) => s.pairedHost?.deviceId ?? null);
+  const hostVersion = useAppStore((s) => s.hostHello?.hostVersion ?? null);
+  const strictLiveness = hostSupportsFrameKeepalive(hostVersion);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const startRequestedRef = useRef(false);
   const streamAttachedAtRef = useRef(0);
-  const lastResumeRestartAtRef = useRef(0);
+  const restartAttemptRef = useRef(0);
   const qualityNoticeTimerRef = useRef<number | null>(null);
   const [zoom, setZoom] = useState(1);
   const [text, setText] = useState('');
@@ -240,9 +255,10 @@ export function ScreenRemotePanel({
       video.addEventListener(eventName, listener);
     }
 
+    // `mute` is not a stall signal (Chrome mutes about a second after every
+    // pause in frames); the liveness watchdog decides from frame progress.
     for (const track of stream.getVideoTracks()) {
       track.addEventListener('ended', markTrackEnded);
-      track.addEventListener('mute', markSyncing);
       track.addEventListener('unmute', markSyncing);
     }
 
@@ -267,7 +283,6 @@ export function ScreenRemotePanel({
       }
       for (const track of stream.getVideoTracks()) {
         track.removeEventListener('ended', markTrackEnded);
-        track.removeEventListener('mute', markSyncing);
         track.removeEventListener('unmute', markSyncing);
       }
       if (video.srcObject === stream) {
@@ -326,36 +341,101 @@ export function ScreenRemotePanel({
     videoRenderPhase,
   ]);
 
+  const restartStalledStream = useCallback(() => {
+    restartAttemptRef.current += 1;
+    // The relay may be reconnecting; the video flow signals on its own, and
+    // the start request only matters for the Mac's JPEG fallback.
+    if (hostOnline === true) requestScreenStart();
+    void startVideoPeer();
+  }, [hostOnline, requestScreenStart, startVideoPeer]);
+
+  // Frame-liveness watchdog. The element's dimensions and readyState stay
+  // valid after the Mac stops sending, so the only trustworthy signal is
+  // progress in decoded (getStats) and painted (requestVideoFrameCallback)
+  // frames. A stream that never renders, or a strict-mode stream that goes
+  // quiet, is restarted with a growing wait.
   useEffect(() => {
-    const restartIfNeeded = () => {
-      if (document.visibilityState === 'hidden') return;
-      if (hostOnline !== true || !stream || status.canControl) return;
-      if (Date.now() - streamAttachedAtRef.current < VIDEO_RESUME_RESTART_MS) return;
-      if (Date.now() - lastResumeRestartAtRef.current < VIDEO_RESUME_RESTART_MS) return;
-      lastResumeRestartAtRef.current = Date.now();
-      requestScreenStart();
-      void startVideoPeer();
+    const video = videoRef.current as VideoWithFrameCallback | null;
+    if (!stream || !video) return;
+    const pc = peer?.pc ?? null;
+    const tracker = new ScreenVideoLivenessTracker(
+      {
+        strict: strictLiveness,
+        restartAfterMs: RESTART_AFTER_MS + restartBackoffMs(restartAttemptRef.current),
+      },
+      Date.now(),
+    );
+    let cancelled = false;
+    let paintedFrames = 0;
+    let paintHandle: number | null = null;
+    const canCountPaints = typeof video.requestVideoFrameCallback === 'function';
+    const armPaintProbe = () => {
+      if (cancelled || !video.requestVideoFrameCallback) return;
+      paintHandle = video.requestVideoFrameCallback(() => {
+        paintedFrames += 1;
+        armPaintProbe();
+      });
     };
+    armPaintProbe();
+
     const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') restartIfNeeded();
+      if (document.visibilityState === 'hidden') {
+        tracker.pause();
+      } else {
+        tracker.resume(Date.now());
+      }
     };
-    window.addEventListener('focus', restartIfNeeded);
-    window.addEventListener('online', restartIfNeeded);
-    window.addEventListener('pageshow', restartIfNeeded);
+    if (document.visibilityState === 'hidden') tracker.pause();
     document.addEventListener('visibilitychange', onVisibilityChange);
-    return () => {
-      window.removeEventListener('focus', restartIfNeeded);
-      window.removeEventListener('online', restartIfNeeded);
-      window.removeEventListener('pageshow', restartIfNeeded);
-      document.removeEventListener('visibilitychange', onVisibilityChange);
+
+    const sample = async () => {
+      if (cancelled) return;
+      let framesDecoded: number | null = null;
+      if (pc) {
+        try {
+          framesDecoded = inboundVideoFramesDecoded(await pc.getStats());
+        } catch {
+          framesDecoded = null;
+        }
+      }
+      if (cancelled) return;
+      const verdict = tracker.observe({
+        atMs: Date.now(),
+        framesDecoded,
+        paintedFrames: canCountPaints ? paintedFrames : null,
+        trackLive: stream.getVideoTracks().some((track) => track.readyState === 'live'),
+      });
+      if (verdict.restart) {
+        cancelled = true;
+        restartStalledStream();
+        return;
+      }
+      if (verdict.state === 'live') {
+        if (Date.now() - streamAttachedAtRef.current >= LIVE_RESET_MS) {
+          restartAttemptRef.current = 0;
+        }
+        setVideoRenderPhase((phase) =>
+          phase === 'frozen' ? (hasRenderableVideoFrame(video) ? 'ready' : 'syncing') : phase,
+        );
+        return;
+      }
+      if (verdict.state === 'stalled') {
+        setVideoRenderPhase((phase) => (phase === 'ready' || phase === 'frozen' ? 'frozen' : phase));
+      }
     };
-  }, [
-    hostOnline,
-    requestScreenStart,
-    startVideoPeer,
-    status.canControl,
-    stream,
-  ]);
+    const timer = window.setInterval(() => {
+      void sample();
+    }, LIVENESS_SAMPLE_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      if (paintHandle !== null && video.cancelVideoFrameCallback) {
+        video.cancelVideoFrameCallback(paintHandle);
+      }
+    };
+  }, [peer, restartStalledStream, stream, strictLiveness]);
 
   const sendTap = (
     element: HTMLElement,
@@ -695,6 +775,8 @@ export function screenOverlayCopy(issue: ScreenVideoStatus['issue']): string {
       return 'Turn on screen sharing to view and control this Mac from your browser.';
     case 'disconnected':
       return 'The screen connection dropped. Retry to start a fresh stream.';
+    case 'frozen':
+      return 'No new frames are arriving from the Mac. The stream restarts on its own in a moment.';
     case 'stalled':
       return 'A screen track connected, but this browser has not rendered a frame yet.';
     case 'video-error':
