@@ -1,6 +1,6 @@
 Privacy-reviewed summary artifact.
 Date: 2026-09-03.
-Commit: 86fad19c.
+Commit: f660996b.
 Scope: Claude Code CLI card driven from a phone-sized mobile Chromium and from mobile WebKit through the Local Test Lab against the real signed-in Claude Code CLI 2.1.258.
 Result: pass (three passes across the day, the last at this commit; the run before it exposed a prompt the TUI kept in its composer, which the adapter now resubmits).
 Evidence commands: pnpm lab:e2e:claude-code (Playwright project local-claude-code-mobile-chromium); pnpm lab:e2e:claude-code:safari (local-claude-code-mobile-webkit).

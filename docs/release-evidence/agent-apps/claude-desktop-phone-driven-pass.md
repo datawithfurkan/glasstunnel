@@ -1,10 +1,10 @@
 # Agent App Release Evidence
 
-- Date: 2026-09-03T08:10:40Z
+- Date: 2026-09-03T19:09:12Z
 - App: Claude desktop
 - Result: pass
-- Environment: Local Test Lab host on the development Mac (Accessibility-trusted), phone-sized mobile Chromium (Pixel 7 emulation) and mobile WebKit (iPhone 15 emulation), real Claude desktop app 1.40609.1 with a dedicated session titled "Glasstunnel live evidence"
-- Glasstunnel commit: 2e4b25ff
+- Environment: Local Test Lab host on the development Mac (Accessibility-trusted), phone-sized mobile Chromium (Pixel 7 emulation) and mobile WebKit (iPhone 15 emulation), real Claude desktop app 1.44121.4 with a dedicated session titled "Glasstunnel live evidence"
+- Glasstunnel commit: f660996b
 - Artifact: artifacts/claude-desktop-phone-driven.txt
 - Privacy review: pass
 

@@ -1,6 +1,6 @@
 Privacy-reviewed summary artifact.
 Date: 2026-09-03.
-Commit: 2e4b25ff (notarized 0.1.8 build installed over the published 0.1.7 app).
-Scope: native permission state after an in-place upgrade, account persistence across quit and relaunch, and the Claude card appearing on the Mac and on the phone.
+Commit: f660996b (notarized 0.1.9 build installed over the published 0.1.8 app).
+Scope: native permission state after an in-place upgrade, account persistence across quit and relaunch, and the version shown in the app's settings.
 Result: pass.
 Raw screenshots, account identifiers, and local machine names are intentionally not retained in Git.
