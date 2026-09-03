@@ -1,10 +1,10 @@
 # Agent App Release Evidence
 
-- Date: 2026-09-03T06:12:55Z
+- Date: 2026-09-03T07:08:49Z
 - App: Terminal
 - Result: pass
 - Environment: local PTY and shared-screen-session regression coverage
-- Glasstunnel commit: 7bde8143
+- Glasstunnel commit: 18e53e67
 - Artifact: artifacts/terminal-public-baseline.txt
 - Privacy review: pass
 
@@ -16,8 +16,8 @@ and named Terminal sessions published correctly; create, select, rename, and
 close behavior stayed stable, including the no-op select-current path and the
 guard against duplicate generated session names. Shared screen-session launch
 and cleanup behavior passed without leaving host-owned attachment clients stale.
-Re-recorded after the phone app's transcript renderer changed and the Claude
-interrupt fix landed (neither is an evidence-neutral path).
+Re-recorded after structured tool rows with on-demand detail landed on the Mac,
+the Worker, and the phone (protocol 0.2.2; none are evidence-neutral paths).
 
 ## Limitations
 
