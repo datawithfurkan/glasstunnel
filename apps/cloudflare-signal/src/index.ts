@@ -182,6 +182,14 @@ const STORAGE_RELAY_HELLO_KEY = "relayHello";
 const STORAGE_RELAY_LAST_HOST_SEEN_KEY = "relayLastHostSeenAt";
 const RELAY_LAST_SEEN_PERSIST_INTERVAL_MS = 60_000;
 const RELAY_PRESENCE_STALE_MS = 2 * 60_000;
+/**
+ * The Mac pings every 20 s. A host socket that stays OPEN through three missed
+ * pings has lost its network path without a FIN; closing it flips presence for
+ * every phone and lets the Mac's own reconnect replace it.
+ */
+const HOST_SILENCE_CLOSE_MS = 65_000;
+/** Screen frames arrive twice a second; moving the alarm on each one is a storage write. */
+const RELAY_ALARM_REFRESH_MIN_INTERVAL_MS = 5_000;
 const MAX_RELAY_HOST_HEALTH_CHECKS = 24;
 const LINK_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const RATE_LIMIT_RETRY_SECONDS = 60;
@@ -815,6 +823,8 @@ export class SignalingHub extends DurableObject<Env> {
   private readonly peers = new Map<string, WebSocket>();
   private offlineQueues = new Map<string, QueuedEnvelope[]>();
   private lastSeenTouchAt = new Map<string, number>();
+  /** Last message from each host socket; the Mac pings every 20 s. */
+  private readonly hostLastSeenAt = new Map<string, number>();
   private accountAuthorizationCache = new Map<string, AccountAuthorizationCacheEntry>();
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -906,6 +916,9 @@ export class SignalingHub extends DurableObject<Env> {
     }
 
     await this.touchAuthenticatedDevice(session);
+    if (session.role === "host" && session.deviceId) {
+      this.hostLastSeenAt.set(session.deviceId, Date.now());
+    }
 
     if (isControlMessage(parsed)) {
       await this.handleControl(ws, parsed);
@@ -1533,7 +1546,19 @@ export class SignalingHub extends DurableObject<Env> {
 
     await this.evictExpiredState();
 
-    const destination = this.peers.get(parsed.toDeviceId);
+    let destination = this.peers.get(parsed.toDeviceId);
+    if (destination && this.isSilentHost(parsed.toDeviceId, destination)) {
+      // A host socket that stopped pinging has lost its path without a FIN.
+      // Sending the phone's WebRTC ping into it would be "delivered" and lost;
+      // close it and queue the envelope for the Mac's reconnect instead.
+      try {
+        destination.close(1001, "host silent");
+      } catch {
+        // Already closing.
+      }
+      this.unregisterPeer(destination);
+      destination = undefined;
+    }
     if (destination) {
       const authorized = await this.authorizeAccountEnvelopeToHost(session, destination, parsed);
       if (!authorized) return;
@@ -1625,8 +1650,16 @@ export class SignalingHub extends DurableObject<Env> {
     const session = this.sessions.get(ws) ?? asAttachmentSocket(ws).deserializeAttachment();
     if (session?.deviceId && this.peers.get(session.deviceId) === ws) {
       this.peers.delete(session.deviceId);
+      this.hostLastSeenAt.delete(session.deviceId);
     }
     this.sessions.delete(ws);
+  }
+
+  private isSilentHost(deviceId: string, ws: WebSocket): boolean {
+    if (this.getSession(ws)?.role !== "host") return false;
+    const seenAt = this.hostLastSeenAt.get(deviceId);
+    // A host restored from hibernation has no record yet; trust it until it speaks.
+    return seenAt !== undefined && Date.now() - seenAt >= HOST_SILENCE_CLOSE_MS;
   }
 
   private async flushOfflineQueue(deviceId: string): Promise<void> {
@@ -1769,6 +1802,7 @@ export class RelayHub extends DurableObject<Env> {
   private latestAgentSnapshots = new Map<string, JsonValue>();
   private lastHostSeenAt = 0;
   private lastHostSeenPersistedAt = 0;
+  private alarmScheduledAt = 0;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -2208,11 +2242,25 @@ export class RelayHub extends DurableObject<Env> {
   }
 
   async alarm(): Promise<void> {
-    if (this.hostSocket) {
-      await this.ctx.storage.setAlarm(Date.now() + RELAY_PRESENCE_STALE_MS);
+    const now = Date.now();
+    const host = this.hostSocket;
+    if (host) {
+      const silentMs = now - this.lastHostSeenAt;
+      if (this.lastHostSeenAt > 0 && silentMs >= HOST_SILENCE_CLOSE_MS) {
+        // Phones would otherwise keep seeing the Mac online while their screen
+        // start requests are forwarded into a dead socket and acknowledged.
+        try {
+          host.close(1001, "host silent");
+        } catch {
+          // Already closing.
+        }
+        await this.unregisterRelaySocket(host);
+        return;
+      }
+      await this.scheduleAlarm(now + Math.max(1_000, HOST_SILENCE_CLOSE_MS - silentMs), true);
       return;
     }
-    if (this.lastHostSeenAt > 0 && Date.now() - this.lastHostSeenAt >= RELAY_PRESENCE_STALE_MS) {
+    if (this.lastHostSeenAt > 0 && now - this.lastHostSeenAt >= RELAY_PRESENCE_STALE_MS) {
       this.broadcastPresence(false);
     }
   }
@@ -2224,7 +2272,21 @@ export class RelayHub extends DurableObject<Env> {
       this.lastHostSeenPersistedAt = now;
       await this.ctx.storage.put(STORAGE_RELAY_LAST_HOST_SEEN_KEY, now);
     }
-    await this.ctx.storage.setAlarm(now + RELAY_PRESENCE_STALE_MS);
+    const horizon = this.hostSocket ? HOST_SILENCE_CLOSE_MS : RELAY_PRESENCE_STALE_MS;
+    await this.scheduleAlarm(now + horizon, forcePersist);
+  }
+
+  /** Moves the alarm, skipping the storage write when it moved moments ago. */
+  private async scheduleAlarm(at: number, force = false): Promise<void> {
+    if (
+      !force &&
+      this.alarmScheduledAt > 0 &&
+      Math.abs(at - this.alarmScheduledAt) < RELAY_ALARM_REFRESH_MIN_INTERVAL_MS
+    ) {
+      return;
+    }
+    this.alarmScheduledAt = at;
+    await this.ctx.storage.setAlarm(at);
   }
 }
 
