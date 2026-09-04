@@ -1,10 +1,10 @@
 # Agent App Release Evidence
 
-- Date: 2026-09-04T15:57:06Z
+- Date: 2026-09-04T17:00:24Z
 - App: Claude desktop
 - Result: pass
 - Environment: Local Test Lab host on the development Mac (Accessibility-trusted), phone-sized mobile Chromium (Pixel 7 emulation) and mobile WebKit (iPhone 15 emulation), real Claude desktop app 1.46388.1 with a dedicated session titled "Glasstunnel live evidence"
-- Glasstunnel commit: 1f980121
+- Glasstunnel commit: 8f7305fc
 - Artifact: artifacts/claude-desktop-phone-driven.txt
 - Privacy review: pass
 
@@ -32,10 +32,14 @@ output reached the phone as a 12-line preview row titled with its command;
 passed on mobile Chromium and on mobile WebKit, rendering the transcript with the
 reading layout (Markdown replies, structured tool rows with titles, sizes, and
 durations, copy buttons, and coloured diffs).
-Re-recorded at 1f980121 against Claude 1.46388.1, which starts with accessibility
+Re-recorded at 8f7305fc against Claude 1.46388.1, which starts with accessibility
 support disabled: the host's one-time opt-in exposed the session controls, and both
 browsers passed with the installed Glasstunnel app left running alongside the lab
-host (every host now has its own hook socket).
+host (every host now has its own hook socket, and the installed hook commands fan
+out to all of them). That fan-out has one visible cost: the installed app publishes
+the lane's Write decision to its own linked phones as well, and the first WebKit
+attempt at this commit failed because the dialog was answered from one of them
+before the lab phone chose Allow; the rerun passed with those phones left alone.
 
 ## Limitations
 
@@ -44,6 +48,7 @@ for it (the card drops out while the app is gone and a fresh adapter starts when
 the app returns) is covered by RemoteAppControllerTests. The lane needs the Claude
 window left alone while it runs and spends five short turns on the account. A
 read-only shell command such as echo runs without a dialog even in Manual mode,
-which is why the permission step writes a file. Claude Code may run a long shell
+which is why the permission step writes a file. While the installed app runs, its
+linked phones receive the lane's permission dialogs too and must be left alone. Claude Code may run a long shell
 command in the background and finish the turn at once, which is why the interrupt
 step stops a long reply rather than a command.
