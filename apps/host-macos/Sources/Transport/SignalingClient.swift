@@ -1,4 +1,5 @@
 import Foundation
+import os
 import GTProtocol
 import GTSecurity
 
@@ -27,6 +28,21 @@ public final class SignalingClient: NSObject, URLSessionWebSocketDelegate, @unch
     private var task: URLSessionWebSocketTask?
     private var state: State = .disconnected
     private var keepaliveTask: Task<Void, Never>?
+    /// "1001 host silent" once the server closed the socket, for diagnostics.
+    private(set) var lastCloseDescription: String?
+    private let closeLogger = Logger(subsystem: "io.glasstunnel.host", category: "Connection")
+
+    public func urlSession(
+        _ session: URLSession,
+        webSocketTask: URLSessionWebSocketTask,
+        didCloseWith closeCode: URLSessionWebSocketTask.CloseCode,
+        reason: Data?
+    ) {
+        let text = reason.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        let description = "closed \(closeCode.rawValue)\(text.isEmpty ? "" : " \(text)")"
+        lastCloseDescription = description
+        closeLogger.notice("\(Self.self, privacy: .public) socket \(description, privacy: .public)")
+    }
     private var intentionallyClosed = false
 
     public init(url: URL, deviceKey: DeviceKey, role: String = "host", deviceLabel: String? = nil) {
@@ -41,6 +57,7 @@ public final class SignalingClient: NSObject, URLSessionWebSocketDelegate, @unch
         onState?(.connecting)
         state = .connecting
         intentionallyClosed = false
+        lastCloseDescription = nil
         let cfg = URLSessionConfiguration.default
         cfg.timeoutIntervalForRequest = 30
         let session = URLSession(configuration: cfg, delegate: self, delegateQueue: nil)
@@ -125,8 +142,9 @@ public final class SignalingClient: NSObject, URLSessionWebSocketDelegate, @unch
                     state = .disconnected
                     onState?(.disconnected)
                 } else {
-                    state = .error(error.localizedDescription)
-                    onState?(.error(error.localizedDescription))
+                    let reason = lastCloseDescription.map { "\($0) (\(error.localizedDescription))" } ?? error.localizedDescription
+                    state = .error(reason)
+                    onState?(.error(reason))
                 }
                 return
             }

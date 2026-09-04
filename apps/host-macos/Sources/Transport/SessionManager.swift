@@ -106,9 +106,15 @@ public final class SessionManager {
     private var shouldReconnect = false
     private var reconnectTask: Task<Void, Never>?
     private var relayReconnectTask: Task<Void, Never>?
-    private var reconnectAttempt = 0
-    private var relayReconnectAttempt = 0
-    private let reconnectMaxDelaySeconds = 5 * 60.0
+    private var signalingBackoff = ReconnectBackoff()
+    private var relayBackoff = ReconnectBackoff()
+    private var signalingStabilityTask: Task<Void, Never>?
+    private var relayStabilityTask: Task<Void, Never>?
+    /// Set for the lifetime of a connect attempt so a drop reported while it
+    /// runs cannot schedule a second, overlapping attempt.
+    private var relayConnectInFlight = false
+    private var signalingConnectInFlight = false
+    private let connectionLogger = Logger(subsystem: "io.glasstunnel.host", category: "Connection")
 
     public init(
         deviceKey: DeviceKey,
@@ -149,8 +155,8 @@ public final class SessionManager {
         reconnectTask = nil
         relayReconnectTask?.cancel()
         relayReconnectTask = nil
-        reconnectAttempt = 0
-        relayReconnectAttempt = 0
+        signalingBackoff = ReconnectBackoff()
+        relayBackoff = ReconnectBackoff()
         var relayError: Error?
         do {
             try await connectRelay()
@@ -169,24 +175,32 @@ public final class SessionManager {
     }
 
     private func connectRelay() async throws {
+        guard !relayConnectInFlight else { return }
+        relayConnectInFlight = true
+        defer { relayConnectInFlight = false }
         relay?.onState = nil
         relay?.onCommand = nil
         relay?.disconnect()
+        relayStabilityTask?.cancel()
+        relayStabilityTask = nil
 
         let relayURL = RelayClient.relayURL(from: signalingURL, hostDeviceId: deviceKey.deviceId)
         let relay = RelayClient(url: relayURL, deviceKey: deviceKey, deviceLabel: hostDeviceLabel)
         self.relay = relay
 
-        relay.onState = { [weak self] state in
-            guard let manager = self else { return }
-            Task { @MainActor [manager] in
+        relay.onState = { [weak self, weak relay] state in
+            guard let manager = self, let relay else { return }
+            Task { @MainActor [manager, relay] in
+                // A socket that has been replaced must not steer the manager.
+                guard manager.relay === relay else { return }
                 switch state {
                 case .disconnected:
                     manager.handleRelayDropped(reason: "Relay disconnected")
                 case .connecting:
                     manager.onState?(.connecting)
                 case .authenticated:
-                    manager.relayReconnectAttempt = 0
+                    manager.connectionLogger.notice("relay authenticated attempt=\(manager.relayBackoff.attempt, privacy: .public)")
+                    manager.noteRelayAuthenticated(relay)
                     manager.onState?(.connected)
                 case .error(let message):
                     manager.handleRelayDropped(reason: message)
@@ -202,15 +216,37 @@ public final class SessionManager {
 
         do {
             try await relay.connect()
-            relayReconnectAttempt = 0
             onState?(.connected)
             try await publishInitialRelayState(using: relay)
             #if os(macOS)
             refreshRelayScreenCapture()
             #endif
         } catch {
-            self.relay = nil
+            connectionLogger.notice("relay connect failed reason=\(String(describing: error), privacy: .public)")
+            if self.relay === relay { self.relay = nil }
             throw error
+        }
+    }
+
+    /// Resets the relay backoff only once the socket has stayed up for a
+    /// while; a socket that authenticates and dies at once keeps waiting longer.
+    private func noteRelayAuthenticated(_ relay: RelayClient) {
+        relayStabilityTask?.cancel()
+        let stableAfter = relayBackoff.stableAfterSeconds
+        relayStabilityTask = Task { @MainActor [weak self, weak relay] in
+            try? await Task.sleep(nanoseconds: UInt64(stableAfter * 1_000_000_000))
+            guard !Task.isCancelled, let self, let relay, self.relay === relay else { return }
+            self.relayBackoff.noteStable()
+        }
+    }
+
+    private func noteSignalingAuthenticated(_ signaling: SignalingClient) {
+        signalingStabilityTask?.cancel()
+        let stableAfter = signalingBackoff.stableAfterSeconds
+        signalingStabilityTask = Task { @MainActor [weak self, weak signaling] in
+            try? await Task.sleep(nanoseconds: UInt64(stableAfter * 1_000_000_000))
+            guard !Task.isCancelled, let self, let signaling, self.signaling === signaling else { return }
+            self.signalingBackoff.noteStable()
         }
     }
 
@@ -273,25 +309,32 @@ public final class SessionManager {
     }
 
     private func connectSignaling() async throws {
+        guard !signalingConnectInFlight else { return }
+        signalingConnectInFlight = true
+        defer { signalingConnectInFlight = false }
         onState?(.connecting)
 
         signaling?.onState = nil
         signaling?.onEnvelope = nil
         signaling?.onControlMessage = nil
         signaling?.disconnect()
+        signalingStabilityTask?.cancel()
+        signalingStabilityTask = nil
 
         let signaling = SignalingClient(url: signalingURL, deviceKey: deviceKey, role: "host", deviceLabel: hostDeviceLabel)
 
-        signaling.onState = { [weak self] state in
-            guard let manager = self else { return }
-            Task { @MainActor [manager] in
+        signaling.onState = { [weak self, weak signaling] state in
+            guard let manager = self, let signaling else { return }
+            Task { @MainActor [manager, signaling] in
+                guard manager.signaling === signaling else { return }
                 switch state {
                 case .disconnected:
                     manager.handleSignalingDropped(reason: "Signaling disconnected")
                 case .connecting:
                     manager.onState?(.connecting)
                 case .authenticated:
-                    manager.reconnectAttempt = 0
+                    manager.connectionLogger.notice("signaling authenticated attempt=\(manager.signalingBackoff.attempt, privacy: .public)")
+                    manager.noteSignalingAuthenticated(signaling)
                     manager.onState?(.connected)
                 case .error(let message):
                     manager.handleSignalingDropped(reason: message)
@@ -316,8 +359,16 @@ public final class SessionManager {
             }
         }
 
-        try await signaling.connect()
+        // Registered before the handshake so the identity guard above accepts
+        // the states this socket reports while connecting.
         self.signaling = signaling
+        do {
+            try await signaling.connect()
+        } catch {
+            connectionLogger.notice("signaling connect failed reason=\(String(describing: error), privacy: .public)")
+            if self.signaling === signaling { self.signaling = nil }
+            throw error
+        }
     }
 
     public func stop() {
@@ -364,7 +415,10 @@ public final class SessionManager {
     }
 
     private func handleSignalingDropped(reason: String) {
+        connectionLogger.notice("signaling dropped reason=\(reason, privacy: .public) attempt=\(self.signalingBackoff.attempt, privacy: .public)")
         signaling = nil
+        signalingStabilityTask?.cancel()
+        signalingStabilityTask = nil
         guard shouldReconnect else {
             onState?(.idle)
             return
@@ -382,7 +436,10 @@ public final class SessionManager {
     }
 
     private func handleRelayDropped(reason: String) {
+        connectionLogger.notice("relay dropped reason=\(reason, privacy: .public) attempt=\(self.relayBackoff.attempt, privacy: .public)")
         relay = nil
+        relayStabilityTask?.cancel()
+        relayStabilityTask = nil
         guard shouldReconnect else {
             onState?(.idle)
             return
@@ -396,11 +453,9 @@ public final class SessionManager {
     }
 
     private func scheduleReconnect(after _: Error) {
-        guard shouldReconnect, reconnectTask == nil else { return }
-        let baseDelaySeconds = min(pow(2.0, Double(reconnectAttempt)), reconnectMaxDelaySeconds)
-        let jitterSeconds = Double.random(in: 0...(baseDelaySeconds * 0.2))
-        let delaySeconds = baseDelaySeconds + jitterSeconds
-        reconnectAttempt += 1
+        guard shouldReconnect, reconnectTask == nil, !signalingConnectInFlight else { return }
+        let delaySeconds = ReconnectBackoff.jittered(signalingBackoff.nextDelaySeconds())
+        connectionLogger.notice("signaling reconnect in \(delaySeconds, format: .fixed(precision: 1), privacy: .public)s")
         reconnectTask = Task { [weak self] in
             let nanoseconds = UInt64(delaySeconds * 1_000_000_000)
             try? await Task.sleep(nanoseconds: nanoseconds)
@@ -411,21 +466,22 @@ public final class SessionManager {
 
     private func reconnectSignaling() async {
         guard shouldReconnect else { return }
-        reconnectTask = nil
+        // The task stays set while the attempt runs, so a drop reported
+        // mid-handshake cannot start an overlapping attempt.
+        defer { reconnectTask = nil }
         do {
             try await connectSignaling()
         } catch {
             onState?(.connecting)
+            reconnectTask = nil
             scheduleReconnect(after: error)
         }
     }
 
     private func scheduleRelayReconnect(after _: Error) {
-        guard shouldReconnect, relayReconnectTask == nil else { return }
-        let baseDelaySeconds = min(pow(2.0, Double(relayReconnectAttempt)), reconnectMaxDelaySeconds)
-        let jitterSeconds = Double.random(in: 0...(baseDelaySeconds * 0.2))
-        let delaySeconds = baseDelaySeconds + jitterSeconds
-        relayReconnectAttempt += 1
+        guard shouldReconnect, relayReconnectTask == nil, !relayConnectInFlight else { return }
+        let delaySeconds = ReconnectBackoff.jittered(relayBackoff.nextDelaySeconds())
+        connectionLogger.notice("relay reconnect in \(delaySeconds, format: .fixed(precision: 1), privacy: .public)s")
         relayReconnectTask = Task { [weak self] in
             let nanoseconds = UInt64(delaySeconds * 1_000_000_000)
             try? await Task.sleep(nanoseconds: nanoseconds)
@@ -436,11 +492,12 @@ public final class SessionManager {
 
     private func reconnectRelay() async {
         guard shouldReconnect else { return }
-        relayReconnectTask = nil
+        defer { relayReconnectTask = nil }
         do {
             try await connectRelay()
         } catch {
             onState?(.connecting)
+            relayReconnectTask = nil
             scheduleRelayReconnect(after: error)
         }
     }

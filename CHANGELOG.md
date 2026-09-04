@@ -7,6 +7,13 @@ versioning after the first public beta; pre-release compatibility may still chan
 
 ### Fixed
 
+- The Mac's relay and signaling sockets no longer reconnect in a tight loop
+  when a fresh connection is closed right after it authenticates: the retry
+  delay now grows with every drop and resets only after the connection has
+  stayed up for 30 seconds, a reconnect cannot start while another attempt is
+  in flight, a replaced socket can no longer steer the host, and every close
+  code and reason is logged (`io.glasstunnel.host`, category "Connection") so
+  a recurrence can be diagnosed with `log show`.
 - Claude desktop 1.46 starts with accessibility support disabled, which left
   the Claude card unable to confirm a session switch or type a prompt ("open …
   in Claude to continue"). The Mac now opts the Claude app in once per process
