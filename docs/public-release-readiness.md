@@ -68,8 +68,8 @@ with recorded real-app evidence, and fixes the relay authentication race and the
 reconnect bug.
 
 The `0.1.10` public beta release is the current public beta. Its signed and notarized DMG is tied
-to source commit `1f980121` and SHA-256
-`c5461a5e7768a5f45f693799443e193a787a3fbf89ccf231ae5a2a56ea88b04c`.
+to source commit `8f7305fc` and SHA-256
+`a76beb4dd41fc8e8b4b0e39d7878432ef4308226f9931822b050aae25874e598`.
 Developer ID signing/notarization, stapling, Gatekeeper verification, isolated
 install/reinstall and 0.1.9 → 0.1.10 upgrade, stable latest-download asset preparation, and
 cask metadata validation passed. It makes agent transcripts readable on the phone
