@@ -42,26 +42,36 @@ public final class AccessibilityInjector: @unchecked Sendable {
 
     public init() {}
 
-    /// Bundle ids of Electron apps that expose their web content to assistive
-    /// clients only after one opts in (the ChatGPT-hosted Codex shell). Claude
-    /// exposes its tree without it, and the opt-in would switch it into a
-    /// heavier screen-reader mode, so the list stays explicit.
-    public static var accessibilityOptInBundleIDs: Set<String> = ["com.openai.codex"]
+    /// Electron apps expose their web content to assistive clients only after
+    /// one opts in, and the attributes that do it differ in weight:
+    /// `AXManualAccessibility` (Electron's own switch) enables the tree;
+    /// `AXEnhancedUserInterface` additionally puts Chromium into screen-reader
+    /// mode, which the ChatGPT-hosted Codex shell needs and the Claude app
+    /// must not get (it floods the app with mode changes). Claude 1.46 starts
+    /// with accessibility disabled, so it needs the light opt-in; earlier
+    /// versions exposed the tree on their own.
+    public static var accessibilityOptInAttributes: [String: [String]] = [
+        "com.openai.codex": ["AXManualAccessibility", "AXEnhancedUserInterface"],
+        "com.anthropic.claudefordesktop": ["AXManualAccessibility"],
+    ]
     private static let optInLock = NSLock()
     private static var optedInPIDs: Set<pid_t> = []
 
-    /// The app's accessibility root, with the Electron opt-in attributes set
-    /// once per process for the apps that need them.
+    /// The app's accessibility root, with the opt-in attributes set once per
+    /// process for the apps that need them. Chromium builds the tree a moment
+    /// after the opt-in, so the first query after it can still see the shell
+    /// only; callers already retry.
     static func application(for pid: pid_t, bundleID: String) -> AXUIElement {
         let app = AXUIElementCreateApplication(pid)
-        guard accessibilityOptInBundleIDs.contains(bundleID) else { return app }
+        guard let attributes = accessibilityOptInAttributes[bundleID] else { return app }
         optInLock.lock()
         let alreadyOptedIn = optedInPIDs.contains(pid)
         optedInPIDs.insert(pid)
         optInLock.unlock()
         if !alreadyOptedIn {
-            AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue)
-            AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+            for attribute in attributes {
+                AXUIElementSetAttributeValue(app, attribute as CFString, kCFBooleanTrue)
+            }
         }
         return app
     }
