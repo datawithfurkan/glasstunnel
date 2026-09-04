@@ -1,10 +1,10 @@
 # Agent App Release Evidence
 
-- Date: 2026-09-03T19:01:07Z
+- Date: 2026-09-04T06:57:33Z
 - App: Cursor Agent
 - Result: pass
 - Environment: Local Test Lab host on the development Mac, phone-sized mobile Chromium (Pixel 7 emulation) and mobile WebKit (iPhone 15 emulation), real signed-in Cursor Agent CLI 2026.06.24 on gpt-5.4-nano
-- Glasstunnel commit: f660996b
+- Glasstunnel commit: 1f980121
 - Artifact: artifacts/cursor-agent-phone-driven.txt
 - Privacy review: pass
 
