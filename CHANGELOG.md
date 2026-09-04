@@ -3,6 +3,19 @@
 Notable user-facing changes are recorded here. Glasstunnel follows semantic
 versioning after the first public beta; pre-release compatibility may still change.
 
+## 0.1.10 - Unreleased
+
+### Changed
+
+- The phone's "Readable" screen quality now drives the WebRTC stream, not
+  only the JPEG fallback: the Mac captures the display at up to 1920 pixels
+  on the long side (1080p-class instead of 720p-class) with a 6 Mbps ceiling,
+  and the source is marked as a screencast so the encoder keeps the resolution
+  under network pressure and lowers the frame rate instead. "Fast" sends the
+  stream every earlier release sent. Switching quality mid-stream restarts the
+  capture on the track the phone already has, so nothing renegotiates.
+- The Mac Screen panel shows the received picture size next to "Screen ready".
+
 ## 0.1.9 - Cursor cards, Codex parity, and steady screen sharing
 
 ### Fixed

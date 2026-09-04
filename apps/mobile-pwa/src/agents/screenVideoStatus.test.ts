@@ -5,6 +5,7 @@ import {
   hasRenderableVideoFrame,
   isScreenDisconnectedError,
   SCREEN_VIDEO_ELEMENT_EVENTS,
+  formatScreenResolution,
 } from './screenVideoStatus';
 
 describe('screen video status', () => {
@@ -150,5 +151,14 @@ describe('screen video status', () => {
 
   it('does not treat media-element detach events as stream-ending events', () => {
     expect(SCREEN_VIDEO_ELEMENT_EVENTS).not.toContain('emptied');
+  });
+});
+
+describe('formatScreenResolution', () => {
+  it('names the received picture size once it is known', () => {
+    expect(formatScreenResolution(1920, 1080)).toBe('1920\u00d71080');
+    expect(formatScreenResolution(1280.4, 720)).toBe('1280\u00d7720');
+    expect(formatScreenResolution(0, 0)).toBeNull();
+    expect(formatScreenResolution(Number.NaN, 720)).toBeNull();
   });
 });

@@ -87,6 +87,8 @@ public final class SessionManager {
     private var relayScreenCapture: (any RelayScreenCapturing)?
     /// The quality the last screen start asked for; nil once sharing stops.
     private var relayScreenQuality: RemoteAppActionRequest.ScreenQuality?
+    /// The quality the phones asked for; sizes the WebRTC stream of every session.
+    private var screenStreamQuality: RemoteAppActionRequest.ScreenQuality = .readable
     /// Phones that asked for the screen over the relay and may need JPEG frames.
     private var relayScreenRequesters: Set<DeviceID> = []
     /// Phones whose WebRTC screen track currently delivers frames.
@@ -735,6 +737,9 @@ public final class SessionManager {
         #endif
 
         Task { @MainActor [weak self, controller = remoteAppController, request, agentId, isScreenAction, clientDeviceID] in
+            if isScreenAction, [.enable, .start, .launch, .newSession].contains(request.action) {
+                self?.applyScreenStreamQuality(request.screenQuality ?? .readable)
+            }
             do {
                 try await controller.performRemoteAppAction(request)
                 if isScreenAction {
@@ -766,6 +771,14 @@ public final class SessionManager {
             )
         }
         #endif
+    }
+
+    @MainActor
+    private func applyScreenStreamQuality(_ quality: RemoteAppActionRequest.ScreenQuality) {
+        screenStreamQuality = quality
+        for session in sessions.values {
+            session.setScreenQuality(quality)
+        }
     }
 
     private func startRelayScreenCapture(
@@ -1522,6 +1535,7 @@ public final class SessionManager {
             remoteAppController: remoteAppController
         )
         sessions[phoneDeviceId] = session
+        session.setScreenQuality(screenStreamQuality)
 
         peer.onLocalICECandidate = { [weak self] candidate in
             let iceCandidate = IceCandidate(
