@@ -53,6 +53,12 @@ export const SCREEN_VIDEO_ELEMENT_EVENTS = [
 
 export type ScreenVideoElementEvent = (typeof SCREEN_VIDEO_ELEMENT_EVENTS)[number];
 
+/** "1920×1080" for a stream with a known size, null before the first frame. */
+export function formatScreenResolution(width: number, height: number): string | null {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+  return `${Math.round(width)}\u00d7${Math.round(height)}`;
+}
+
 export function hasRenderableVideoFrame(video: Pick<HTMLVideoElement, 'videoWidth' | 'videoHeight' | 'readyState'>): boolean {
   return video.videoWidth > 0 && video.videoHeight > 0 && video.readyState >= 2;
 }

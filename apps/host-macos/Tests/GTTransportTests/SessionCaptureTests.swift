@@ -49,6 +49,26 @@ final class SessionCaptureTests: XCTestCase {
         XCTAssertEqual(harness.bindings.count, 1, "no restart once sharing is off")
     }
 
+    func testReadableCapturesAtNineteenTwentyAndFastRestartsAtTwelveEighty() async throws {
+        let harness = try SessionHarness()
+        harness.session.applyRemoteApps([screenApp()])
+        try await harness.waitUntil { harness.bindings.count == 1 && harness.bindings[0].started }
+        XCTAssertEqual(harness.bindings[0].profile.maxDimension, 1920, "Readable is the default and captures 1080p-class frames")
+        XCTAssertEqual(harness.peer.videoEncodingLimits(agentID: "screen")?.maxBitrateBps, 6_000_000)
+        XCTAssertEqual(harness.peer.videoDegradationPreference(agentID: "screen"), .maintainResolution)
+
+        harness.session.setScreenQuality(.fast)
+        try await harness.waitUntil { harness.bindings.count == 2 && harness.bindings[1].started }
+        try await harness.waitUntil { harness.bindings[0].stopped }
+        XCTAssertEqual(harness.bindings[1].profile.maxDimension, 1280, "Fast is the stream every earlier release sent")
+        XCTAssertEqual(harness.peer.videoEncodingLimits(agentID: "screen")?.maxBitrateBps, 2_500_000)
+        XCTAssertEqual(harness.peer.senderCount, 1, "a quality change keeps the sender the phone negotiated")
+
+        harness.session.setScreenQuality(.fast)
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(harness.bindings.count, 2, "asking for the same quality again does not restart the capture")
+    }
+
     private func screenApp(enabled: Bool = true) -> RemoteApp {
         RemoteApp(
             remoteAppId: "screen",
@@ -85,8 +105,8 @@ private final class SessionHarness {
             autoLock: AutoLock(),
             remoteAppController: controller
         )
-        session.displayCaptureBindingFactory = { [weak self] agentID, _, trackID, onState in
-            let binding = FakeCaptureBinding(agentID: agentID, trackID: trackID, onState: onState)
+        session.displayCaptureBindingFactory = { [weak self] agentID, _, trackID, profile, onState in
+            let binding = FakeCaptureBinding(agentID: agentID, trackID: trackID, profile: profile, onState: onState)
             self?.bindings.append(binding)
             return binding
         }
@@ -108,13 +128,15 @@ private final class SessionHarness {
 private final class FakeCaptureBinding: VideoCaptureBinding {
     let agentID: AgentID
     let trackID: String
+    let profile: ScreenStreamProfile
     let onState: (WindowCapture.State) -> Void
     private(set) var started = false
     private(set) var stopped = false
 
-    init(agentID: AgentID, trackID: String, onState: @escaping (WindowCapture.State) -> Void) {
+    init(agentID: AgentID, trackID: String, profile: ScreenStreamProfile, onState: @escaping (WindowCapture.State) -> Void) {
         self.agentID = agentID
         self.trackID = trackID
+        self.profile = profile
         self.onState = onState
     }
 

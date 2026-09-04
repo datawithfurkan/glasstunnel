@@ -150,7 +150,11 @@ public final class WebRTCPeer: NSObject, @unchecked Sendable {
     /// `removeTrack`/`addTrack` pair would put the new track on a fresh
     /// m-section that the phone never learns about, because nothing here
     /// sends a second offer.
-    public func addVideoTrack(agentID: AgentID, source: RTCVideoSource) -> String {
+    public func addVideoTrack(
+        agentID: AgentID,
+        source: RTCVideoSource,
+        limits: VideoEncodingLimits? = nil
+    ) -> String {
         let trackID = "gt-\(agentID)"
         let track = factory.videoTrack(with: source, trackId: trackID)
         senderLock.lock()
@@ -158,13 +162,49 @@ public final class WebRTCPeer: NSObject, @unchecked Sendable {
         senderLock.unlock()
         if let existing {
             existing.track = track
+            if let limits { apply(limits, to: existing) }
             return trackID
         }
         let sender = connection.add(track, streamIds: ["gt-main"])
         senderLock.lock()
         if let sender { _videoSenders[agentID] = sender }
         senderLock.unlock()
+        if let sender, let limits { apply(limits, to: sender) }
         return trackID
+    }
+
+    /// Caps the sender's bitrate and frame rate and tells the encoder to keep
+    /// the resolution under network pressure (text on a screen survives a
+    /// lower frame rate far better than a blurrier picture).
+    private func apply(_ limits: VideoEncodingLimits, to sender: RTCRtpSender) {
+        let parameters = sender.parameters
+        for encoding in parameters.encodings {
+            encoding.maxBitrateBps = NSNumber(value: limits.maxBitrateBps)
+            encoding.maxFramerate = NSNumber(value: limits.maxFramerate)
+        }
+        parameters.degradationPreference = NSNumber(value: RTCDegradationPreference.maintainResolution.rawValue)
+        sender.parameters = parameters
+    }
+
+    /// The limits the sender currently carries, for tests and diagnostics.
+    public func videoEncodingLimits(agentID: AgentID) -> VideoEncodingLimits? {
+        senderLock.lock()
+        let sender = _videoSenders[agentID]
+        senderLock.unlock()
+        guard let encoding = sender?.parameters.encodings.first,
+              let bitrate = encoding.maxBitrateBps?.intValue,
+              let framerate = encoding.maxFramerate?.intValue else {
+            return nil
+        }
+        return VideoEncodingLimits(maxBitrateBps: bitrate, maxFramerate: framerate)
+    }
+
+    public func videoDegradationPreference(agentID: AgentID) -> RTCDegradationPreference? {
+        senderLock.lock()
+        let sender = _videoSenders[agentID]
+        senderLock.unlock()
+        guard let raw = sender?.parameters.degradationPreference?.intValue else { return nil }
+        return RTCDegradationPreference(rawValue: raw)
     }
 
     /// Stops sending for the agent while keeping its negotiated sender, so a
@@ -192,8 +232,10 @@ public final class WebRTCPeer: NSObject, @unchecked Sendable {
         connection.senders.count
     }
 
+    /// A screencast source: WebRTC then treats the content as a screen (no
+    /// denoising, resolution preferred over frame rate) rather than a camera.
     public func videoSource() -> RTCVideoSource {
-        factory.videoSource()
+        factory.videoSource(forScreenCast: true)
     }
 
     // MARK: - Close

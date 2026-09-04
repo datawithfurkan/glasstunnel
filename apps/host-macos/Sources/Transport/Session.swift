@@ -43,8 +43,8 @@ public final class Session {
     private static let captureRestartBaseDelaySeconds: Double = 1
     private static let captureRestartMaxDelaySeconds: Double = 30
     /// Builds the Mac Screen capture binding; tests substitute a fake.
-    var displayCaptureBindingFactory: DisplayCaptureBindingFactory = { agentID, source, trackID, onState in
-        DisplayCaptureBinding(agentID: agentID, source: source, trackID: trackID, onState: onState)
+    var displayCaptureBindingFactory: DisplayCaptureBindingFactory = { agentID, source, trackID, profile, onState in
+        DisplayCaptureBinding(agentID: agentID, source: source, trackID: trackID, profile: profile, onState: onState)
     }
     #endif
     private var currentLayout: GridLayout
@@ -869,9 +869,11 @@ public final class Session {
         guard captures[app.agentId] == nil else { return }
 
         if app.remoteAppId == "screen" || app.agentId == "screen" {
+            let profile = ScreenStreamProfile.profile(for: screenQuality)
             let source = peer.videoSource()
-            let trackID = peer.addVideoTrack(agentID: app.agentId, source: source)
-            let binding = displayCaptureBindingFactory(app.agentId, source, trackID) { [weak self] state in
+            let trackID = peer.addVideoTrack(agentID: app.agentId, source: source, limits: profile.encodingLimits)
+            screenLogger.notice("screen capture profile quality=\(profile.quality.rawValue, privacy: .public) maxDimension=\(profile.maxDimension, privacy: .public) maxBitrateBps=\(profile.maxBitrateBps, privacy: .public)")
+            let binding = displayCaptureBindingFactory(app.agentId, source, trackID, profile) { [weak self] state in
                 self?.handleCaptureState(state, app: app)
             }
             captures[app.agentId] = binding
@@ -965,15 +967,31 @@ public final class Session {
     public func restartVideoCaptures(reason: String) {
         guard !isStopping else { return }
         for agentID in captures.keys {
-            screenLogger.notice("capture restart requested agentId=\(agentID, privacy: .public) reason=\(reason, privacy: .public)")
-            captureRestartTasks.removeValue(forKey: agentID)?.cancel()
-            captureRestartAttempts[agentID] = 0
-            captureRestartTasks[agentID] = Task { @MainActor [weak self] in
-                guard let self, !Task.isCancelled else { return }
-                self.captureRestartTasks[agentID] = nil
-                await self.restartCapture(agentID: agentID)
-            }
+            restartVideoCapture(agentID: agentID, reason: reason)
         }
+    }
+
+    private func restartVideoCapture(agentID: AgentID, reason: String) {
+        screenLogger.notice("capture restart requested agentId=\(agentID, privacy: .public) reason=\(reason, privacy: .public)")
+        captureRestartTasks.removeValue(forKey: agentID)?.cancel()
+        captureRestartAttempts[agentID] = 0
+        captureRestartTasks[agentID] = Task { @MainActor [weak self] in
+            guard let self, !Task.isCancelled else { return }
+            self.captureRestartTasks[agentID] = nil
+            await self.restartCapture(agentID: agentID)
+        }
+    }
+
+    /// The phone's screen-quality choice. A change while the screen streams
+    /// restarts the capture with the new profile on the sender the phone
+    /// already has, so the picture changes size without a renegotiation.
+    public private(set) var screenQuality: RemoteAppActionRequest.ScreenQuality = .readable
+
+    public func setScreenQuality(_ quality: RemoteAppActionRequest.ScreenQuality) {
+        guard quality != screenQuality else { return }
+        screenQuality = quality
+        guard !isStopping, captures["screen"] != nil else { return }
+        restartVideoCapture(agentID: "screen", reason: "quality \(quality.rawValue)")
     }
 
     private func resolveWindowID(for app: RemoteApp) async -> CGWindowID? {
@@ -1089,6 +1107,7 @@ typealias DisplayCaptureBindingFactory = @MainActor (
     _ agentID: AgentID,
     _ source: RTCVideoSource,
     _ trackID: String,
+    _ profile: ScreenStreamProfile,
     _ onState: @escaping (WindowCapture.State) -> Void
 ) -> any VideoCaptureBinding
 
@@ -1151,16 +1170,29 @@ final class DisplayCaptureBinding: VideoCaptureBinding {
     let agentID: AgentID
     let source: RTCVideoSource
     let trackID: String
+    let profile: ScreenStreamProfile
     private var capture: DisplayCapture
     private let onState: (WindowCapture.State) -> Void
-    private let downsampler = FrameDownsampler(targetMaxDimension: 1280)
+    private let downsampler: FrameDownsampler
     private let keepalive = FrameKeepalive()
 
-    init(agentID: AgentID, source: RTCVideoSource, trackID: String, onState: @escaping (WindowCapture.State) -> Void) {
+    init(
+        agentID: AgentID,
+        source: RTCVideoSource,
+        trackID: String,
+        profile: ScreenStreamProfile,
+        onState: @escaping (WindowCapture.State) -> Void
+    ) {
         self.agentID = agentID
         self.source = source
         self.trackID = trackID
-        self.capture = DisplayCapture()
+        self.profile = profile
+        self.capture = DisplayCapture(configuration: DisplayCapture.Configuration(
+            activeFps: profile.activeFps,
+            idleFps: profile.idleFps,
+            maxDimension: profile.maxDimension
+        ))
+        self.downsampler = FrameDownsampler(targetMaxDimension: profile.maxDimension)
         self.onState = onState
     }
 

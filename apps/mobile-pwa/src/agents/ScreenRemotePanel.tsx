@@ -15,6 +15,7 @@ import {
   type ScreenVideoElementEvent,
   type ScreenVideoRenderPhase,
   type ScreenVideoStatus,
+  formatScreenResolution,
 } from './screenVideoStatus';
 import { collectScreenVideoDiagnostics } from './screenVideoDiagnostics';
 import {
@@ -349,6 +350,25 @@ export function ScreenRemotePanel({
     void startVideoPeer();
   }, [hostOnline, requestScreenStart, startVideoPeer]);
 
+  // The received picture size, shown next to the status so a quality change
+  // is visible as a number and not only as sharper text.
+  const [videoResolution, setVideoResolution] = useState<string | null>(null);
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!stream || !video) {
+      setVideoResolution(null);
+      return;
+    }
+    const update = () => setVideoResolution(formatScreenResolution(video.videoWidth, video.videoHeight));
+    update();
+    video.addEventListener('loadedmetadata', update);
+    video.addEventListener('resize', update);
+    return () => {
+      video.removeEventListener('loadedmetadata', update);
+      video.removeEventListener('resize', update);
+    };
+  }, [stream]);
+
   // Frame-liveness watchdog. The element's dimensions and readyState stay
   // valid after the Mac stops sending, so the only trustworthy signal is
   // progress in decoded (getStats) and painted (requestVideoFrameCallback)
@@ -566,7 +586,10 @@ export function ScreenRemotePanel({
             <h2 className="truncate text-lg font-semibold">Mac Screen</h2>
             <span className={`h-2 w-2 rounded-full ${statusDotClass(status.tone)}`} />
           </div>
-          <p className="gt-muted truncate text-sm">{status.label}</p>
+          <p className="gt-muted truncate text-sm">
+            {status.label}
+            {status.issue === 'ready' && videoResolution ? ` \u00b7 ${videoResolution}` : ''}
+          </p>
         </div>
         <ScreenSharingSwitch
           enabled={screenSharingEnabled}

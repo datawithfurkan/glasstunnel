@@ -37,6 +37,10 @@ disclosures, not hidden implementation details.
 - Physical-phone checks are optional unless a release gate specifically names a
   hardware or network behavior that simulators cannot prove.
 - WebRTC quality depends on the Mac, browser, network path, and TURN availability.
+- The "Readable" screen quality streams a 1080p-class picture with up to about
+  6 Mbps of video; on a metered or weak connection choose "Fast" (720p-class,
+  about 2.5 Mbps). Under pressure the encoder keeps the resolution and lowers
+  the frame rate.
 
 ## Security and privacy
 
