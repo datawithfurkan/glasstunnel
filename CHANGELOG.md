@@ -3,7 +3,7 @@
 Notable user-facing changes are recorded here. Glasstunnel follows semantic
 versioning after the first public beta; pre-release compatibility may still change.
 
-## 0.1.10 - Unreleased
+## 0.1.10 - Sharper screen, shared hooks
 
 ### Fixed
 
