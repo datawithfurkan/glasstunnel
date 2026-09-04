@@ -1,10 +1,10 @@
 # Agent App Release Evidence
 
-- Date: 2026-09-03T19:02:23Z
+- Date: 2026-09-04T06:55:22Z
 - App: Claude Code
 - Result: pass
 - Environment: Local Test Lab host on the development Mac, phone-sized mobile Chromium (Pixel 7 emulation) and mobile WebKit (iPhone 15 emulation), real signed-in Claude Code CLI 2.1.258
-- Glasstunnel commit: f660996b
+- Glasstunnel commit: 1f980121
 - Artifact: artifacts/claude-code-phone-driven.txt
 - Privacy review: pass
 
