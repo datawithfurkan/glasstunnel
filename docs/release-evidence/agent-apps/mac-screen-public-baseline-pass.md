@@ -1,10 +1,10 @@
 # Agent App Release Evidence
 
-- Date: 2026-09-03T18:49:07Z
+- Date: 2026-09-04T06:49:56Z
 - App: Mac Screen
 - Result: pass
 - Environment: local lab host with authenticated mobile Chromium and WebKit screen E2E plus automated state regression coverage
-- Glasstunnel commit: f660996b
+- Glasstunnel commit: 1f980121
 - Artifact: artifacts/mac-screen-public-baseline.txt
 - Privacy review: pass
 
@@ -28,6 +28,9 @@ Re-recorded at 7ffe2d45 after the Cursor cards (pull request #22) changed the la
 lanes and the phone app; both Mac Screen lanes and `pnpm qa:screen-state` passed again.
 Re-recorded at f660996b after the Codex desktop parity merge (pull request #21)
 changed the host, the accessibility injector, and the lab lanes.
+Re-recorded at 1f980121 after the 0.1.10 changes (Readable screen quality at
+1080p-class size, per-host hook sockets, the Claude 1.46 accessibility opt-in,
+the lane switch-step fix) with the installed Glasstunnel app left running.
 
 ## Limitations
 
