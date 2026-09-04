@@ -171,16 +171,16 @@ test('@claude-desktop-account prompts, answers permission and question dialogs, 
   await openTab(page, 'Claude');
   await startIfOffered(page);
 
+  // The card's session chips can render a moment after the card opens (seen
+  // on mobile WebKit), so wait for either state instead of sampling once.
   const current = page
     .getByRole('button', { name: `Current session: ${sessionTitle}`, exact: true })
     .filter({ visible: true });
-  if (!(await current.isVisible().catch(() => false))) {
-    const target = page
-      .getByRole('button', { name: `Switch to ${sessionTitle}`, exact: true })
-      .filter({ visible: true });
-    await expect(target).toBeVisible({ timeout: 30_000 });
-    await target.click();
-  }
+  const target = page
+    .getByRole('button', { name: `Switch to ${sessionTitle}`, exact: true })
+    .filter({ visible: true });
+  await expect(current.or(target).first()).toBeVisible({ timeout: 90_000 });
+  if (await target.isVisible().catch(() => false)) await target.click();
   await expect(current).toBeVisible({ timeout: 30_000 });
 
   // The app's per-session permission mode decides whether a shell command

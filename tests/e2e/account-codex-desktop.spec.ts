@@ -166,19 +166,19 @@ test('@codex-desktop-account shows the thread model, prompts, reads tool rows, a
   await startIfOffered(page);
 
   // The dedicated thread is the only one the lane types into.
+  // The card's thread chips can render a moment after the card opens, so
+  // wait for either state instead of sampling once.
   const current = page
     .getByRole('button', { name: `Current session: ${threadName}`, exact: true })
     .filter({ visible: true });
-  if (!(await current.isVisible().catch(() => false))) {
-    const target = page
-      .getByRole('button', { name: `Switch to ${threadName}`, exact: true })
-      .filter({ visible: true });
-    await expect(
-      target,
-      `Codex must have a thread named "${threadName}" (set GT_LAB_CODEX_THREAD to use another name)`,
-    ).toBeVisible({ timeout: 90_000 });
-    await target.click();
-  }
+  const target = page
+    .getByRole('button', { name: `Switch to ${threadName}`, exact: true })
+    .filter({ visible: true });
+  await expect(
+    current.or(target).first(),
+    `Codex must have a thread named "${threadName}" (set GT_LAB_CODEX_THREAD to use another name)`,
+  ).toBeVisible({ timeout: 90_000 });
+  if (await target.isVisible().catch(() => false)) await target.click();
   await expect(current).toBeVisible({ timeout: 30_000 });
 
   // 1. Plain prompt: typed into the real composer, answered, task_complete → "done".
