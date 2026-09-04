@@ -58,6 +58,7 @@ public final class ClaudeCodeHookInstaller: @unchecked Sendable {
         if let string = value as? String {
             return string.contains(ClaudeCodeHookInstaller.socketPath)
                 || string.contains("Glasstunnel/cc.sock")
+                || string.contains("Glasstunnel/hooks/cc-")
         }
         return false
     }
@@ -77,13 +78,15 @@ public final class ClaudeCodeHookInstaller: @unchecked Sendable {
         )
     }
 
-    private func commandFor(event: String) -> String {
+    func commandFor(event: String) -> String {
         _ = event
         // Claude Code hooks receive JSON on stdin. Forward only routing/status
         // metadata to Glasstunnel; transcript content is read from Claude's
-        // local JSONL store by `ClaudeCodeSessionParser`.
+        // local JSONL store by `ClaudeCodeSessionParser`. The event goes to
+        // every running host (see `HookSocketDirectory`) and to the legacy
+        // single socket path that hosts before 0.1.10 bind.
         let socket = ClaudeCodeHookInstaller.socketPath
-        let escapedSocket = socket.replacingOccurrences(of: "'", with: "'\\''")
+        let delivery = HookSocketDirectory.pythonDelivery(family: "cc", legacyPath: socket)
         return """
         /bin/bash -c 'python3 -c '"'"'import json, socket, sys
         try:
@@ -95,11 +98,7 @@ public final class ClaudeCodeHookInstaller: @unchecked Sendable {
         summary = payload.get("message") or payload.get("notification") or event
         notification_type = payload.get("notification_type") or ""
         out = json.dumps({"kind": event, "session": session, "summary": summary, "notificationType": notification_type}, separators=(",", ":")) + "\\n"
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(1)
-        sock.connect("\(escapedSocket)")
-        sock.sendall(out.encode("utf-8"))
-        sock.close()
+        \(delivery)
         '"'"' >/dev/null 2>&1 || true'
         """
     }

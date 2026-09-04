@@ -31,7 +31,7 @@ On `start()` the adapter (either Cursor card) merges Glasstunnel entries into
 the ones that name the Glasstunnel socket. Each entry runs a small command that forwards
 routing and status metadata (`conversation_id`, `generation_id`, `hook_event_name`,
 `status`, `tool_name`, a one-line tool title, `transcript_path`, `workspace_roots`,
-`model`) to `~/Library/Application Support/Glasstunnel/cursor.sock`; prompt text and
+`model`) to every running Glasstunnel host's own socket under `~/Library/Application Support/Glasstunnel/hooks/` (and the pre-0.1.10 single path `…/Glasstunnel/cursor.sock`); prompt text and
 tool output never travel through the hook. The command prints nothing, so Cursor
 proceeds. Cursor watches the file and reloads it; a file that is not valid JSON is left
 alone and reported in the card's status.

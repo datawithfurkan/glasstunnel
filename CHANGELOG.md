@@ -3,6 +3,17 @@
 Notable user-facing changes are recorded here. Glasstunnel follows semantic
 versioning after the first public beta; pre-release compatibility may still change.
 
+## 0.1.10 - Unreleased
+
+### Fixed
+
+- Two Glasstunnel hosts on one Mac (the installed app next to a lab or
+  development build) no longer fight over the Claude and Cursor hooks. Each
+  host binds its own socket under `~/Library/Application Support/Glasstunnel/hooks/`
+  and the installed hook commands send every event to all running hosts, plus
+  the single path that hosts before 0.1.10 bind; sockets left behind by a dead
+  host are cleaned up on the next start.
+
 ## 0.1.9 - Cursor cards, Codex parity, and steady screen sharing
 
 ### Fixed

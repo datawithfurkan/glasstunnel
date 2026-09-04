@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -324,31 +324,9 @@ export function projectsForMode(mode) {
   return CHROMIUM_PROJECTS;
 }
 
-/**
- * The installed Glasstunnel app and the lab host share one Claude hook socket
- * (~/Library/Application Support/Glasstunnel/cc.sock); whichever Claude
- * adapter starts last takes the hooks, so an installed app that is running
- * can steal a Claude lane's permission prompts mid-run.
- */
-export function installedHostWarning(projects, isRunning = installedGlasstunnelAppIsRunning) {
-  if (!projects.some((project) => project.includes('claude'))) return null;
-  if (!isRunning()) return null;
-  return 'Warning: the installed Glasstunnel app is running. It shares the Claude hook socket with the lab host and can take the hooks over mid-run; quit it before Claude lanes.';
-}
-
-function installedGlasstunnelAppIsRunning() {
-  try {
-    return execFileSync('pgrep', ['-f', '/Applications/Glasstunnel.app/Contents/MacOS'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim().length > 0;
-  } catch {
-    return false;
-  }
-}
-
 const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
   const projects = projectsForMode(process.argv[2]);
-  const warning = installedHostWarning(projects);
-  if (warning) console.warn(warning);
   runE2E({ projects })
     .then(() => console.log(`Local Playwright passed: ${projects.join(', ')}`))
     .catch((error) => {

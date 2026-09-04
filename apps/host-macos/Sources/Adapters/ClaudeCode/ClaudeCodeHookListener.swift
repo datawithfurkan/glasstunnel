@@ -40,15 +40,19 @@ public final class ClaudeCodeHookListener: @unchecked Sendable {
 
     private var socketFD: Int32 = -1
     private var source: DispatchSourceRead?
+    /// This process's own socket; every host has one (see `HookSocketDirectory`).
+    public private(set) var path: String = HookSocketDirectory.socketPath(family: "cc")
 
     public init() {}
 
     public func start() throws {
-        let path = ClaudeCodeHookInstaller.socketPath
+        let path = HookSocketDirectory.socketPath(family: "cc")
+        self.path = path
         try FileManager.default.createDirectory(
             at: URL(fileURLWithPath: path).deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
+        HookSocketDirectory.removeStaleSockets(except: path)
         _ = unlink(path)
 
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
@@ -96,6 +100,7 @@ public final class ClaudeCodeHookListener: @unchecked Sendable {
         if socketFD != -1 {
             close(socketFD)
             socketFD = -1
+            _ = unlink(path)
         }
     }
 

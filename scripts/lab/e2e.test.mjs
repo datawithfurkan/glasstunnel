@@ -7,7 +7,6 @@ import test from 'node:test';
 import { ensureRuntimeDirectories, labConfig } from './config.mjs';
 import {
   cleanupPtyProcessRecords,
-  installedHostWarning,
   newManagedTerminalSessions,
   newPtyProcessRecords,
   parseTerminalScreenSessions,
@@ -279,10 +278,4 @@ test('runE2E cleans only a PTY process record created during the run', async (t)
 
   assert.deepEqual(cleaned, [generated]);
   assert.equal(snapshots.length, 0);
-});
-
-test('warns about the installed app only for Claude lanes and only when it runs', () => {
-  assert.equal(installedHostWarning(['local-codex-desktop-mobile-chromium'], () => true), null);
-  assert.equal(installedHostWarning(['local-claude-desktop-mobile-chromium'], () => false), null);
-  assert.match(installedHostWarning(['local-claude-code-mobile-webkit'], () => true), /hook socket/);
 });
