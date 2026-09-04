@@ -103,6 +103,7 @@ public final class CursorHookInstaller: @unchecked Sendable {
         }
         if let string = value as? String {
             return string.contains(socketPath) || string.contains("Glasstunnel/cursor.sock")
+                || string.contains("Glasstunnel/hooks/cursor-")
         }
         return false
     }
@@ -112,7 +113,7 @@ public final class CursorHookInstaller: @unchecked Sendable {
     /// status metadata are forwarded; prompt text, tool input, and tool output
     /// stay in Cursor's own stores, which the adapters read locally.
     static func hookCommand() -> String {
-        let escapedSocket = socketPath.replacingOccurrences(of: "'", with: "'\\''")
+        let delivery = HookSocketDirectory.pythonDelivery(family: "cursor", legacyPath: socketPath)
         return """
         /bin/bash -c 'python3 -c '"'"'import json, socket, sys
         try:
@@ -131,11 +132,7 @@ public final class CursorHookInstaller: @unchecked Sendable {
                 break
         roots = p.get("workspace_roots")
         out = json.dumps({"kind": s("hook_event_name"), "conversation": s("conversation_id"), "generation": s("generation_id"), "status": s("status"), "tool": s("tool_name"), "title": title, "transcript": s("transcript_path"), "roots": roots if isinstance(roots, list) else [], "model": s("model"), "mode": s("composer_mode"), "callId": s("tool_call_id") or s("tool_use_id")}, separators=(",", ":")) + "\\n"
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(1)
-        sock.connect("\(escapedSocket)")
-        sock.sendall(out.encode("utf-8"))
-        sock.close()
+        \(delivery)
         '"'"' >/dev/null 2>&1 || true'
         """
     }
@@ -253,7 +250,7 @@ public final class CursorHookRouter: @unchecked Sendable {
     private var listener: (any HookLineSource)?
     private var subscribers: [UUID: Subscriber] = [:]
 
-    public init(makeListener: @escaping @Sendable () -> any HookLineSource = { HookSocketListener(path: CursorHookInstaller.socketPath) }) {
+    public init(makeListener: @escaping @Sendable () -> any HookLineSource = { HookSocketListener(path: HookSocketDirectory.socketPath(family: "cursor")) }) {
         self.makeListener = makeListener
     }
 

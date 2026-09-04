@@ -32,6 +32,9 @@ public final class HookSocketListener: HookLineSource, @unchecked Sendable {
             at: URL(fileURLWithPath: path).deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
+        if URL(fileURLWithPath: path).deletingLastPathComponent().path == HookSocketDirectory.directoryURL.path {
+            HookSocketDirectory.removeStaleSockets(except: path)
+        }
         _ = unlink(path)
 
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)

@@ -22,7 +22,7 @@ On `start()` the adapter calls `ClaudeCodeHookInstaller.installIfNeeded()`, whic
    - `Notification` — fires when Claude Code asks for user confirmation.
 4. Writes `~/.claude/settings.json` back.
 
-Each hook is configured to run a tiny shell command that emits one JSON line to a Unix-domain socket at `~/Library/Application Support/Glasstunnel/cc.sock`. Because these hooks live in the user-global `~/.claude/settings.json`, they fire for every Claude Code session by **any** client — the CLI and the Claude desktop app alike — so the socket is owned by a single process-wide `ClaudeHookRouter`. Adapters subscribe to the router with a session-ownership predicate; this adapter only receives events for CLI-owned sessions (plus session-less events from older Claude Code builds), and events for sessions no adapter owns are dropped.
+Each hook is configured to run a tiny shell command that emits one JSON line to every running Glasstunnel host's own Unix-domain socket under `~/Library/Application Support/Glasstunnel/hooks/` (and the pre-0.1.10 single path `…/Glasstunnel/cc.sock`). Because these hooks live in the user-global `~/.claude/settings.json`, they fire for every Claude Code session by **any** client — the CLI and the Claude desktop app alike — so the socket is owned by a single process-wide `ClaudeHookRouter`. Adapters subscribe to the router with a session-ownership predicate; this adapter only receives events for CLI-owned sessions (plus session-less events from older Claude Code builds), and events for sessions no adapter owns are dropped.
 
 ### Session ownership
 

@@ -70,10 +70,10 @@ a permission prompt stays visible on the phone until it is answered.
 ## Known limitations
 
 - Two Glasstunnel hosts on one Mac (the installed app and a lab or development
-  build) share `~/Library/Application Support/Glasstunnel/cc.sock` and the hooks in
-  `~/.claude/settings.json`; the host whose Claude adapter started last receives the
-  hook events, and the other one sees turns end only through the transcript. Run one
-  host at a time.
+  build) share the hooks in `~/.claude/settings.json`. Each host binds its own socket
+  under `~/Library/Application Support/Glasstunnel/hooks/` and the installed hook
+  command sends every event to all of them (and to the pre-0.1.10 single path), so
+  both hosts hear every turn; each still acts only on sessions it owns.
 - The app's `claude://code/…` deep links are feature-gated off on current builds
   (verified against the app's `~/Library/Logs/Claude/main.log`), so session switching
   depends on Accessibility exposing the session rows.
@@ -99,10 +99,9 @@ a permission prompt stays visible on the phone until it is answered.
   AskUserQuestion from the phone, and checks that a Claude Code CLI card started
   alongside never moves. Needs the app open with that session created, an
   Accessibility-trusted lab process, and a signed-in account; it spends three short
-  turns. Keep your hands off the Claude window while it runs. Quit the installed
-  Glasstunnel app first: it shares the Claude hook socket with the lab host, and
-  whichever Claude adapter starts last takes the hooks, so a running installed app
-  can steal the lane's permission prompt mid-run (the runner warns when it is running). A session in the app's
+  turns. Keep your hands off the Claude window while it runs. The installed
+  Glasstunnel app may stay running: since 0.1.10 every host has its own hook socket
+  and the hook command reaches all of them. A session in the app's
   "auto" permission mode approves a harmless shell command itself, so the permission
   dialog is answered only when it appears (the lane records which happened); sessions
   set to ask before running exercise it.
