@@ -1,10 +1,10 @@
 # Agent App Release Evidence
 
-- Date: 2026-09-03T19:09:12Z
+- Date: 2026-09-04T15:57:06Z
 - App: Claude desktop
 - Result: pass
-- Environment: Local Test Lab host on the development Mac (Accessibility-trusted), phone-sized mobile Chromium (Pixel 7 emulation) and mobile WebKit (iPhone 15 emulation), real Claude desktop app 1.44121.4 with a dedicated session titled "Glasstunnel live evidence"
-- Glasstunnel commit: f660996b
+- Environment: Local Test Lab host on the development Mac (Accessibility-trusted), phone-sized mobile Chromium (Pixel 7 emulation) and mobile WebKit (iPhone 15 emulation), real Claude desktop app 1.46388.1 with a dedicated session titled "Glasstunnel live evidence"
+- Glasstunnel commit: 1f980121
 - Artifact: artifacts/claude-desktop-phone-driven.txt
 - Privacy review: pass
 
@@ -32,6 +32,10 @@ output reached the phone as a 12-line preview row titled with its command;
 passed on mobile Chromium and on mobile WebKit, rendering the transcript with the
 reading layout (Markdown replies, structured tool rows with titles, sizes, and
 durations, copy buttons, and coloured diffs).
+Re-recorded at 1f980121 against Claude 1.46388.1, which starts with accessibility
+support disabled: the host's one-time opt-in exposed the session controls, and both
+browsers passed with the installed Glasstunnel app left running alongside the lab
+host (every host now has its own hook socket).
 
 ## Limitations
 
