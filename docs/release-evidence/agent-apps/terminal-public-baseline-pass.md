@@ -1,10 +1,10 @@
 # Agent App Release Evidence
 
-- Date: 2026-09-04T06:48:21Z
+- Date: 2026-09-04T16:27:34Z
 - App: Terminal
 - Result: pass
 - Environment: local PTY and shared-screen-session regression coverage
-- Glasstunnel commit: 1f980121
+- Glasstunnel commit: 8f7305fc
 - Artifact: artifacts/terminal-public-baseline.txt
 - Privacy review: pass
 
@@ -23,9 +23,10 @@ Re-recorded at 7ffe2d45 after the Cursor cards (pull request #22) changed the la
 lanes and the phone app; `pnpm qa:terminal` passed again at that commit.
 Re-recorded at f660996b after the Codex desktop parity merge (pull request #21)
 changed the host, the accessibility injector, and the lab lanes.
-Re-recorded at 1f980121 after the 0.1.10 changes (Readable screen quality at
+Re-recorded at 8f7305fc after the 0.1.10 changes (Readable screen quality at
 1080p-class size, per-host hook sockets, the Claude 1.46 accessibility opt-in,
-the lane switch-step fix) with the installed Glasstunnel app left running.
+the reconnect backoff, the lane switch-step fix) with the installed Glasstunnel
+app left running.
 
 ## Limitations
 
