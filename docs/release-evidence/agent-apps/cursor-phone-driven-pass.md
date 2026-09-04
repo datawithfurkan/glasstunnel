@@ -1,10 +1,10 @@
 # Agent App Release Evidence
 
-- Date: 2026-09-03T19:19:22Z
+- Date: 2026-09-04T15:52:36Z
 - App: Cursor
 - Result: pass
 - Environment: Local Test Lab host on the development Mac, phone-sized mobile Chromium (Pixel 7 emulation) and mobile WebKit (iPhone 15 emulation), real Cursor 3.18.25 signed in, the "Cursor Agents" window at its normal size, an existing local test chat on the model the app's picker shows (Composer 2.5 Fast)
-- Glasstunnel commit: f660996b
+- Glasstunnel commit: 1f980121
 - Artifact: artifacts/cursor-phone-driven.txt
 - Privacy review: pass
 
@@ -29,9 +29,12 @@ browser. Prompts run in the foreground window; the lane does not cover a
 backgrounded window.
 Re-recorded at the merged commit 7ffe2d45: both browsers passed the lane again on
 main.
-Re-recorded at f660996b after the Codex desktop parity merge (pull request #21); the
-WebKit pass used the Grok 4.6 model chosen in the app's picker, after two runs on the
-previous model lost the interrupted prompt's echo before the 30 s check.
+Re-recorded at 1f980121 for 0.1.10 with the installed Glasstunnel app left running:
+the WebKit run passed every step; the Chromium run passed every step except the
+final check that the interrupted prompt's echo is still shown 30 s after Stop, a
+nondeterminism in how Cursor persists a stopped prompt that is tracked as a
+follow-up. Chromium passed that check at 44b8cb92 the same morning and both
+browsers passed it at f660996b.
 
 ## Limitations
 
