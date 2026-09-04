@@ -7,6 +7,11 @@ versioning after the first public beta; pre-release compatibility may still chan
 
 ### Fixed
 
+- Claude desktop 1.46 starts with accessibility support disabled, which left
+  the Claude card unable to confirm a session switch or type a prompt ("open …
+  in Claude to continue"). The Mac now opts the Claude app in once per process
+  with Electron's light switch, without the screen-reader mode that an earlier
+  attempt turned on.
 - Two Glasstunnel hosts on one Mac (the installed app next to a lab or
   development build) no longer fight over the Claude and Cursor hooks. Each
   host binds its own socket under `~/Library/Application Support/Glasstunnel/hooks/`

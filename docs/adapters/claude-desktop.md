@@ -69,6 +69,11 @@ a permission prompt stays visible on the phone until it is answered.
 
 ## Known limitations
 
+- Claude 1.46 starts with accessibility support disabled; the host sets
+  `AXManualAccessibility` on the app once per process before searching its window
+  (never `AXEnhancedUserInterface`, which switches the app into screen-reader mode).
+  The tree appears a moment after the opt-in, so the first read after an app
+  restart can still miss the session controls; the card retries on its next poll.
 - Two Glasstunnel hosts on one Mac (the installed app and a lab or development
   build) share the hooks in `~/.claude/settings.json`. Each host binds its own socket
   under `~/Library/Application Support/Glasstunnel/hooks/` and the installed hook
