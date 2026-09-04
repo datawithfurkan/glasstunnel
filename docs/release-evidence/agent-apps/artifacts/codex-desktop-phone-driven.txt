@@ -1,6 +1,6 @@
 Privacy-reviewed summary artifact.
 Date: 2026-09-04.
-Commit: 1f980121.
+Commit: 8f7305fc.
 Scope: Codex desktop card driven from a phone-sized mobile Chromium and from mobile WebKit through the Local Test Lab against the real Codex desktop app (inside ChatGPT.app 26.831.21537), using a dedicated thread named "Glasstunnel live".
 Result: pass.
 Evidence commands: pnpm lab:e2e:codex-desktop (Playwright project local-codex-desktop-mobile-chromium); pnpm lab:e2e:codex-desktop:safari (local-codex-desktop-mobile-webkit).
