@@ -25,6 +25,7 @@ final class AppState: ObservableObject {
         static let introOnboardingDismissed = "app.introOnboardingDismissed"
         static let permissionOnboardingDismissed = "app.permissionOnboardingDismissed"
         static let keepAwakeEnabled = "app.keepAwakeEnabled"
+        static let readOnly = "app.hostReadOnly"
     }
 
     @Published var layout: GTProtocol.GridLayout = GTProtocol.GridLayout.empty(shape: .twoByTwo)
@@ -54,8 +55,11 @@ final class AppState: ObservableObject {
         }
     }
     @Published var turnPassword: String = ""
-    @Published var isReadOnly: Bool = false {
-        didSet { autoLock.setReadOnly(isReadOnly) }
+    @Published var isReadOnly = AppState.loadReadOnly() {
+        didSet {
+            UserDefaults.standard.set(isReadOnly, forKey: DefaultsKey.readOnly)
+            autoLock.setReadOnly(isReadOnly)
+        }
     }
     @Published var keepAwakeEnabled: Bool = AppState.loadKeepAwakeEnabled() {
         didSet {
@@ -108,6 +112,7 @@ final class AppState: ObservableObject {
     private var isApplyingKeepAwakePreference = false
 
     init() {
+        autoLock.setReadOnly(isReadOnly)
         remoteAppController.onRemoteAppsChanged = { [weak self] apps in
             guard let appState = self else { return }
             Task { @MainActor [appState] in
@@ -845,6 +850,10 @@ final class AppState: ObservableObject {
 
     private static func loadIntroOnboardingDismissed() -> Bool {
         UserDefaults.standard.bool(forKey: DefaultsKey.introOnboardingDismissed)
+    }
+
+    static func loadReadOnly(defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: DefaultsKey.readOnly)
     }
 
     private static func loadKeepAwakeEnabled() -> Bool {

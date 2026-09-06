@@ -101,7 +101,7 @@ struct SettingsView: View {
 
             GlasstunnelListRow(
                 title: "Read-only mode",
-                subtitle: "Prevent connected devices from making changes.",
+                subtitle: "Block remote changes for every device. Only this Mac can turn it off.",
                 systemImage: "shield",
                 iconColor: GlasstunnelDesign.accent
             ) {

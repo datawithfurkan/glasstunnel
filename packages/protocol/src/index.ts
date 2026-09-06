@@ -238,6 +238,8 @@ export interface AgentStateSnapshot {
 }
 
 export interface Hello {
+  /** Absent on older hosts; only the Mac can change this restriction. */
+  hostReadOnly?: boolean;
   hostVersion: string;
   hostOsVersion: string;
   hostDeviceLabel: string;

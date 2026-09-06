@@ -316,8 +316,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     const peer = get().peer;
     const relay = get().relay;
     set({ readOnlyMode: readOnly });
-    relay?.sendReadOnlyUpdate(readOnly);
-    peer?.sendReadOnlyUpdate(readOnly);
+    if (get().hostHello?.hostReadOnly !== undefined) {
+      relay?.sendReadOnlyUpdate(readOnly);
+      peer?.sendReadOnlyUpdate(readOnly);
+    }
   },
 
   async forgetCurrentMac() {
@@ -479,6 +481,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         },
         onHello: (hello, cached) => {
           if (!isCurrent()) return;
+          if (hello.hostReadOnly !== undefined) {
+            get().relay?.sendReadOnlyUpdate(get().readOnlyMode);
+          }
           if (!cached) {
             reconnectAttempt = 0;
           }
@@ -556,6 +561,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         return;
       }
       set({ relay });
+      if (get().hostHello?.hostReadOnly !== undefined) {
+        relay.sendReadOnlyUpdate(get().readOnlyMode);
+      }
       const heartbeat = window.setInterval(() => {
         if (!isCurrent() || !relay.isConnected) {
           window.clearInterval(heartbeat);
@@ -908,6 +916,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   sendText(agentId, text, submit) {
+    if (!canSendControl(set, get(), agentId)) return false;
     const current = get().agents[agentId];
     if (targetPromptDeliveryUnavailable(current)) {
       appendTargetPromptBlockedMessage(set, agentId, current?.adapterKind);
@@ -931,6 +940,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   sendScreenPointer(agentId, x, y, action = 'click') {
+    if (!canSendControl(set, get(), agentId)) return;
     const relay = get().relay;
     const peer = get().peer;
     const delivered =
@@ -943,6 +953,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   sendInputRequestResponse(response) {
+    if (!canSendControl(set, get(), response.agentId)) return;
     const relay = get().relay;
     const peer = get().peer;
     const delivered =
@@ -957,6 +968,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   async sendImageAttachment(agentId, input) {
+    if (!canSendControl(set, get(), agentId)) return false;
     const current = get().agents[agentId];
     if (targetPromptDeliveryUnavailable(current)) {
       appendTargetPromptBlockedMessage(set, agentId, current?.adapterKind);
@@ -986,6 +998,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   async sendFileAttachmentBatch(agentId, files) {
+    if (!canSendControl(set, get(), agentId)) return false;
     const current = get().agents[agentId];
     if (targetPromptDeliveryUnavailable(current)) {
       appendTargetPromptBlockedMessage(set, agentId, current?.adapterKind);
@@ -1000,6 +1013,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
 
     for (const file of files) {
+      if (!canSendControl(set, get(), agentId)) return false;
       const payload = {
         agentId,
         batchId: file.batchId,
@@ -1026,6 +1040,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   sendQuickReply(agentId, kind) {
+    if (!canSendControl(set, get(), agentId)) return;
     const current = get().agents[agentId];
     if (targetPromptDeliveryUnavailable(current)) {
       appendTargetPromptBlockedMessage(set, agentId, current?.adapterKind);
@@ -1044,6 +1059,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   sendInterrupt(agentId) {
+    if (!canSendControl(set, get(), agentId)) return;
     const relay = get().relay;
     const peer = get().peer;
     if (!(relay?.sendInterrupt({ agentId }) || peer?.sendInterrupt({ agentId }) || false)) {
@@ -1065,6 +1081,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   selectTarget(agentId, targetId) {
+    if (!canSendControl(set, get(), agentId)) return false;
     const relay = get().relay;
     const peer = get().peer;
     if (
@@ -1105,6 +1122,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   renameTarget(agentId, targetId, label) {
+    if (!canSendControl(set, get(), agentId)) return false;
     const trimmed = label.trim().slice(0, 48);
     if (!trimmed) return false;
     const relay = get().relay;
@@ -1143,6 +1161,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   updateRuntimeSettings(agentId, update) {
+    if (!canSendControl(set, get(), agentId)) return false;
     const current = get().agents[agentId];
     if (!current?.runtimeControls) return false;
     if (!current.runtimeControls.editable) return false;
@@ -1180,6 +1199,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   requestRemoteAppAction(remoteAppId, action, options) {
+    if (!canSendControl(set, get(), get().remoteApps.find((app) => app.remoteAppId === remoteAppId)?.agentId ?? remoteAppId)) return false;
     const state = get();
     const relay = state.relay;
     const isPendingScreenStop = isScreenStopAction(remoteAppId, action);
@@ -1219,6 +1239,18 @@ export const useAppStore = create<AppState>((set, get) => ({
     return true;
   },
 }));
+
+export function effectiveReadOnly(state: Pick<AppState, 'readOnlyMode' | 'hostHello'>): boolean {
+  return state.readOnlyMode || state.hostHello?.hostReadOnly === true;
+}
+
+function canSendControl(set: SetState, state: AppState, agentId: string): boolean {
+  if (!effectiveReadOnly(state)) return true;
+  appendLocalSystemMessage(set, agentId, state.hostHello?.hostReadOnly
+    ? 'Action blocked: read-only mode is enabled on this Mac.'
+    : 'Action blocked: this browser is in read-only mode.');
+  return false;
+}
 
 function cacheMessageDetail(set: SetState, detail: MessageDetail): void {
   set((prev) => ({
@@ -1756,6 +1788,9 @@ async function startWebRtcPeerFlow(
       },
       onHello: (hello) => {
         if (!isCurrent()) return;
+        if (hello.hostReadOnly !== undefined) {
+          get().peer?.sendReadOnlyUpdate(get().readOnlyMode);
+        }
         reconnectAttempt = 0;
         set({
           hostHello: hello,

@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
     opts: RelayConnectionOptions;
     disconnect: ReturnType<typeof vi.fn>;
     sendMessageDetailRequest: ReturnType<typeof vi.fn>;
+    sendReadOnlyUpdate: ReturnType<typeof vi.fn>;
+    sendUserInput: ReturnType<typeof vi.fn>;
   }>,
 }));
 
@@ -48,6 +50,8 @@ vi.mock('../transport/RelayConnection', () => ({
     isHostOnline = true;
     disconnect = vi.fn();
     sendMessageDetailRequest = vi.fn(() => true);
+    sendReadOnlyUpdate = vi.fn(() => true);
+    sendUserInput = vi.fn(() => true);
     connect = vi.fn(async () => 'test-phone');
     constructor(readonly opts: RelayConnectionOptions) { mocks.relays.push(this); }
   },
@@ -90,6 +94,7 @@ describe('browser content security boundaries', () => {
       pairedHost: host, availableHosts: [host], workspaceHostDeviceId: host.deviceId,
       agents: {}, messageDetails: {}, peer: null, signaling: null, relay: null,
       route: 'workspace', locked: false, accessRevocationNotice: null,
+      readOnlyMode: false, hostHello: null,
     });
   });
 
@@ -120,6 +125,38 @@ describe('browser content security boundaries', () => {
     expect(useAppStore.getState().relayHostOnline).toBe(online);
     if (online) expect(useAppStore.getState().error).toBeNull();
     else expect(useAppStore.getState().error).toBeTruthy();
+  });
+
+  it('blocks control while the Mac restricts access even after a browser requests control', async () => {
+    await useAppStore.getState().startPeer();
+    const relay = mocks.relays.at(-1)!;
+    const hello: Hello = {
+      hostVersion: 'test', hostOsVersion: 'test', hostDeviceLabel: 'Test Mac',
+      supportedAdapters: [], currentLayout: { shape: GridShape.OneByOne, cells: [] },
+      remoteApps: [], protocolVersion: 4, hostReadOnly: true,
+    };
+    relay.opts.onHello?.(hello, false);
+    useAppStore.getState().setReadOnly(false);
+    expect(useAppStore.getState().sendText('terminal', 'test', true)).toBe(false);
+    expect(relay.sendUserInput).not.toHaveBeenCalled();
+    expect(useAppStore.getState().requestMessageDetail('terminal', 'message')).toBe(true);
+    relay.opts.onHello?.({ ...hello, hostReadOnly: false }, false);
+    expect(useAppStore.getState().sendText('terminal', 'test', true)).toBe(true);
+  });
+
+  it('does not send permission updates that mutate global policy on older hosts', async () => {
+    await useAppStore.getState().startPeer();
+    const relay = mocks.relays.at(-1)!;
+    useAppStore.getState().setReadOnly(true);
+    relay.opts.onHello?.({
+      hostVersion: 'old', hostOsVersion: 'test', hostDeviceLabel: 'Test Mac',
+      supportedAdapters: [], currentLayout: { shape: GridShape.OneByOne, cells: [] },
+      remoteApps: [], protocolVersion: 4,
+    }, false);
+    expect(useAppStore.getState().sendText('terminal', 'test', true)).toBe(false);
+    useAppStore.getState().setReadOnly(false);
+    expect(relay.sendReadOnlyUpdate).not.toHaveBeenCalled();
+    expect(useAppStore.getState().sendText('terminal', 'test', true)).toBe(true);
   });
 
   it('clears expanded output on disconnect and ignores late responses', async () => {

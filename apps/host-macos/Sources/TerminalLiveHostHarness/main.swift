@@ -104,7 +104,7 @@ struct TerminalLiveHostHarness {
             print("LINK_CODE \(linkCode.code)")
             fflush(stdout)
 
-            let revocationTask = startRevocationControl(env: env, signalingURL: signalingURL, manager: manager)
+            let revocationTask = startRevocationControl(env: env, signalingURL: signalingURL, manager: manager, autoLock: autoLock)
             let seconds = UInt64(env["GT_TERMINAL_LIVE_HOST_SECONDS"].flatMap(UInt64.init) ?? 120)
             try await Task.sleep(nanoseconds: seconds * 1_000_000_000)
             revocationTask?.cancel()
@@ -120,7 +120,7 @@ struct TerminalLiveHostHarness {
     // Test executable only: an opt-in local file channel exercises the same
     // SessionManager operation as Access, without touching the installed app.
     @MainActor
-    private static func startRevocationControl(env: [String: String], signalingURL: URL, manager: SessionManager) -> Task<Void, Never>? {
+    private static func startRevocationControl(env: [String: String], signalingURL: URL, manager: SessionManager, autoLock: AutoLock) -> Task<Void, Never>? {
         guard env["GLASSTUNNEL_DEV"] == "1",
               ["127.0.0.1", "localhost", "::1"].contains(signalingURL.host ?? ""),
               let path = env["GT_TERMINAL_LIVE_REVOCATION_CONTROL"] else { return nil }
@@ -132,7 +132,11 @@ struct TerminalLiveHostHarness {
                    let request = try? JSONDecoder().decode(RevocationRequest.self, from: data) {
                     do {
                         try FileManager.default.removeItem(at: requestURL)
-                        try await manager.revokeDevice(request.deviceID)
+                        if let readOnly = request.hostReadOnly {
+                            autoLock.setReadOnly(readOnly)
+                        } else {
+                            try await manager.revokeDevice(request.deviceID)
+                        }
                         let result = RevocationResult(requestID: request.requestID, confirmed: true)
                         try JSONEncoder().encode(result).write(to: resultURL, options: [.atomic, .completeFileProtection])
                     } catch {
@@ -145,7 +149,11 @@ struct TerminalLiveHostHarness {
         }
     }
 
-    private struct RevocationRequest: Decodable { let requestID: String; let deviceID: String }
+    private struct RevocationRequest: Decodable {
+        let requestID: String
+        let deviceID: String
+        let hostReadOnly: Bool?
+    }
     private struct RevocationResult: Encodable { let requestID: String; let confirmed: Bool }
 
     @MainActor

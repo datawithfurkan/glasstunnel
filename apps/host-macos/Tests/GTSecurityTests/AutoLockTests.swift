@@ -36,4 +36,22 @@ final class AutoLockTests: XCTestCase {
         lock.setReadOnly(false)
         XCTAssertFalse(lock.isReadOnly)
     }
+
+    func testOnlyHostPolicyChangesPublishAndDoNotEraseBrowserRestrictions() {
+        let lock = AutoLock()
+        var changes = 0
+        lock.onReadOnlyChange = { changes += 1 }
+        lock.setClientReadOnly(true, deviceID: "first")
+        XCTAssertEqual(changes, 0)
+        XCTAssertTrue(lock.isReadOnly(for: "first"))
+        XCTAssertFalse(lock.isReadOnly(for: "second"))
+        lock.setReadOnly(true)
+        lock.setReadOnly(true)
+        XCTAssertEqual(changes, 1)
+        XCTAssertTrue(lock.isReadOnly(for: "second"))
+        lock.setReadOnly(false)
+        XCTAssertEqual(changes, 2)
+        XCTAssertTrue(lock.isReadOnly(for: "first"))
+        XCTAssertFalse(lock.isReadOnly(for: "second"))
+    }
 }

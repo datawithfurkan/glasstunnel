@@ -1,7 +1,7 @@
 import { useDeferredValue, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import type { AgentStateSnapshot, AgentTargetOption, RemoteApp, RemoteAppActionRequest } from '@glasstunnel/protocol';
 import { AgentStatus } from '@glasstunnel/protocol';
-import { useAppStore } from '../lib/store';
+import { effectiveReadOnly, useAppStore } from '../lib/store';
 import { isDirectRemoteApp, isProjectRemoteApp } from '../lib/remoteApps';
 import { currentWorkspaceFixtureInitialAppId } from '../dev/workspaceFixture';
 import { HorizontalScrollStrip } from '../ui/HorizontalScrollStrip';
@@ -940,6 +940,7 @@ function FocusedChat({
   connectionError: string | null;
   onRetryConnection: () => void;
 }) {
+  const readOnly = useAppStore(effectiveReadOnly);
   const terminalSessionTarget = app.remoteAppId === 'terminal' ? defaultTarget(snapshot) : undefined;
   const terminalSessionLabel =
     terminalSessionTarget?.threadLabel ||
@@ -991,6 +992,9 @@ function FocusedChat({
   }
 
   if (shouldShowStartRemoteAppPanel(app, snapshot)) {
+    if (readOnly) {
+      return <WorkspaceState title="Read-only access" copy="Starting this app requires control access." tone="warning" />;
+    }
     if (pendingAction) {
       const timedOut = remoteAppActionTimedOut(pendingAction, pendingActionNowMs);
       const state = remoteAppStartState({
@@ -1078,7 +1082,7 @@ function FocusedChat({
           />
           <button
             type="submit"
-            disabled={!renameDraft.trim()}
+            disabled={readOnly || !renameDraft.trim()}
             className="gt-touch-target rounded-full bg-white/10 px-3 py-2 text-xs font-semibold text-white transition hover:bg-white/16 disabled:cursor-not-allowed disabled:opacity-45"
           >
             Save
@@ -1099,7 +1103,7 @@ function FocusedChat({
           <button
             type="button"
             onClick={() => onNewTerminalSession(app)}
-            disabled={Boolean(pendingSessionAction)}
+            disabled={readOnly || Boolean(pendingSessionAction)}
             aria-label="Start a new Terminal session"
             title="Start a new Terminal session"
             className={`gt-touch-target rounded-full border px-3 py-2 text-xs font-semibold transition disabled:cursor-wait disabled:opacity-60 ${
@@ -1114,7 +1118,7 @@ function FocusedChat({
             <button
               type="button"
               onClick={() => setRenamingTerminal(true)}
-              disabled={Boolean(pendingSessionAction)}
+              disabled={readOnly || Boolean(pendingSessionAction)}
               aria-label="Rename Terminal session"
               title="Rename Terminal session"
               className="gt-touch-target rounded-full border border-white/10 px-3 py-2 text-xs font-semibold text-white/80 transition hover:bg-white/10 disabled:cursor-wait disabled:opacity-60"
@@ -1125,7 +1129,7 @@ function FocusedChat({
           <button
             type="button"
             onClick={() => onCloseTerminalSession(app)}
-            disabled={Boolean(pendingSessionAction)}
+            disabled={readOnly || Boolean(pendingSessionAction)}
             aria-label="Close Terminal session"
             title="Close Terminal session"
             className="gt-touch-target rounded-full border border-white/10 px-3 py-2 text-xs font-semibold text-white/80 transition hover:bg-white/10 disabled:cursor-wait disabled:opacity-60"

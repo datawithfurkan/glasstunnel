@@ -58,8 +58,8 @@ and [UI parity](../agent-ui-contract.md).
 | Stage | Current status | Exit gate |
 | --- | --- | --- |
 | 1. Existing patch | Complete; deployed and verified 2026-09-06 | Protected PR/checks, approved deployment and bounded verification |
-| 2. Revocation | Local gate passed; integration pending | Active/new sessions denied across relay and WebRTC; UI confirmation is truthful |
-| 3. Permissions | Queued | Host policy rejects unauthorized actions regardless of browser behavior |
+| 2. Revocation | Complete in source and hosted services; Mac binary publication remains separate | Active/new sessions denied across relay and WebRTC; UI confirmation is truthful |
+| 3. Permissions | Active | Host policy rejects unauthorized actions regardless of browser behavior |
 | 4. Retention | Queued | Tested expiry/deletion and account-scoped cache behavior |
 | 5. E2E design | Queued, design only | Maintainer approves the threat model and migration design |
 
@@ -206,7 +206,7 @@ message routing and alarm), `apps/host-macos/Sources/Security/DeviceRegistry.swi
 - [x] Run targeted Worker, Swift and PWA tests, full Swift tests, and the new local
   account E2E. Inspect native Access UI only when deterministic tests cannot prove
   the state presentation. Preserve all personal permissions and installed apps.
-- [ ] Review the diff and demonstrate both immediate local cutoff and the defined
+- [x] Review the diff and demonstrate both immediate local cutoff and the defined
   server acknowledgement. Follow stage 1's reviewed shipping gate. Any Mac binary
   publication is a separate approved release operation.
 
@@ -255,6 +255,29 @@ as securing an account whose credentials an attacker still controls.
 
 ## Stage 3: Host-Owned Control Permissions
 
+### Stage 3 Task Packet
+
+- Objective: a browser cannot relax the Mac's read-only restriction or change
+  another browser's voluntary restriction. Enforce policy at command dispatch.
+- User-visible behavior: persist the Mac Settings restriction and publish it to
+  connected browsers; show effective read-only status and disable mutation
+  controls. Rejected forged requests receive a visible explanation.
+- Authority: AutoLock owns host policy plus per-device voluntary restrictions;
+  both relay and DataChannel consult the same effective decision. Host policy
+  is changed only by the local Mac. An additive optional Hello field advertises
+  the host restriction; absent fields do not claim enforcement on older hosts.
+- Action inventory: input/prompts/quick replies, attachments, pointer events,
+  input-request answers, interrupt, target selection/rename, model settings and
+  app lifecycle actions are control. Message detail and existing streams are
+  observation. Heartbeat and video delivery hints are transport maintenance;
+  obsolete grid/redaction updates remain non-operative. Screen stop is not an
+  exception to read-only control policy. Idle-lock recovery behavior is unchanged.
+- Validation: adversarial relay/DataChannel tests, two-client isolation, queued
+  dispatch regression, optional-field compatibility, web permission states and
+  disposable local account E2E. Full Swift plus touched surface checks follow.
+- Out of scope: manual lock redesign, retention, installed app replacement,
+  release/signing/TCC and E2E encryption.
+
 **Inspect/modify:** `apps/host-macos/Sources/Security/AutoLock.swift`,
 `apps/host-macos/Sources/Transport/Session.swift`, `SessionManager.swift`,
 `apps/host-macos/Sources/App/AppState.swift` and its Settings/Access views,
@@ -263,22 +286,48 @@ as securing an account whose credentials an attacker still controls.
 **Tests:** `AutoLockTests.swift`, `SessionManagerTests.swift`,
 `apps/mobile-pwa/src/lib/store.test.ts` and local account E2E.
 
-- [ ] Inventory every remote action and classify observe/control/admin behavior.
+- [x] Inventory every remote action and classify observe/control/admin behavior.
   Include shell input, app launch, prompts, settings changes, attachments, clicks,
   clipboard-like input, stop/recovery and remote read-only changes.
-- [ ] Add failing tests sending control actions through both relay and DataChannel
+- [x] Add failing tests sending control actions through both relay and DataChannel
   while the host denies control. Include a modified browser attempting to relax
   read-only mode and two browsers with conflicting settings.
-- [ ] Keep the Mac authoritative. A browser may request less access but cannot
+- [x] Keep the Mac authoritative. A browser may request less access but cannot
   relax a host restriction. Validate at dispatch, including asynchronous actions
   that were queued before the permission changed.
-- [ ] Reflect effective permissions in Mac and web controls with visible denied
+- [x] Reflect effective permissions in Mac and web controls with visible denied
   results. Do not silently discard commands or claim successful execution.
 - [ ] Run targeted and full Swift tests, PWA build/test/lint, protocol checks if
   changed, and disposable-account command tests. Ship through the same gates.
 
 **Acceptance:** hiding/disabling a web button is not the enforcement mechanism;
 the host rejects the same unauthorized message sent directly over either transport.
+
+### Stage 3 Local Evidence (2026-09-06)
+
+- Seven adversarial transport tests pass after reproducing the host-policy override
+  and cross-browser interference. Both transports recheck queued dispatch. An
+  exhaustive action classifier makes new protocol cases choose an access boundary.
+- Full Swift: 462 tests, eight environment-gated skips, zero failures. Includes
+  persisted Settings, host-policy notifications and optional Hello compatibility.
+- PWA: 244 tests pass, including a failing-then-passing legacy-host regression.
+  Permission updates are sent only when a host advertises the new capability;
+  older hosts cannot be accidentally placed in global read-only mode by this PWA.
+- Worker: 46 tests pass; targeted denial snapshots reach only the intended client
+  and are not persisted as shared app state. Worker typecheck and dry build pass.
+- The local two-browser permission/revocation journey passed. Both browsers saw
+  the Mac restriction, all relevant controls disabled, and only the forged-request
+  sender saw its denial. The forged command produced no execution marker. Clearing
+  Mac policy restored input; one browser's voluntary restriction left the other
+  able to run a marker. Revocation still removed only the revoked browser's access.
+- Inspected the ignored phone screenshot: readable host-policy banner, disabled
+  composer/session controls, preserved Terminal output and a visible denial.
+  No personal account, installed app, TCC, Keychain or screen capture was changed.
+- Ordinary account/Terminal, desktop/mobile Chromium fixtures and mobile WebKit
+  fixtures passed. PWA build/lint, protocol generation/build, lab unit tests,
+  security/privacy and public audits, and whitespace validation passed.
+- Shipping is pending the protected PR and exact-commit hosted deployment.
+  A new Mac release is separate; source/hosted integration is not binary delivery.
 
 ## Stage 4: Bounded Content Lifetime
 
@@ -334,11 +383,13 @@ Update this section and `docs/current-loop-state.md` when a gate changes, not on
 every check. Use the PR/check/deploy URLs as external evidence without creating
 extra documentation-only CI runs while an approval is pending.
 
-- Active stage: 2. Stage 1 passed; no stage 2 runtime change is deployed yet.
-- Working branch: `codex/security-follow-up`; policy/handoff updates remain local
-  for the next meaningful batch, avoiding an extra documentation-only CI push.
-- Merged source: `da9a1bc3659b33e480219e53226976eaef38d9ff` via PR #32. GitHub
-  rebased the original patch/plan commits; the merged tree matches the tested tree.
+- Active stage: 3. Stages 1-2 passed in source and hosted services. The public
+  Mac binary still needs a separately coordinated release for the new host code.
+- Working branch: `codex/security-permissions`, from the tested stage 2 merge.
+- Merged source: `c4acdc2a62c4e43a67d4d653a8d907340a1706ed` via
+  [PR #33](https://github.com/datawithfurkan/glasstunnel/pull/33). The merged tree
+  exactly matches tested candidate `db998a2c`. All five protected checks passed
+  in [PR CI](https://github.com/datawithfurkan/glasstunnel/actions/runs/34057336269).
 - Production authority: the maintainer approved the proposed `da9a1bc3` rollout
   and routine continuation of this plan on 2026-09-06. Do not repeat that approval.
 - Review authority: sole maintainer authorized zero contributor approvals;
@@ -374,8 +425,15 @@ extra documentation-only CI runs while an approval is pending.
   Chromium and WebKit contexts verified the relay disclosure, signed-out PWA
   rendering and reload, with zero page errors. No personal login, command,
   account mutation, Mac release or permission change was used.
-- Next action: integrate the locally verified stage 2 through a protected PR,
-  then deploy its hosted surfaces at the exact merged SHA. The lab is stopped
-  and its owned processes have been cleaned up.
-  No contributor review, repeated rollout approval or renewed Cloudflare login
-  is currently needed. Stages 3-5 remain queued.
+- Stage 2 deployment: one dispatch for `c4acdc2a` succeeded in
+  [Deploy](https://github.com/datawithfurkan/glasstunnel/actions/runs/34057717088).
+  Production PWA `0ee8454e-8b06-45ff-9376-53cd2a018d84` and site
+  `a95835e0-4d9a-42a4-bb54-deea91d8868c` report source `c4acdc2`.
+  Worker traffic is 100% version `77737edb-4944-455d-8951-b4dd261e8e5b`.
+  Immediate rollback references are the stage 1 deployments above. Isolated
+  Chromium/WebKit mobile-view shell and reload checks passed with no page errors;
+  service worker and signaling health returned 200, with service worker caching
+  still `public, no-cache, must-revalidate`. No personal account was used.
+- Next action: implement and prove the stage 3 task packet above. The lab is
+  stopped. No routine approval or Cloudflare login is needed. Stages 4-5 remain
+  queued; stage 4's exact deletion policy and stage 5's design are decision gates.

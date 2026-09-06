@@ -2,6 +2,17 @@ import XCTest
 @testable import GTProtocol
 
 final class CodecTests: XCTestCase {
+    func testHelloPermissionsAreOptionalForOlderHosts() throws {
+        let old = Hello(hostVersion: "old", hostOsVersion: "test", hostDeviceLabel: "Test",
+            supportedAdapters: [], currentLayout: .empty(shape: .oneByOne))
+        let data = try ProtocolCodec.encode(old)
+        XCTAssertNil(try ProtocolCodec.decode(Hello.self, from: data).hostReadOnly)
+        for restricted in [true, false] {
+            var current = old
+            current.hostReadOnly = restricted
+            XCTAssertEqual(try ProtocolCodec.decode(Hello.self, from: ProtocolCodec.encode(current)).hostReadOnly, restricted)
+        }
+    }
     func testDataChannelMessageRoundTrip() throws {
         let app = RemoteApp(
             remoteAppId: "codex",

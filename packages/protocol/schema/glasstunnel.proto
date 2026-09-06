@@ -117,6 +117,7 @@ message Hello {
   // Protocol version for negotiation. Even = stable, odd = development.
   // Mismatches > 1 major version should close the connection.
   uint32 protocol_version = 7;
+  optional bool host_read_only = 8;
 }
 
 message AgentStateSnapshot {

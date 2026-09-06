@@ -147,3 +147,17 @@ changes or a blocker is materially narrowed.
 - Next action: Stage 2 authorization and revocation, using disposable local identities.
 - End commit: da9a1bc3659b33e480219e53226976eaef38d9ff (deployed source).
 - CI/deploy: https://github.com/datawithfurkan/glasstunnel/actions/runs/34047515720 succeeded; main CI 34042927618 passed.
+
+## 2026-09-06 - Acknowledged device revocation hosted rollout
+
+- Start commit: da9a1bc3
+- Release gate: Cut off revoked browser identities across Mac dispatch, relay and signaling, with truthful acknowledgement and browser cleanup.
+- Files changed: Mac registry/Access/transports, Worker account and socket authorization, PWA access-loss handling, isolated lab regressions and security documentation.
+- Validation: 45 Worker tests, 452 Swift tests (eight environment skips), 242 PWA tests, 52 lab unit tests, two-browser revocation and ordinary local account/fixture journeys passed. Build, lint, protocol, security/privacy and public audits passed.
+- Manual testing: Inspected the ignored mobile revocation screenshot. No personal-account, installed-app, Keychain or TCC mutation. Isolated Chromium/WebKit hosted shell and reload checks passed without page errors.
+- Evidence: PR #33, CI 34057336269, Deploy 34057717088. PWA 0ee8454e-8b06-45ff-9376-53cd2a018d84 and site a95835e0-4d9a-42a4-bb54-deea91d8868c report c4acdc2; Worker traffic is 100% version 77737edb-4944-455d-8951-b4dd261e8e5b. Rollback is recorded in the security-hardening plan.
+- Outcome: passed in source and hosted services; no new Mac binary published.
+- Limitation: Public 0.1.9 lacks the new host operation. Revocation cannot undo commands already executing, retract received content or secure an account with compromised credentials.
+- Next action: Stage 3 host-owned permissions; retention and E2E design remain queued.
+- End commit: c4acdc2a62c4e43a67d4d653a8d907340a1706ed.
+- CI/deploy: https://github.com/datawithfurkan/glasstunnel/actions/runs/34057717088 succeeded. One dispatch, no reruns, tags, signing or notarization.

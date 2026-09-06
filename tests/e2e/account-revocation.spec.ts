@@ -2,8 +2,8 @@ import { expect, test, type Page } from '@playwright/test';
 import { readFile, writeFile, rename, rm } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 
-test('@revocation-account revoking one browser cuts off access without interrupting another', async ({ page, browser, baseURL }, testInfo) => {
-  test.setTimeout(90_000);
+test('@revocation-account host permissions and revocation isolate two browsers', async ({ page, browser, baseURL }, testInfo) => {
+  test.setTimeout(120_000);
   const control = process.env.GT_LAB_REVOCATION_CONTROL;
   if (!control) throw new Error('Use the local lab runner for revocation tests.');
   const secondContext = await browser.newContext({ baseURL, viewport: { width: 390, height: 844 } });
@@ -79,6 +79,41 @@ test('@revocation-account revoking one browser cuts off access without interrupt
       const { useAppStore } = await import(/* @vite-ignore */ modulePath);
       return useAppStore.getState().phoneKeypair.deviceId as string;
     });
+    async function setHostReadOnly(hostReadOnly: boolean) {
+      const requestID = randomUUID();
+      await writeFile(control + '.tmp', JSON.stringify({ requestID, deviceID, hostReadOnly }), { mode: 0o600 });
+      await rename(control + '.tmp', control);
+      await expect.poll(async () => {
+        try { return JSON.parse(await readFile(control + '.result', 'utf8')); }
+        catch { return null; }
+      }).toEqual({ requestID, confirmed: true });
+    }
+    await setHostReadOnly(true);
+    for (const target of [page, second]) {
+      await expect(target.getByText('Read-only on this Mac. Change access in Mac Settings.')).toBeVisible();
+      await expect(target.getByRole('textbox', { name: 'Read-only mode', exact: true }).filter({ visible: true })).toBeDisabled();
+      await expect(target.getByRole('button', { name: 'Start a new Terminal session' }).filter({ visible: true })).toBeDisabled();
+    }
+    await page.evaluate(async () => {
+      const modulePath = '/src/lib/store.ts';
+      const { useAppStore } = await import(/* @vite-ignore */ modulePath);
+      const relay = useAppStore.getState().relay;
+      // Bypass the UI/store guards to exercise the actual host boundary.
+      relay.sendReadOnlyUpdate(false);
+      relay.sendUserInput({ agentId: 'terminal', text: "printf '%s%s\\n' 'FORGED_' 'CONTROL_EXECUTED'", submitOnSend: true });
+    });
+    await expect(page.getByText('action blocked: read-only mode is on', { exact: true })).toBeVisible();
+    await expect(second.getByText('action blocked: read-only mode is on', { exact: true })).toHaveCount(0);
+    await expect(page.locator('pre').filter({ hasText: 'FORGED_CONTROL_EXECUTED', visible: true })).toHaveCount(0);
+    await page.screenshot({ path: testInfo.outputPath('host-read-only.png'), fullPage: true });
+    await setHostReadOnly(false);
+    await expect(page.getByText('Read-only on this Mac. Change access in Mac Settings.')).toHaveCount(0);
+    await marker(second, 'HOST_CONTROL_RESTORED');
+    await page.getByRole('button', { name: 'Open menu' }).click();
+    await page.getByRole('checkbox', { name: 'Read-only in this browser' }).check();
+    await page.getByRole('button', { name: 'Open menu' }).click();
+    await expect(page.getByRole('textbox', { name: 'Read-only mode', exact: true }).filter({ visible: true })).toBeDisabled();
+    await marker(second, 'SECOND_BROWSER_STILL_CONTROLS');
     const requestID = randomUUID();
     await writeFile(control + '.tmp', JSON.stringify({ requestID, deviceID }), { mode: 0o600 });
     await rename(control + '.tmp', control);
@@ -87,7 +122,7 @@ test('@revocation-account revoking one browser cuts off access without interrupt
       catch { return null; }
     }, { timeout: 35_000 }).toEqual({ requestID, confirmed: true });
     await expect(page.getByText(/Access to this Mac was revoked/)).toBeVisible();
-    await expect(page.getByPlaceholder('Type a terminal command...')).toHaveCount(0);
+    await expect(page.getByRole('textbox', { name: 'Read-only mode', exact: true })).toHaveCount(0);
     await page.screenshot({ path: testInfo.outputPath('access-revoked.png'), fullPage: true });
     await marker(second, 'SECOND_BROWSER_AFTER');
     await page.reload();

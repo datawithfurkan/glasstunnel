@@ -23,10 +23,12 @@ public final class AutoLock: Sendable {
     public var idleTimeout: TimeInterval
     public var onLock: (@Sendable () -> Void)?
     public var onUnlock: (@Sendable () -> Void)?
+    public var onReadOnlyChange: (@MainActor () -> Void)?
 
     private let lock = NSLock()
     private var state = State()
     private var timer: Timer?
+    private var readOnlyClients: Set<String> = []
 
     nonisolated public init(idleTimeout: TimeInterval = 5 * 60) {
         self.idleTimeout = idleTimeout
@@ -79,8 +81,20 @@ public final class AutoLock: Sendable {
 
     public func setReadOnly(_ readOnly: Bool) {
         lock.lock()
+        let changed = state.readOnlyMode != readOnly
         state.readOnlyMode = readOnly
         lock.unlock()
+        if changed { onReadOnlyChange?() }
+    }
+
+    /// Remote preferences can reduce only that device's access, never host policy.
+    public func setClientReadOnly(_ readOnly: Bool, deviceID: String) {
+        if readOnly { readOnlyClients.insert(deviceID) }
+        else { readOnlyClients.remove(deviceID) }
+    }
+
+    public func isReadOnly(for deviceID: String) -> Bool {
+        isReadOnly || readOnlyClients.contains(deviceID)
     }
 
     public func currentState() -> State {
