@@ -274,13 +274,22 @@ extra documentation-only CI runs while an approval is pending.
 - Main CI: all five checks passed in the automatic post-merge confirmation,
   not a manually dispatched rerun:
   https://github.com/datawithfurkan/glasstunnel/actions/runs/34042927618
-- Deployment preflight: local Wrangler has no authenticated Cloudflare access;
-  the read-only Pages deployment-list request failed before returning records.
-  No login, credentials, configuration or deployment was changed. The latest
-  successful GitHub Deploy record is run `33844017476` (workflow head `44b8cb92`),
-  but this alone does not verify current live Cloudflare deployment IDs. Compared
-  with that source revision, the candidate has no Worker/protocol source changes.
-- Next action: restore authenticated Cloudflare read access, verify current
-  rollback references and obtain approval for deployment of `da9a1bc3`; deploy
-  once and verify before opening stage 2. No contributor review is needed.
+- Authentication: restored on 2026-09-06 using normal `wrangler login` with
+  automatic browser opening and `--use-keyring`. The maintainer approved in
+  Chrome. Account/user read, Pages and Worker-script scopes were requested;
+  no credential values belong in this document. Read-only queries succeeded
+  in separate CLI invocations. Earlier manually opened requests exceeded
+  Wrangler's two-minute callback window; do not reuse their expired links.
+- Deployment preflight: latest production Pages records are PWA
+  `4b447db0-75ea-4114-9a5b-284c1d4604f0` and site
+  `2a0532e8-e4cc-4cbe-9292-2e2590a37fe0`, both source `44b8cb9`.
+  The latest Worker deployment is `f2a0cda9-09c5-4089-a298-032b8f51fc81`,
+  with 100% on version `c9deee67-e744-426a-a1c8-6dadaa567061`.
+  These records match the timing of successful GitHub Deploy run `33844017476`.
+  Recheck the active deployment immediately before any later rollback or release.
+  Compared with that source revision, the candidate has no Worker/protocol
+  source changes. No production mutation was made during authentication.
+- Next action: finish preflight and obtain approval for deployment of `da9a1bc3`;
+  deploy once and verify before opening stage 2. No contributor review or renewed
+  Cloudflare login is currently needed.
 - Later stages remain queued; no changes to their runtime behavior are claimed.
