@@ -35,8 +35,13 @@ and [UI parity](../agent-ui-contract.md).
   No administrator bypass or further protection change without authorization.
 - Inspect one resulting CI run per push. A main merge may trigger the repository's
   separate automatic confirmation run; do not dispatch or rerun CI manually.
-- Production deployment is a separate explicit approval point. Confirm an exact
-  reviewed commit, surfaces, rollback reference and compatibility before dispatch.
+- On 2026-09-06 the maintainer approved the proposed `da9a1bc3` production rollout
+  and instructed the driver to continue necessary steps in this plan without
+  asking again for routine actions. Confirm exact commits, surfaces, rollback
+  references and compatibility before each planned deployment. Escalate only
+  genuinely new decisions, unavailable access or a material change in risk;
+  this is not authority for unrelated releases, destructive data changes or E2E
+  implementation.
 - A failed check is investigated locally; two attempts without new evidence require
   a new diagnostic or a blocker record, not repeated retries.
 - Telegram is for required human review, approval, credentials or permissions,
@@ -52,8 +57,8 @@ and [UI parity](../agent-ui-contract.md).
 
 | Stage | Current status | Exit gate |
 | --- | --- | --- |
-| 1. Existing patch | PR #32 merged; deployment pending | Protected PR/checks, approved deployment and bounded verification |
-| 2. Revocation | Queued | Active/new sessions denied across relay and WebRTC; UI confirmation is truthful |
+| 1. Existing patch | Complete; deployed and verified 2026-09-06 | Protected PR/checks, approved deployment and bounded verification |
+| 2. Revocation | Local gate passed; integration pending | Active/new sessions denied across relay and WebRTC; UI confirmation is truthful |
 | 3. Permissions | Queued | Host policy rejects unauthorized actions regardless of browser behavior |
 | 4. Retention | Queued | Tested expiry/deletion and account-scoped cache behavior |
 | 5. E2E design | Queued, design only | Maintainer approves the threat model and migration design |
@@ -118,14 +123,14 @@ Existing bundle-size and Node localStorage warnings remain non-failing.
   [PR #32](https://github.com/datawithfurkan/glasstunnel/pull/32) merged at
   `da9a1bc3659b33e480219e53226976eaef38d9ff`. Its five checks passed in
   [PR CI](https://github.com/datawithfurkan/glasstunnel/actions/runs/34042442055).
-- [ ] Obtain approval to deploy the exact merged SHA; record the current deployed
+- [x] Obtain approval to deploy the exact merged SHA; record the current deployed
   web/Worker revisions first. The current Deploy workflow redeploys the PWA, site
   and Worker together. Do not assume Worker code is unchanged relative to what is
   actually deployed merely because this PR has no Worker source diff.
-- [ ] Dispatch Deploy once for that SHA; inspect its result. Verify public security
+- [x] Dispatch Deploy once for that SHA; inspect its result. Verify public security
   copy, app-shell/service-worker delivery and a non-destructive compatibility
   canary. No Mac release, signing, notarization or version bump is required here.
-- [ ] Record PR, immutable CI/deploy URLs, exact SHA and canary result. Verify
+- [x] Record PR, immutable CI/deploy URLs, exact SHA and canary result. Verify
   Dependabot state once after integration; indexing delay is not a reason to push.
 
 After merge, the live Dependabot API reported zero open alerts on 2026-09-06.
@@ -151,25 +156,54 @@ message routing and alarm), `apps/host-macos/Sources/Security/DeviceRegistry.swi
 `apps/mobile-pwa/src/lib/storePrivacy.test.ts`; add
 `tests/e2e/account-revocation.spec.ts` for a disposable two-client journey.
 
-- [ ] Specify one revocation operation and acknowledgement across Mac registry,
+### Stage 2 Task Packet
+
+- Objective: make an explicit Mac-side device revocation override same-account
+  automatic trust for that Mac, including active sessions and reconnects.
+- User-visible behavior: the Mac cuts off local access first, shows confirmation
+  pending until the relay/account denial is durable, and offers a retry after
+  failure. The browser clears the workspace, exits to its Mac list and stops
+  reconnecting after an access-revoked close (4003). Other Macs are unaffected.
+- Authority: a signed host signaling connection requests revocation. The Worker
+  verifies the registered host key, role and account ownership. Its per-host
+  RelayHub persists a denial tombstone before acknowledgement and records the
+  revoked account pairing. The signaling path must retain/filter the same deny
+  decision, including cached authorizations and queued envelopes.
+- Local persistence: removing a device row must not delete its denial. No API
+  here re-enables a revoked identity implicitly; account registration must not
+  reset revocation or overwrite an existing host identity.
+- Cross-surface files: Worker auth/routing, Mac registry/session manager/Access,
+  PWA connection/store and focused tests. No protocol-schema or new crypto work.
+- Validation: failing-then-passing Worker boundary tests, Swift registry/session
+  and UI state tests, PWA privacy tests, a disposable two-browser local journey,
+  then the existing compatibility lane. No personal account or installed app.
+- Out of scope: permission policy (stage 3), content retention (stage 4), E2E
+  implementation, and a new Mac binary publication. Stage 2 stays open until
+  the complete cutoff and truthful acknowledgement are demonstrated.
+- Current evidence: invalid/missing/revoked relay host records, revoked pairing
+  reconnects, registration identity overwrite, concurrent registration revocation,
+  browser access-loss behavior, and RelayHub cutoff/authentication races have
+  focused local coverage. This is partial evidence, not the stage exit gate.
+
+- [x] Specify one revocation operation and acknowledgement across Mac registry,
   account authorization, relay and WebRTC. Define pending/failure behavior before
   changing transport code. A same-device revocation must survive reconnect,
   registration, process restart and restoration from Durable Object attachments.
-- [ ] Write failing tests for a connected client's next command and next content
+- [x] Write failing tests for a connected client's next command and next content
   delivery after revocation, plus reconnection and cache replay. Use the existing
   test socket/Supabase helpers with disposable keys; assert no content or command
   reaches the revoked peer, not merely that a registry flag changed.
-- [ ] Cover missing/revoked/wrong-owner host records and mismatched keys, expired
+- [x] Cover missing/revoked/wrong-owner host records and mismatched keys, expired
   authentication, stale authorization caches, hibernation, concurrent clients,
   and registration that would otherwise reset `revoked_at`.
-- [ ] Persist denial before confirming revocation; close or invalidate affected
+- [x] Persist denial before confirming revocation; close or invalidate affected
   sessions on every path and refuse further dispatch. Fail closed on unresolved
   authorization. Retain a durable deny/tombstone when removing a UI row would
   otherwise cause same-account auto-authorization to re-add that device.
-- [ ] Make Access show pending, confirmed and retryable failure states. Make the
+- [x] Make Access show pending, confirmed and retryable failure states. Make the
   affected browser leave the workspace with an access-lost explanation and stop
   automatic reconnect attempts that could restore stale content.
-- [ ] Run targeted Worker, Swift and PWA tests, full Swift tests, and the new local
+- [x] Run targeted Worker, Swift and PWA tests, full Swift tests, and the new local
   account E2E. Inspect native Access UI only when deterministic tests cannot prove
   the state presentation. Preserve all personal permissions and installed apps.
 - [ ] Review the diff and demonstrate both immediate local cutoff and the defined
@@ -180,6 +214,44 @@ message routing and alarm), `apps/host-macos/Sources/Security/DeviceRegistry.swi
 or execute another operation through any active or new session. UI confirmation
 means the declared cutoff is acknowledged. Revoking a device is not advertised
 as securing an account whose credentials an attacker still controls.
+
+### Stage 2 Local Evidence (2026-09-06)
+
+- Worker: 45 runtime tests pass, including real signed WebSocket authentication,
+  revocation races, failed database writes/retry, hibernation with revoked/expired
+  attachments, offline signaling and per-Mac denial. Typecheck/build passed.
+- Mac: 452 tests pass with eight environment-gated skips. Focused tests cover local
+  persistence, removal tombstones, stopped DataChannel dispatch, relay dispatch,
+  offline/unconfirmed revocation, upload isolation and Access status presentation.
+- PWA: 242 tests pass, including 13 privacy cases covering revoked-session cleanup
+  and ordinary expiry recovery. Build and lint pass.
+- `node scripts/lab/e2e.mjs revocation`: passed with disposable local Supabase,
+  Worker, Swift host and two independent Chromium browsers. The first browser loses
+  its composer and host entry after Mac acknowledgement; the second still executes
+  a marker command. Markers use split arguments so an echoed command cannot satisfy
+  the output assertion, and use a newly created, lab-owned Terminal session.
+  Reload cannot restore the revoked host. The existing account
+  Terminal and desktop/mobile fixture lanes also passed.
+- Inspected the local phone screenshot: clear revocation notice, no workspace or
+  composer, and no remaining host entry. Raw image stays ignored. Native Access
+  presentation is covered by deterministic state tests, not a new personal-app launch.
+- A restart test initially held an unconsumed response body, preventing runtime
+  eviction; draining it fixed the test without skipping hibernation. An early full
+  Swift run had one failure while Terminal E2E was also running; isolated final
+  full runs passed. Avoid overlapping those native test lanes.
+- New relay-only browser trust notifications and immediate reconnect after host
+  linking preserve first-link behavior with strict host-record authorization.
+- The isolated two-browser test exposed an existing cached-greeting bug: after
+  online presence arrived, replaying the greeting incorrectly added an offline
+  error and disabled the composer until fresh output arrived. A failing unit
+  regression confirmed the cause; preserving online presence fixed both the
+  deterministic test and the real two-browser journey. No speculative Terminal
+  adapter changes were made. Status-only test evidence stays in ignored artifacts.
+- Partial relay uploads are keyed by device plus transfer ID and removed on local
+  revocation. Already persisted attachment files are not erased by this operation.
+- Publication limitation: no version bump, binary release, installed-app replacement,
+  Keychain/TCC reset or personal account mutation. The 0.1.9 public binary still
+  needs a separately coordinated release before the new Mac action reaches users.
 
 ## Stage 3: Host-Owned Control Permissions
 
@@ -262,12 +334,13 @@ Update this section and `docs/current-loop-state.md` when a gate changes, not on
 every check. Use the PR/check/deploy URLs as external evidence without creating
 extra documentation-only CI runs while an approval is pending.
 
-- Active stage: 1.
+- Active stage: 2. Stage 1 passed; no stage 2 runtime change is deployed yet.
 - Working branch: `codex/security-follow-up`; policy/handoff updates remain local
   for the next meaningful batch, avoiding an extra documentation-only CI push.
 - Merged source: `da9a1bc3659b33e480219e53226976eaef38d9ff` via PR #32. GitHub
   rebased the original patch/plan commits; the merged tree matches the tested tree.
-- Production authority: not yet granted for a specific deployment.
+- Production authority: the maintainer approved the proposed `da9a1bc3` rollout
+  and routine continuation of this plan on 2026-09-06. Do not repeat that approval.
 - Review authority: sole maintainer authorized zero contributor approvals;
   protected PRs and the five strict checks remain required.
 - Local validation: passed for the security patch and this plan on 2026-09-06.
@@ -280,7 +353,7 @@ extra documentation-only CI runs while an approval is pending.
   no credential values belong in this document. Read-only queries succeeded
   in separate CLI invocations. Earlier manually opened requests exceeded
   Wrangler's two-minute callback window; do not reuse their expired links.
-- Deployment preflight: latest production Pages records are PWA
+- Deployment rollback baseline: before the rollout, production Pages records were PWA
   `4b447db0-75ea-4114-9a5b-284c1d4604f0` and site
   `2a0532e8-e4cc-4cbe-9292-2e2590a37fe0`, both source `44b8cb9`.
   The latest Worker deployment is `f2a0cda9-09c5-4089-a298-032b8f51fc81`,
@@ -289,7 +362,20 @@ extra documentation-only CI runs while an approval is pending.
   Recheck the active deployment immediately before any later rollback or release.
   Compared with that source revision, the candidate has no Worker/protocol
   source changes. No production mutation was made during authentication.
-- Next action: finish preflight and obtain approval for deployment of `da9a1bc3`;
-  deploy once and verify before opening stage 2. No contributor review or renewed
-  Cloudflare login is currently needed.
-- Later stages remain queued; no changes to their runtime behavior are claimed.
+- Deployment: one dispatch for `da9a1bc3` succeeded:
+  https://github.com/datawithfurkan/glasstunnel/actions/runs/34047515720
+  PWA deployment `e0bc7bd0-f769-42ae-a7f3-1beb0a602c80` and site deployment
+  `6c592a78-39ff-4323-8202-4b9d31b2a4ca` both report source `da9a1bc`.
+  Worker deployment `46a2def2-dbb4-41f4-80b9-8d4bb6818adb` routes 100% to
+  version `c7c5fb3d-5ef9-4da6-94ee-bd49f940154c`.
+- Hosted canary: public PWA, site, service worker and signaling health returned
+  HTTP 200. The PWA now serves `index-Cj-USp59.js`; the app shell and service
+  worker retain `public, no-cache, must-revalidate`. Isolated mobile-viewport
+  Chromium and WebKit contexts verified the relay disclosure, signed-out PWA
+  rendering and reload, with zero page errors. No personal login, command,
+  account mutation, Mac release or permission change was used.
+- Next action: integrate the locally verified stage 2 through a protected PR,
+  then deploy its hosted surfaces at the exact merged SHA. The lab is stopped
+  and its owned processes have been cleaned up.
+  No contributor review, repeated rollout approval or renewed Cloudflare login
+  is currently needed. Stages 3-5 remain queued.

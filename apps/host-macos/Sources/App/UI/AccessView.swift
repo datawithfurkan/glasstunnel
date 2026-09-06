@@ -142,34 +142,36 @@ struct AccessView: View {
     }
 
     private func trustedDeviceRow(_ device: DeviceRegistry.PairedDevice) -> some View {
-        GlasstunnelListRow(
+        let status = DeviceAccessStatus(device: device, pending: appState.pendingDeviceRevocations.contains(device.deviceId))
+        return GlasstunnelListRow(
             title: device.label.isEmpty ? "Unknown device" : device.label,
             subtitle: deviceMetadata(device),
             systemImage: device.revoked ? "xmark.circle" : "iphone",
             iconColor: device.revoked ? GlasstunnelDesign.danger : GlasstunnelDesign.accent
         ) {
             HStack(spacing: 10) {
-                if device.revoked {
+                if let title = status.title {
                     GlasstunnelStatusLabel(
-                        title: "Revoked",
-                        systemImage: "xmark.circle",
-                        color: GlasstunnelDesign.danger
+                        title: title,
+                        systemImage: status == .confirmed ? "xmark.circle" : "clock",
+                        color: status == .confirmed ? GlasstunnelDesign.danger : GlasstunnelDesign.warning
                     )
                 }
 
                 Menu {
-                    if !device.revoked {
-                        Button("Revoke Access", role: .destructive) {
-                            appState.revokeDevice(device.deviceId)
+                    if status != .confirmed {
+                        Button(device.revoked ? "Retry Revocation" : "Revoke Access", role: .destructive) {
+                            Task { await appState.revokeDevice(device.deviceId) }
                         }
                     }
                     Button("Remove Device", role: .destructive) {
-                        appState.removeDevice(device.deviceId)
+                        Task { await appState.removeDevice(device.deviceId) }
                     }
                 } label: {
                     Image(systemName: "ellipsis.circle")
                 }
                 .menuStyle(.borderlessButton)
+                .disabled(status == .pending)
                 .menuIndicator(.hidden)
                 .fixedSize()
                 .pointingHandCursor()
@@ -182,6 +184,11 @@ struct AccessView: View {
         var parts = ["Added \(device.pairedAt.formatted(.relative(presentation: .named)))"]
         if let lastSeenAt = device.lastSeenAt {
             parts.append("Last seen \(lastSeenAt.formatted(.relative(presentation: .named)))")
+        }
+        if let error = appState.deviceRevocationErrors[device.deviceId] {
+            parts.append(error)
+        } else if device.revoked && device.revocationConfirmedAt == nil {
+            parts.append("Server confirmation needed. Retry revocation to finish.")
         }
         return parts.joined(separator: " · ")
     }
@@ -201,6 +208,26 @@ struct AccessView: View {
             try await appState.signOutLinkedAccount()
         } catch {
             accessError = error.localizedDescription
+        }
+    }
+}
+
+enum DeviceAccessStatus: Equatable {
+    case allowed, pending, blockedLocally, confirmed
+
+    init(device: DeviceRegistry.PairedDevice, pending: Bool) {
+        if pending { self = .pending }
+        else if !device.revoked { self = .allowed }
+        else if device.revocationConfirmedAt != nil { self = .confirmed }
+        else { self = .blockedLocally }
+    }
+
+    var title: String? {
+        switch self {
+        case .allowed: return nil
+        case .pending: return "Confirming..."
+        case .blockedLocally: return "Blocked locally"
+        case .confirmed: return "Revoked"
         }
     }
 }

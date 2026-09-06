@@ -1,7 +1,83 @@
 import XCTest
+import GTProtocol
+import GTSecurity
 @testable import GTTransport
 
 final class SessionManagerTests: XCTestCase {
+    @MainActor
+    func testOfflineRevocationDeniesLocallyWithoutClaimingServerConfirmation() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let registry = DeviceRegistry(fileURL: directory.appendingPathComponent("devices.json"))
+        let phone = DeviceKey()
+        try registry.add(.init(deviceId: phone.deviceId, publicKey: phone.publicKeyRaw, label: "Local test"))
+        let defaultsName = "OfflineRevocationTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: defaultsName)!
+        defer { defaults.removePersistentDomain(forName: defaultsName) }
+        let manager = SessionManager(deviceKey: DeviceKey(),
+            signalingURL: URL(string: "ws://127.0.0.1:1/signal")!, turnURL: "",
+            hostDeviceLabel: "Local test", autoLock: AutoLock(), registry: registry,
+            remoteAppController: RemoteAppController(defaults: defaults, executableExists: { _ in false }))
+        do {
+            try await manager.revokeDevice(phone.deviceId)
+            XCTFail("Offline revocation must not claim confirmation")
+        } catch is SessionManager.RevocationError { }
+        XCTAssertTrue(registry.isRevoked(phone.deviceId))
+        XCTAssertNil(registry.get(phone.deviceId)?.revocationConfirmedAt)
+        let restored = DeviceRegistry(fileURL: directory.appendingPathComponent("devices.json"))
+        XCTAssertTrue(restored.isRevoked(phone.deviceId))
+    }
+
+    @MainActor
+    func testRelayUploadChunksAreIsolatedByDeviceAndDiscardedOnRevocation() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let registry = DeviceRegistry(fileURL: directory.appendingPathComponent("devices.json"))
+        let phone = DeviceKey()
+        try registry.add(.init(deviceId: phone.deviceId, publicKey: phone.publicKeyRaw, label: "Local test"))
+        let defaultsName = "UploadRevocationTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: defaultsName)!
+        defer { defaults.removePersistentDomain(forName: defaultsName) }
+        let manager = SessionManager(deviceKey: DeviceKey(),
+            signalingURL: URL(string: "ws://127.0.0.1:1/signal")!, turnURL: "",
+            hostDeviceLabel: "Local test", autoLock: AutoLock(), registry: registry,
+            remoteAppController: RemoteAppController(defaults: defaults, executableExists: { _ in false }))
+        func chunk(_ index: Int) -> ImageAttachmentChunk {
+            .init(transferId: "shared-id", agentId: "terminal", text: "", filename: "test.png",
+                mimeType: "image/png", totalBytes: 2, chunkIndex: index, chunkCount: 2,
+                bytes: Data([UInt8(index)]), submitOnSend: false)
+        }
+        XCTAssertNil(try manager.receiveRelayImageAttachmentChunk(chunk(0), from: phone.deviceId))
+        XCTAssertNil(try manager.receiveRelayImageAttachmentChunk(chunk(1), from: "other-phone"))
+        let other = try manager.receiveRelayImageAttachmentChunk(chunk(0), from: "other-phone")
+        XCTAssertEqual(other?.bytes, Data([0, 1]))
+        do { try await manager.revokeDevice(phone.deviceId) } catch is SessionManager.RevocationError { }
+        XCTAssertNil(try manager.receiveRelayImageAttachmentChunk(chunk(1), from: phone.deviceId))
+    }
+
+    @MainActor
+    func testRevokedRelayDeviceCannotChangeHostState() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let registry = DeviceRegistry(fileURL: directory.appendingPathComponent("devices.json"))
+        let phone = DeviceKey()
+        try registry.add(.init(deviceId: phone.deviceId, publicKey: phone.publicKeyRaw, label: "Local test"))
+        try registry.revoke(phone.deviceId)
+        let defaultsName = "RevocationTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: defaultsName)!
+        defer { defaults.removePersistentDomain(forName: defaultsName) }
+        let autoLock = AutoLock()
+        let manager = SessionManager(
+            deviceKey: DeviceKey(), signalingURL: URL(string: "ws://127.0.0.1:1/signal")!, turnURL: "",
+            hostDeviceLabel: "Local test", autoLock: autoLock, registry: registry,
+            remoteAppController: RemoteAppController(defaults: defaults, executableExists: { _ in false })
+        )
+        manager.handleRelayCommand(DataChannelMessage(body: .readOnlyModeUpdate(.init(readOnly: true))), from: phone.deviceId)
+        XCTAssertFalse(autoLock.isReadOnly)
+        manager.handleRelayCommand(DataChannelMessage(body: .readOnlyModeUpdate(.init(readOnly: true))), from: nil)
+        XCTAssertFalse(autoLock.isReadOnly)
+    }
+
     func testLockedRelayPolicyStillAllowsStopActions() {
         XCTAssertTrue(SessionManager.allowsRelayRemoteAppAction(.stop, locked: true))
         XCTAssertTrue(SessionManager.allowsRelayRemoteAppAction(.disable, locked: true))

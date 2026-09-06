@@ -51,6 +51,8 @@ public final class Session {
     private var currentRemoteApps: [RemoteApp]
     private var readOnlyMode: Bool = false
     private var isStopping = false
+    private let accessAllowed: @MainActor () -> Bool
+    private var canUseSession: Bool { !isStopping && accessAllowed() }
     private var imageTransfers: [String: PendingImageTransfer] = [:]
     private var fileAttachmentBatches: [String: PendingFileAttachmentBatch] = [:]
 
@@ -61,7 +63,8 @@ public final class Session {
         signaling: SignalingClient,
         autoLock: AutoLock,
         redactor: SecretRedactor = SecretRedactor(),
-        remoteAppController: RemoteAppController
+        remoteAppController: RemoteAppController,
+        accessAllowed: @escaping @MainActor () -> Bool = { true }
     ) {
         self.peer = peer
         self.phoneDeviceID = phoneDeviceID
@@ -70,6 +73,7 @@ public final class Session {
         self.autoLock = autoLock
         self.redactor = redactor
         self.remoteAppController = remoteAppController
+        self.accessAllowed = accessAllowed
         self.currentRemoteApps = remoteAppController.remoteAppsSnapshot()
         self.currentLayout = remoteAppController.deprecatedLayout()
 
@@ -84,6 +88,7 @@ public final class Session {
     // MARK: - Lifecycle
 
     public func start(hostDeviceLabel: String) {
+        guard accessAllowed() else { return }
         isStopping = false
         peer.ensureDataChannel()
         sendHello(deviceLabel: hostDeviceLabel)
@@ -136,6 +141,7 @@ public final class Session {
     // MARK: - Remote apps
 
     public func applyRemoteApps(_ remoteApps: [RemoteApp]) {
+        guard canUseSession else { return }
         #if os(macOS)
         let previousVideoAgentIDs = Set(currentRemoteApps.filter(\.hasVideo).map(\.agentId))
         #endif
@@ -158,6 +164,7 @@ public final class Session {
     }
 
     public func sendAgentState(_ snapshot: AgentStateSnapshot) {
+        guard canUseSession else { return }
         try? peer.send(DataChannelMessage(body: .agentState(snapshot)))
         let event = AgentStateEvent(
             agentId: snapshot.agentId,
@@ -169,22 +176,26 @@ public final class Session {
             toDeviceId: phoneDeviceID,
             payload: .agentStateEvent(event)
         )
-        Task { [signaling] in
+        Task { [weak self, signaling] in
+            guard self?.canUseSession == true else { return }
             try? await signaling.send(envelope)
         }
     }
 
     private func sendRemoteApps(_ remoteApps: [RemoteApp]) {
+        guard canUseSession else { return }
         try? peer.send(DataChannelMessage(body: .remoteAppsUpdate(RemoteAppsUpdate(remoteApps: remoteApps))))
     }
 
     private func sendMessageDetail(_ detail: MessageDetail) {
+        guard canUseSession else { return }
         try? peer.send(DataChannelMessage(body: .messageDetail(detail)))
     }
 
     // MARK: - DataChannel incoming
 
     private func handleDataChannelMessage(_ msg: DataChannelMessage) {
+        guard canUseSession else { return }
         autoLock.heartbeat()
         switch msg.body {
         case .userInput(let input):
@@ -197,16 +208,19 @@ public final class Session {
         case .imageAttachmentInput(let input):
             guard canAcceptInput(agentId: input.agentId) else { return }
             Task { [weak self] in
+                guard self?.canUseSession == true else { return }
                 await self?.handleImageAttachment(input)
             }
         case .imageAttachmentChunk(let chunk):
             guard canAcceptInput(agentId: chunk.agentId) else { return }
             Task { [weak self] in
+                guard self?.canUseSession == true else { return }
                 await self?.handleImageAttachmentChunk(chunk)
             }
         case .fileAttachmentChunk(let chunk):
             guard canAcceptInput(agentId: chunk.agentId) else { return }
             Task { [weak self] in
+                guard self?.canUseSession == true else { return }
                 await self?.handleFileAttachmentChunk(chunk)
             }
         case .quickReply(let reply):
@@ -219,6 +233,7 @@ public final class Session {
         case .interruptRequest(let req):
             guard canAcceptInput(agentId: req.agentId) else { return }
             Task { [weak self, controller = remoteAppController, agentId = req.agentId] in
+                guard self?.canUseSession == true else { return }
                 do {
                     try await controller.interrupt(agentId: agentId)
                 } catch {
@@ -232,6 +247,7 @@ public final class Session {
             // Reading a message is not input: allowed in read-only mode, refused only while locked.
             guard !autoLock.isLocked else { return }
             Task { [weak self, controller = remoteAppController, req] in
+                guard self?.canUseSession == true else { return }
                 guard let detail = await controller.messageDetail(agentId: req.agentId, messageId: req.messageId) else {
                     return
                 }
@@ -242,6 +258,7 @@ public final class Session {
         case .targetSelectionRequest(let req):
             guard canAcceptInput(agentId: req.agentId) else { return }
             Task { [weak self, controller = remoteAppController, agentId = req.agentId, targetId = req.targetId] in
+                guard self?.canUseSession == true else { return }
                 do {
                     try await controller.selectTarget(agentId: agentId, targetId: targetId)
                 } catch {
@@ -254,6 +271,7 @@ public final class Session {
         case .targetRenameRequest(let req):
             guard canAcceptInput(agentId: req.agentId) else { return }
             Task { [weak self, controller = remoteAppController, req] in
+                guard self?.canUseSession == true else { return }
                 do {
                     try await controller.renameTarget(req)
                 } catch {
@@ -266,6 +284,7 @@ public final class Session {
         case .agentRuntimeSettingsUpdate(let update):
             guard canAcceptInput(agentId: update.agentId) else { return }
             Task { [weak self, controller = remoteAppController, update] in
+                guard self?.canUseSession == true else { return }
                 do {
                     try await controller.updateRuntimeSettings(update)
                 } catch {
@@ -278,6 +297,7 @@ public final class Session {
         case .inputRequestResponse(let response):
             guard canAcceptInput(agentId: response.agentId) else { return }
             Task { [weak self, controller = remoteAppController, response] in
+                guard self?.canUseSession == true else { return }
                 do {
                     try await controller.respondToInputRequest(response)
                 } catch {
@@ -290,6 +310,7 @@ public final class Session {
         case .screenPointerInput(let input):
             guard canAcceptInput(agentId: input.agentId) else { return }
             Task { [weak self, controller = remoteAppController, input] in
+                guard self?.canUseSession == true else { return }
                 do {
                     try await controller.performScreenPointerInput(input)
                 } catch {
@@ -325,6 +346,7 @@ public final class Session {
         guard canAcceptInput(agentId: agentId) else { return }
 
         Task { [weak self, controller = remoteAppController, agentId, text, submit, failureLabel] in
+            guard self?.canUseSession == true else { return }
             do {
                 try await controller.sendInput(agentId: agentId, text: text, submit: submit)
             } catch {

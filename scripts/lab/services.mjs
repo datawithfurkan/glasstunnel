@@ -109,6 +109,7 @@ export function hostServiceDefinition(
       GT_TERMINAL_LIVE_HOST_LABEL: label,
       GT_TERMINAL_LIVE_HOST_SECONDS: String(lifetimeSeconds),
       GT_TERMINAL_LIVE_SYNTHETIC_SCREEN: '1',
+      GT_TERMINAL_LIVE_REVOCATION_CONTROL: join(config.paths.state, 'revoke-device.json'),
     },
     cwd: config.root,
     label,

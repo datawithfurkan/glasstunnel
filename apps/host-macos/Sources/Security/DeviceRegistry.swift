@@ -5,8 +5,8 @@ import GTProtocol
 /// `~/Library/Application Support/Glasstunnel/devices.json`.
 ///
 /// The registry is the source of truth for which device ids can receive
-/// envelopes from this Mac. Revoking a device removes it here and blocks
-/// any future signaling from it.
+/// envelopes from this Mac. Removed devices retain a denial tombstone so
+/// account auto-authorization cannot silently trust the same identity again.
 public final class DeviceRegistry: @unchecked Sendable {
     static let fileEnvironmentKey = "GLASSTUNNEL_DEVICE_REGISTRY_FILE"
 
@@ -18,6 +18,8 @@ public final class DeviceRegistry: @unchecked Sendable {
         public var pairedAt: Date
         public var lastSeenAt: Date?
         public var revoked: Bool
+        public var removedAt: Date?
+        public var revocationConfirmedAt: Date?
 
         public init(deviceId: DeviceID, publicKey: Data, label: String, pairedAt: Date = Date(), lastSeenAt: Date? = nil, revoked: Bool = false) {
             self.deviceId = deviceId
@@ -26,6 +28,8 @@ public final class DeviceRegistry: @unchecked Sendable {
             self.pairedAt = pairedAt
             self.lastSeenAt = lastSeenAt
             self.revoked = revoked
+            self.removedAt = nil
+            self.revocationConfirmedAt = nil
         }
     }
 
@@ -46,17 +50,19 @@ public final class DeviceRegistry: @unchecked Sendable {
 
     public func all() -> [PairedDevice] {
         lock.lock(); defer { lock.unlock() }
-        return Array(devices.values).sorted(by: { $0.pairedAt > $1.pairedAt })
+        return devices.values.filter { $0.removedAt == nil }.sorted(by: { $0.pairedAt > $1.pairedAt })
     }
 
     public func get(_ id: DeviceID) -> PairedDevice? {
         lock.lock(); defer { lock.unlock() }
-        return devices[id]
+        guard let device = devices[id], device.removedAt == nil else { return nil }
+        return device
     }
 
     public func add(_ device: PairedDevice) throws {
         lock.lock()
         defer { lock.unlock() }
+        if devices[device.deviceId]?.revoked == true { throw RegistryError.revoked }
         devices[device.deviceId] = device
         try persistLocked()
     }
@@ -74,8 +80,32 @@ public final class DeviceRegistry: @unchecked Sendable {
     public func remove(_ id: DeviceID) throws {
         lock.lock()
         defer { lock.unlock() }
-        devices.removeValue(forKey: id)
+        if var device = devices[id] {
+            device.revoked = true
+            device.removedAt = Date()
+            devices[id] = device
+        }
         try persistLocked()
+    }
+
+    public func confirmRevocation(_ id: DeviceID) throws {
+        lock.lock(); defer { lock.unlock() }
+        guard var device = devices[id], device.revoked else { throw RegistryError.notRevoked }
+        let previous = device
+        device.revocationConfirmedAt = Date()
+        devices[id] = device
+        do { try persistLocked() }
+        catch { devices[id] = previous; throw error }
+    }
+
+    public enum RegistryError: LocalizedError {
+        case revoked, notRevoked
+        public var errorDescription: String? {
+            switch self {
+            case .revoked: return "Access for this device was revoked."
+            case .notRevoked: return "Device revocation has not been recorded."
+            }
+        }
     }
 
     public func removeAll() throws {

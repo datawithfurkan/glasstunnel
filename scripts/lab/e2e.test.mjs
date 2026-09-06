@@ -98,6 +98,7 @@ test('runE2E passes only local account and host values to Playwright', async (t)
     GT_LAB_PASSWORD: 'Glasstunnel-Lab-Only-2026',
     GT_LAB_LINK_CODE: 'ABC234',
     GT_LAB_HOST_LABEL: 'Local test host',
+    GT_LAB_REVOCATION_CONTROL: join(config.paths.state, 'revoke-device.json'),
   });
 });
 

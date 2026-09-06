@@ -222,6 +222,7 @@ export async function runE2E({
             GT_LAB_PASSWORD: config.identity.password,
             GT_LAB_LINK_CODE: lab.host.linkCode,
             GT_LAB_HOST_LABEL: lab.host.label,
+            GT_LAB_REVOCATION_CONTROL: join(config.paths.state, 'revoke-device.json'),
           }
         : {}),
     };
@@ -306,6 +307,7 @@ export async function runE2E({
 }
 
 export function projectsForMode(mode) {
+  if (mode === 'revocation') return ['local-revocation-mobile-chromium'];
   if (mode === 'codex-cli-chromium') return CODEX_CLI_CHROMIUM_PROJECTS;
   if (mode === 'cursor-agent-chromium') return CURSOR_AGENT_CHROMIUM_PROJECTS;
   if (mode === 'cursor-agent-webkit' || mode === 'cursor-agent-safari') return CURSOR_AGENT_WEBKIT_PROJECTS;

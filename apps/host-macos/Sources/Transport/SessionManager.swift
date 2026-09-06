@@ -81,8 +81,12 @@ public final class SessionManager {
     private var relay: RelayClient?
     private var sessions: [DeviceID: Session] = [:]
     private var currentRemoteApps: [RemoteApp] = []
-    private var relayImageTransfers: [String: PendingRelayImageTransfer] = [:]
-    private var relayFileAttachmentBatches: [String: PendingRelayFileAttachmentBatch] = [:]
+    private struct RelayTransferKey: Hashable {
+        let deviceID: DeviceID
+        let transferID: String
+    }
+    private var relayImageTransfers: [RelayTransferKey: PendingRelayImageTransfer] = [:]
+    private var relayFileAttachmentBatches: [RelayTransferKey: PendingRelayFileAttachmentBatch] = [:]
     #if os(macOS)
     private var relayScreenCapture: (any RelayScreenCapturing)?
     /// The quality the last screen start asked for; nil once sharing stops.
@@ -103,6 +107,12 @@ public final class SessionManager {
     private var pendingUnlinkContinuation: CheckedContinuation<Void, Error>?
     private var pendingLinkCodeTimeout: Timer?
     private var pendingUnlinkTimeout: Timer?
+    private struct PendingRevocation {
+        let deviceID: DeviceID
+        let continuation: CheckedContinuation<Void, Error>
+        let timeout: Task<Void, Never>
+    }
+    private var pendingRevocations: [String: PendingRevocation] = [:]
     private var shouldReconnect = false
     private var reconnectTask: Task<Void, Never>?
     private var relayReconnectTask: Task<Void, Never>?
@@ -207,10 +217,23 @@ public final class SessionManager {
                 }
             }
         }
-        relay.onCommand = { [weak self] message, clientDeviceID in
-            guard let manager = self else { return }
-            Task { @MainActor [manager] in
+        relay.onCommand = { [weak self, weak relay] message, clientDeviceID in
+            guard let manager = self, let relay else { return }
+            Task { @MainActor [manager, relay] in
+                guard manager.relay === relay else { return }
                 manager.handleRelayCommand(message, from: clientDeviceID)
+            }
+        }
+        relay.onAuthorizedDevice = { [weak self, weak relay] device in
+            guard let manager = self, let relay else { return }
+            Task { @MainActor [manager, relay] in
+                guard manager.relay === relay, !manager.registry.isRevoked(device.deviceId) else { return }
+                do {
+                    try manager.registry.add(device)
+                    manager.onPaired?(device)
+                } catch {
+                    manager.onState?(.error("Could not save account device: \(error.localizedDescription)"))
+                }
             }
         }
 
@@ -303,7 +326,8 @@ public final class SessionManager {
 
     private func publishRelayMessageDetail(_ detail: MessageDetail, to clientDeviceID: DeviceID) {
         guard let relay else { return }
-        Task { [relay, detail, clientDeviceID] in
+        Task { [weak self, relay, detail, clientDeviceID] in
+            guard self?.isRelayClientAllowed(clientDeviceID) == true else { return }
             try? await relay.publishMessageDetail(detail, to: clientDeviceID)
         }
     }
@@ -373,6 +397,9 @@ public final class SessionManager {
 
     public func stop() {
         shouldReconnect = false
+        for requestID in Array(pendingRevocations.keys) {
+            finishRevocation(requestID, result: .failure(RevocationError.unconfirmed))
+        }
         reconnectTask?.cancel()
         reconnectTask = nil
         relayReconnectTask?.cancel()
@@ -596,6 +623,55 @@ public final class SessionManager {
         }
     }
 
+    public func revokeDevice(_ id: DeviceID) async throws {
+        // Local denial is immediate even if signaling or persistence is unavailable.
+        let session = sessions.removeValue(forKey: id)
+        session?.stop()
+        session?.peer.close()
+        onPeerDisconnected?(id)
+        relayImageTransfers = relayImageTransfers.filter { $0.key.deviceID != id }
+        relayFileAttachmentBatches = relayFileAttachmentBatches.filter { $0.key.deviceID != id }
+        #if os(macOS)
+        relayScreenRequesters.remove(id)
+        forgetPhoneVideo(id)
+        if relayScreenRequesters.isEmpty { stopRelayScreenCapture() }
+        #endif
+        try registry.revoke(id)
+        guard let signaling else { throw RevocationError.unconfirmed }
+        let requestID = UUID().uuidString
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let timeout = Task { @MainActor [weak self] in
+                do { try await Task.sleep(nanoseconds: 30_000_000_000) }
+                catch { return }
+                self?.finishRevocation(requestID, result: .failure(RevocationError.unconfirmed))
+            }
+            pendingRevocations[requestID] = PendingRevocation(deviceID: id, continuation: continuation, timeout: timeout)
+            Task { @MainActor [weak self] in
+                do {
+                    try await signaling.sendControlMessage([
+                        "type": "revoke_device", "request_id": requestID, "device_id": id,
+                    ])
+                } catch {
+                    self?.finishRevocation(requestID, result: .failure(RevocationError.unconfirmed))
+                }
+            }
+        }
+        try registry.confirmRevocation(id)
+    }
+
+    private func finishRevocation(_ requestID: String, result: Result<Void, Error>) {
+        guard let pending = pendingRevocations.removeValue(forKey: requestID) else { return }
+        pending.timeout.cancel()
+        pending.continuation.resume(with: result)
+    }
+
+    public enum RevocationError: LocalizedError {
+        case unconfirmed
+        public var errorDescription: String? {
+            "Access is blocked on this Mac, but the server has not confirmed revocation. Reconnect and retry."
+        }
+    }
+
     public func applyRemoteApps(_ remoteApps: [RemoteApp]) {
         currentRemoteApps = remoteApps
         if remoteApps.first(where: { $0.remoteAppId == "screen" })?.enabled == false {
@@ -619,7 +695,8 @@ public final class SessionManager {
 
     // MARK: - Relay command routing
 
-    private func handleRelayCommand(_ msg: DataChannelMessage, from clientDeviceID: DeviceID?) {
+    func handleRelayCommand(_ msg: DataChannelMessage, from clientDeviceID: DeviceID?) {
+        guard isRelayClientAllowed(clientDeviceID) else { return }
         autoLock.heartbeat()
 
         switch msg.body {
@@ -628,18 +705,21 @@ public final class SessionManager {
                 agentId: input.agentId,
                 text: input.text,
                 submit: input.submitOnSend,
-                failureLabel: "message"
+                failureLabel: "message",
+                clientDeviceID: clientDeviceID
             )
         case .quickReply(let reply):
             sendRelayInputToRemoteApp(
                 agentId: reply.agentId,
                 text: reply.kind.literalText,
                 submit: true,
-                failureLabel: "quick reply"
+                failureLabel: "quick reply",
+                clientDeviceID: clientDeviceID
             )
         case .interruptRequest(let request):
             guard canPerformRelaySessionAction(agentId: request.agentId) else { return }
             Task { [weak self, controller = remoteAppController, agentId = request.agentId] in
+                guard self?.isRelayClientAllowed(clientDeviceID) == true else { return }
                 do {
                     try await controller.interrupt(agentId: agentId)
                 } catch {
@@ -653,6 +733,7 @@ public final class SessionManager {
             // Reading a message is not input: allowed in read-only mode, refused only while locked.
             guard !autoLock.isLocked, let clientDeviceID else { return }
             Task { [weak self, controller = remoteAppController, request, clientDeviceID] in
+                guard self?.isRelayClientAllowed(clientDeviceID) == true else { return }
                 guard let detail = await controller.messageDetail(agentId: request.agentId, messageId: request.messageId) else {
                     return
                 }
@@ -663,6 +744,7 @@ public final class SessionManager {
         case .targetSelectionRequest(let request):
             guard canPerformRelaySessionAction(agentId: request.agentId) else { return }
             Task { [weak self, controller = remoteAppController, agentId = request.agentId, targetId = request.targetId] in
+                guard self?.isRelayClientAllowed(clientDeviceID) == true else { return }
                 do {
                     try await controller.selectTarget(agentId: agentId, targetId: targetId)
                 } catch {
@@ -675,6 +757,7 @@ public final class SessionManager {
         case .targetRenameRequest(let request):
             guard canPerformRelaySessionAction(agentId: request.agentId) else { return }
             Task { [weak self, controller = remoteAppController, request] in
+                guard self?.isRelayClientAllowed(clientDeviceID) == true else { return }
                 do {
                     try await controller.renameTarget(request)
                 } catch {
@@ -687,6 +770,7 @@ public final class SessionManager {
         case .agentRuntimeSettingsUpdate(let update):
             guard canPerformRelaySessionAction(agentId: update.agentId) else { return }
             Task { [weak self, controller = remoteAppController, update] in
+                guard self?.isRelayClientAllowed(clientDeviceID) == true else { return }
                 do {
                     try await controller.updateRuntimeSettings(update)
                 } catch {
@@ -709,6 +793,7 @@ public final class SessionManager {
                 return
             }
             Task { [weak self, controller = remoteAppController, response] in
+                guard self?.isRelayClientAllowed(clientDeviceID) == true else { return }
                 do {
                     try await controller.respondToInputRequest(response)
                     #if os(macOS)
@@ -727,6 +812,7 @@ public final class SessionManager {
         case .screenPointerInput(let input):
             guard canAcceptRelayInput(agentId: input.agentId) else { return }
             Task { @MainActor [weak self, controller = remoteAppController, screenPointerInputHandler, input] in
+                guard self?.isRelayClientAllowed(clientDeviceID) == true else { return }
                 do {
                     if let screenPointerInputHandler {
                         try await screenPointerInputHandler(input)
@@ -747,20 +833,23 @@ public final class SessionManager {
         case .imageAttachmentInput(let input):
             guard canAcceptRelayInput(agentId: input.agentId) else { return }
             Task { [weak self] in
+                guard self?.isRelayClientAllowed(clientDeviceID) == true else { return }
                 await self?.handleRelayImageAttachment(input)
             }
         case .imageAttachmentChunk(let chunk):
-            guard canAcceptRelayInput(agentId: chunk.agentId) else { return }
+            guard canAcceptRelayInput(agentId: chunk.agentId), let clientDeviceID else { return }
             Task { [weak self] in
-                await self?.handleRelayImageAttachmentChunk(chunk)
+                guard self?.isRelayClientAllowed(clientDeviceID) == true else { return }
+                await self?.handleRelayImageAttachmentChunk(chunk, from: clientDeviceID)
             }
         case .messageDetail:
             // Mac → phone only; never arrives as a command.
             return
         case .fileAttachmentChunk(let chunk):
-            guard canAcceptRelayInput(agentId: chunk.agentId) else { return }
+            guard canAcceptRelayInput(agentId: chunk.agentId), let clientDeviceID else { return }
             Task { [weak self] in
-                await self?.handleRelayFileAttachmentChunk(chunk)
+                guard self?.isRelayClientAllowed(clientDeviceID) == true else { return }
+                await self?.handleRelayFileAttachmentChunk(chunk, from: clientDeviceID)
             }
         case .hello,
              .agentState,
@@ -794,6 +883,7 @@ public final class SessionManager {
         #endif
 
         Task { @MainActor [weak self, controller = remoteAppController, request, agentId, isScreenAction, clientDeviceID] in
+            guard self?.isRelayClientAllowed(clientDeviceID) == true else { return }
             if isScreenAction, [.enable, .start, .launch, .newSession].contains(request.action) {
                 self?.applyScreenStreamQuality(request.screenQuality ?? .readable)
             }
@@ -995,11 +1085,13 @@ public final class SessionManager {
         agentId: AgentID,
         text: String,
         submit: Bool,
-        failureLabel: String
+        failureLabel: String,
+        clientDeviceID: DeviceID?
     ) {
         guard canAcceptRelayInput(agentId: agentId) else { return }
 
         Task { [weak self, controller = remoteAppController, agentId, text, submit, failureLabel] in
+            guard self?.isRelayClientAllowed(clientDeviceID) == true else { return }
             do {
                 try await controller.sendInput(agentId: agentId, text: text, submit: submit)
             } catch {
@@ -1025,22 +1117,22 @@ public final class SessionManager {
         }
     }
 
-    private func handleRelayImageAttachmentChunk(_ chunk: ImageAttachmentChunk) async {
+    private func handleRelayImageAttachmentChunk(_ chunk: ImageAttachmentChunk, from clientDeviceID: DeviceID) async {
         do {
             cleanupStaleRelayImageTransfers()
-            if let input = try receiveRelayImageAttachmentChunk(chunk) {
+            if let input = try receiveRelayImageAttachmentChunk(chunk, from: clientDeviceID) {
                 await handleRelayImageAttachment(input)
             }
         } catch {
-            relayImageTransfers.removeValue(forKey: chunk.transferId)
+            relayImageTransfers.removeValue(forKey: RelayTransferKey(deviceID: clientDeviceID, transferID: chunk.transferId))
             emitRelaySystemMessage(agentId: chunk.agentId, text: "image upload failed: \(error.localizedDescription)")
         }
     }
 
-    private func handleRelayFileAttachmentChunk(_ chunk: FileAttachmentChunk) async {
+    private func handleRelayFileAttachmentChunk(_ chunk: FileAttachmentChunk, from clientDeviceID: DeviceID) async {
         do {
             cleanupStaleRelayFileAttachmentBatches()
-            if let batch = try receiveRelayFileAttachmentChunk(chunk) {
+            if let batch = try receiveRelayFileAttachmentChunk(chunk, from: clientDeviceID) {
                 let prompt = relayAttachmentPrompt(userText: batch.text, fileURLs: batch.fileURLs)
                 try await remoteAppController.sendInput(
                     agentId: batch.agentId,
@@ -1049,12 +1141,14 @@ public final class SessionManager {
                 )
             }
         } catch {
-            relayFileAttachmentBatches.removeValue(forKey: chunk.batchId)
+            relayFileAttachmentBatches.removeValue(forKey: RelayTransferKey(deviceID: clientDeviceID, transferID: chunk.batchId))
             emitRelaySystemMessage(agentId: chunk.agentId, text: "file upload failed: \(error.localizedDescription)")
         }
     }
 
-    private func receiveRelayImageAttachmentChunk(_ chunk: ImageAttachmentChunk) throws -> ImageAttachmentInput? {
+    func receiveRelayImageAttachmentChunk(_ chunk: ImageAttachmentChunk, from clientDeviceID: DeviceID) throws -> ImageAttachmentInput? {
+        guard isRelayClientAllowed(clientDeviceID) else { return nil }
+        let key = RelayTransferKey(deviceID: clientDeviceID, transferID: chunk.transferId)
         guard chunk.totalBytes > 0 else {
             throw RelayAttachmentError.invalidChunk("missing total size")
         }
@@ -1071,7 +1165,7 @@ public final class SessionManager {
             throw RelayAttachmentError.invalidChunk("empty chunk")
         }
 
-        var transfer = relayImageTransfers[chunk.transferId] ?? PendingRelayImageTransfer(
+        var transfer = relayImageTransfers[key] ?? PendingRelayImageTransfer(
             transferId: chunk.transferId,
             agentId: chunk.agentId,
             text: chunk.text,
@@ -1090,7 +1184,7 @@ public final class SessionManager {
             throw RelayAttachmentError.invalidChunk("received too many bytes")
         }
 
-        relayImageTransfers[chunk.transferId] = transfer
+        relayImageTransfers[key] = transfer
         guard transfer.isComplete else { return nil }
 
         var bytes = Data()
@@ -1103,7 +1197,7 @@ public final class SessionManager {
             throw RelayAttachmentError.invalidChunk("assembled size mismatch")
         }
 
-        relayImageTransfers.removeValue(forKey: chunk.transferId)
+        relayImageTransfers.removeValue(forKey: key)
         return ImageAttachmentInput(
             agentId: transfer.agentId,
             text: transfer.text,
@@ -1114,7 +1208,9 @@ public final class SessionManager {
         )
     }
 
-    private func receiveRelayFileAttachmentChunk(_ chunk: FileAttachmentChunk) throws -> RelayFileAttachmentBatchInput? {
+    private func receiveRelayFileAttachmentChunk(_ chunk: FileAttachmentChunk, from clientDeviceID: DeviceID) throws -> RelayFileAttachmentBatchInput? {
+        guard isRelayClientAllowed(clientDeviceID) else { return nil }
+        let key = RelayTransferKey(deviceID: clientDeviceID, transferID: chunk.batchId)
         guard chunk.totalBytes > 0 else {
             throw RelayAttachmentError.invalidChunk("missing total size")
         }
@@ -1137,7 +1233,7 @@ public final class SessionManager {
             throw RelayAttachmentError.invalidChunk("empty chunk")
         }
 
-        var batch = relayFileAttachmentBatches[chunk.batchId] ?? PendingRelayFileAttachmentBatch(
+        var batch = relayFileAttachmentBatches[key] ?? PendingRelayFileAttachmentBatch(
             batchId: chunk.batchId,
             agentId: chunk.agentId,
             text: chunk.text,
@@ -1179,13 +1275,13 @@ public final class SessionManager {
         }
 
         batch.transfers[chunk.fileIndex] = transfer
-        relayFileAttachmentBatches[chunk.batchId] = batch
+        relayFileAttachmentBatches[key] = batch
         guard batch.isComplete else { return nil }
 
         let urls = (0..<batch.fileCount).compactMap { batch.fileURLs[$0] }
         guard urls.count == batch.fileCount else { return nil }
 
-        relayFileAttachmentBatches.removeValue(forKey: chunk.batchId)
+        relayFileAttachmentBatches.removeValue(forKey: key)
         return RelayFileAttachmentBatchInput(
             agentId: batch.agentId,
             text: batch.text,
@@ -1537,6 +1633,11 @@ public final class SessionManager {
 
     // MARK: - Envelope routing
 
+    private func isRelayClientAllowed(_ id: DeviceID?) -> Bool {
+        guard let id, !id.isEmpty else { return false }
+        return !registry.isRevoked(id)
+    }
+
     private func handleEnvelope(_ env: Envelope) {
         guard let device = registry.get(env.fromDeviceId), !device.revoked else {
             return
@@ -1560,7 +1661,7 @@ public final class SessionManager {
     }
 
     private func initiateWebRTC(to phoneDeviceId: DeviceID) async {
-        guard let signaling else { return }
+        guard registry.isKnown(phoneDeviceId), let signaling else { return }
         if let existing = sessions.removeValue(forKey: phoneDeviceId) {
             #if os(macOS)
             sessionRemoteAppLogger.notice("peer replaced phone=\(Self.shortDeviceID(phoneDeviceId), privacy: .public)")
@@ -1570,6 +1671,7 @@ public final class SessionManager {
             existing.peer.close()
             await stopTask.value
         }
+        guard registry.isKnown(phoneDeviceId) else { return }
         let sessionID = UUID().uuidString
         let peer: WebRTCPeer
         do {
@@ -1589,7 +1691,8 @@ public final class SessionManager {
             signaling: signaling,
             autoLock: autoLock,
             redactor: redactor,
-            remoteAppController: remoteAppController
+            remoteAppController: remoteAppController,
+            accessAllowed: { [registry] in registry.isKnown(phoneDeviceId) }
         )
         sessions[phoneDeviceId] = session
         session.setScreenQuality(screenStreamQuality)
@@ -1694,9 +1797,19 @@ public final class SessionManager {
         case "host_identity":
             if let identity = Self.hostIdentity(fromControlMessage: msg) {
                 onHostIdentity?(identity)
+                if identity.linked && relay == nil && shouldReconnect {
+                    relayReconnectTask?.cancel()
+                    relayReconnectTask = nil
+                    Task { [weak self] in await self?.reconnectRelay() }
+                }
             }
         case "account_device_authorized":
             authorizeAccountDevice(msg)
+        case "device_revoked":
+            guard let requestID = msg["request_id"] as? String,
+                  let deviceID = msg["device_id"] as? String,
+                  pendingRevocations[requestID]?.deviceID == deviceID else { return }
+            finishRevocation(requestID, result: msg["ok"] as? Bool == true ? .success(()) : .failure(RevocationError.unconfirmed))
         case "link_code_created":
             if let code = msg["code"] as? String {
                 let linkCode = LinkCode(
