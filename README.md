@@ -8,7 +8,7 @@ Walk away from your desk. Check in from the subway. Send a prompt. Come home to 
 
 ## Why this exists
 
-Cloud coding agents (Cursor Background Agents, Codex Cloud, Claude Code Web, Devin, Factory) are great for starting fresh tasks. They are painful when you've already spent two hours at your desk loading context into a local agent and you just want to peek at it from your phone. Glasstunnel bridges that gap without moving your code, your secrets, or your context off your machine.
+Cloud coding agents (Cursor Background Agents, Codex Cloud, Claude Code Web, Devin, Factory) are great for starting fresh tasks. They are painful when you've already spent two hours at your desk loading context into a local agent and you just want to peek at it from your phone. Glasstunnel keeps that agent and its working environment on your Mac while sending remote-session content to your phone through the transports described below.
 
 ## Architecture
 
@@ -30,9 +30,14 @@ host-macos app     <-------->  signaling (Go)       <-------> mobile-pwa
 - **Signaling + TURN** — Two options:
   - **Self-hosted:** Small Go WebSocket service + coturn. One `docker compose up`.
   - **Hosted:** Cloudflare Workers with Durable Objects for WebSocket state, Supabase for accounts/devices. The account plane handles sign-in, host linking, and device approvals.
-- **Mobile PWA** — Installable React web app. Sign in to your account, choose a linked Mac, unlock with Face ID, and send prompts. Get push notifications when an agent finishes or needs input.
+- **Mobile PWA** — Installable React web app. Sign in to your account, choose a linked Mac, and send prompts. A local device-unlock screen is available, with platform-authenticator support where the browser provides it. Web Push availability depends on the deployment.
 
-Everything between Mac and phone is end-to-end encrypted via WebRTC DTLS-SRTP. The signaling server sees routing metadata and WebRTC setup/control messages, but not your code, chats, prompts, or media.
+WebRTC media and DataChannel traffic are end-to-end encrypted between your Mac and
+browser. The hosted relay is a separate path: it can read prompts, chats, tool
+output, remote commands, attachments, and JPEG screen fallback frames, and it
+caches recent transcript snapshots. Hosted relay content is not end-to-end
+encrypted. Use the hosted service only with an infrastructure operator you trust;
+see [the security model](docs/security.md) for storage and authorization limits.
 
 ## Status
 
@@ -76,7 +81,8 @@ After the Mac app opens:
 1. Grant Screen Recording and Accessibility when the onboarding asks for them.
 2. Sign in or create an account in the Mac app.
 3. On your phone, open `https://app.glasstunnel.io` in Safari or Chrome.
-4. Sign in with the same account.
+4. Sign in with the same account. The browser's optional device-unlock screen is
+   not a substitute for protecting that account and browser profile.
 5. Select your linked Mac and open an available remote app or Mac Screen.
 6. Add the PWA to your Home Screen if your browser offers it.
 

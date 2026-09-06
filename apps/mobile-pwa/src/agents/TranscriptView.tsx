@@ -282,7 +282,7 @@ function ToolRowView({ row, agentId, now, open }: { row: ToolRow; agentId: strin
 }
 
 function ToolOutput({ row, agentId }: { row: ToolRow; agentId: string }) {
-  const detail = useAppStore((s) => (row.resultMessageId ? s.messageDetails[row.resultMessageId] : undefined));
+  const detail = useAppStore((s) => (row.resultMessageId ? s.messageDetails[agentId]?.[row.resultMessageId] : undefined));
   const requestMessageDetail = useAppStore((s) => s.requestMessageDetail);
   const [requested, setRequested] = useState(false);
   const text = stripAnsi(detail?.text ?? row.output).replace(/\s+$/, '');

@@ -1,131 +1,167 @@
-# Glasstunnel security model
+# Glasstunnel Security Model
 
-## Threat model
+Reviewed against source on 2026-09-06. This describes the current public beta;
+it is not an independent security certification.
 
-Glasstunnel is designed to let a developer see their Mac's local coding agents from their phone. The threat model reflects that:
+## Trust Boundary
 
-- **In scope:** a malicious network attacker on any hop between phone and Mac (including the signaling server). A malicious browser extension on an already-trusted phone. An attacker who learns the phone's device ID but not its private key. Infrastructure operators at `glasstunnel.io` (including the authors).
-- **Out of scope:** an attacker with physical access to the unlocked Mac. An attacker with root on the Mac. An attacker with the phone in hand, unlocked, after the PWA is authenticated. Supply-chain attacks against the coding agents themselves.
+The hosted service is a trusted content processor. **Hosted relay content is not
+end-to-end encrypted.** Cloudflare Workers/Durable Objects can read prompts, chat
+and tool output, agent state, remote commands, attachment data, and JPEG screen
+fallback frames carried through that relay.
 
-## Properties we provide
+WebRTC media is end-to-end encrypted between the Mac and browser. A TURN relay
+forwards encrypted WebRTC packets. This protection applies to WebRTC traffic,
+not to content sent separately through the hosted WebSocket relay.
 
-| Property                                   | How                                                                                    |
-| ------------------------------------------ | -------------------------------------------------------------------------------------- |
-| Mac and phone authenticate to each other   | Ed25519 device keys generated on first launch, exchanged through the account host-claim flow |
-| Signaling envelopes are sender-authenticated | Clients sign outbound envelopes and verify inbound envelopes against the paired device key |
-| Signaling server cannot read content       | All media + DataChannel traffic is DTLS-SRTP encrypted end-to-end                      |
-| TURN relay cannot read content             | Same DTLS-SRTP E2E; TURN sees ciphertext only                                          |
-| Unlinked devices cannot receive content    | Hub routes envelopes by `to_device_id`; Mac side checks the device registry and signatures too |
-| Phone must biometric-unlock before use     | WebAuthn gate on every cold start                                                      |
-| Mac-side read-only toggle hard-disables input  | Read-only bit is enforced inside `Session.handleDataChannelMessage` before dispatch    |
-| Common secrets never leave the Mac         | `SecretRedactor` runs on all outbound text before WebRTC send                          |
-| Lost devices can be revoked                | `DeviceRegistry.revoke()` moves a device to blacklist; Mac drops envelopes from it     |
+| Path | Protection | What infrastructure can access |
+| --- | --- | --- |
+| WebRTC media | DTLS-SRTP between peers | Signaling/transport metadata; TURN forwards ciphertext |
+| WebRTC DataChannel | SCTP over DTLS between peers | Transport metadata, not channel plaintext |
+| Hosted content relay | HTTPS/WSS transport encryption to Cloudflare | The JSON content it receives, forwards, and caches |
+| Hosted account API | HTTPS and Supabase account authentication | Account/device records and API request content |
+| Local test lab | Loopback HTTP/WS | Disposable local test data; not suitable as an internet-facing deployment |
 
-## Account-first trust model
+A trusted infrastructure operator or compromised hosted control plane can access
+relay content and influence relay commands and device authorization. The current
+hosted architecture does not protect against that operator. Device-key signatures
+do not add application-layer encryption to the relay.
 
-When using the hosted control plane (Supabase + Cloudflare Workers), the trust flow is:
+In scope for hardening are unauthorized cross-account access, device-key theft,
+input authorization, browser session isolation, replay/abuse handling, and content
+exposure beyond these declared boundaries. An unlocked compromised Mac, malicious
+code in an authenticated browser profile, or a compromised coding agent can defeat
+protections at those endpoints.
 
-1. **Account creation:** The user signs up via Supabase Auth (email + OTP). Supabase stores the account profile; Glasstunnel never sees the password.
-2. **Host linking:** The Mac app generates a single-use link code and sends it to the Cloudflare Worker. The worker stores the code in Supabase with a 5-minute TTL.
-3. **Host claim:** The signed-in phone presents the link code. The worker verifies the code, then creates a `host_devices` row associating the Mac's `device_id` with the user's account.
-4. **Device authorization:** A signed-in browser device on the same account is authorized by the control plane and added to the Mac's `DeviceRegistry`.
-5. **Ongoing access:** All subsequent sessions require both account authentication (Supabase JWT) and device-level Ed25519 mutual auth. Revoking a device on the Mac immediately blocks that device, regardless of account status.
+## Account And Device Authentication
 
-The account layer is the required discovery and authorization path. The security boundary remains device-level Ed25519 trust after account authorization.
+The PWA supports Supabase-backed OAuth and email/password flows. Passwords entered
+in the PWA are submitted to Supabase Auth; the Worker verifies account access
+tokens. Do not describe the product as OTP-only or claim its client never handles
+a password.
 
-## Hosted request boundary
+The Mac and browser generate Ed25519 device keys. WebSocket clients prove possession
+by signing a short-lived server nonce. Browser relay authentication additionally
+checks the account token and device/host records for matching ownership and
+revocation state at connection time. The host authenticates using its device key;
+it does not send a browser account token.
 
-The hosted Cloudflare Worker accepts browser requests only when the request's
-`Origin` exactly matches a configured application origin. CORS responses echo
-that approved origin and include `Vary: Origin`; the Worker does not use a
-wildcard origin. Native Mac clients normally omit `Origin`, so their requests
-remain supported and still require the same account and device-key
-authentication. Origin checking limits browser-based cross-origin use but is
-not treated as authentication because non-browser clients can omit that header.
+The signed signaling-envelope path verifies signatures against trusted device keys.
+Hosted relay commands are a separate JSON protocol trusted through the authenticated
+server connection; they are not individually verified as signed phone envelopes by
+the Mac. Account discovery and server-origin authorization therefore remain part
+of the trust boundary.
 
-Cloudflare Rate Limiting bindings provide a second, deliberately generous abuse
-guard. Account API requests are limited per endpoint and a one-way digest of the
-bearer token, plus a higher-capacity connecting-address bucket that prevents
-token rotation from bypassing the guard. Requests without a bearer token use the
-connecting address for both account buckets. WebSocket upgrade attempts are
-limited per endpoint and connecting address. Bearer tokens are never stored in
-rate-limit keys. A rejected request receives HTTP `429` with `Retry-After`;
-established WebSocket messages remain protected by nonce authentication, device
-signatures, bounded queues, and the existing authorization checks.
+A custom signaling URL must belong to an operator the user trusts. A server
+`auth_ok` response is not cryptographic proof of the server's device identity.
+HTTPS/WSS certificate validation authenticates the configured service endpoint.
 
-## Crypto primitives
+## Hosted Request Boundary
 
-- **Device identity:** Ed25519 signatures. Provided by Apple's CryptoKit (Swift), `@noble/ed25519` (TypeScript), and Go's stdlib `crypto/ed25519`.
-- **Channel encryption:** DTLS 1.2 + SRTP. Provided by Google's WebRTC stack.
+The Worker rejects browser requests whose Origin does not exactly match a configured
+application origin. Approved CORS responses echo that origin and include
+`Vary: Origin`. Native clients may omit Origin. Origin checking is an additional
+browser restriction, not authentication.
 
-No new primitives. No hand-rolled crypto. No Glasstunnel-operated TLS endpoint sees WebRTC media or DataChannel plaintext.
+Cloudflare Rate Limiting bindings apply account API and WebSocket-upgrade limits.
+Account limits use an endpoint/token-digest bucket and a higher-capacity connecting-
+address bucket; tokens are not stored in rate-limit keys. Rejections return HTTP
+429 with Retry-After. These are request/upgrade controls, not a claim of complete
+per-message abuse protection or a guarantee about every deployment's quotas.
 
-## Data storage
+## Content And Credential Storage
 
-- **Mac:** host private key in the system Keychain (generic password, `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`). Paired-device public keys + labels in `~/Library/Application Support/Glasstunnel/devices.json`. Moving `Glasstunnel.app` to Trash does not delete this per-user Keychain and Application Support state; users should use **Sign Out** first when they want to unlink the Mac and rotate its local device identity.
-- **Phone:** phone keypair in IndexedDB via `idb-keyval`. WebAuthn biometric credential stored by the browser / platform keychain.
-- **Local Go signaling server:** no durable account data. Offline envelopes live in memory briefly. Web Push subscriptions may be stored when push is enabled.
-- **Hosted Cloudflare/Supabase control plane:** Supabase stores account profiles, device public keys, host link codes, device pairings, and approval requests. It does not store captured content, prompts, chats, or media.
-- **TURN server:** coturn uses in-memory long-term credentials. No logging of user content; only metered bytes-per-session.
+- **Mac:** the host identity is stored in the system Keychain; the local device
+  registry is in Application Support. Deleting the app bundle does not erase that
+  per-user state. Use Sign Out to unlink the Mac; do not treat Trash as credential
+  revocation. Received attachments and coding-agent history can remain on the Mac.
+- **Browser:** device keys and the selected Mac are stored in IndexedDB. Supabase
+  persists its session through its browser client. Offline workspace snapshots,
+  including recent chat content, are also cached in IndexedDB. Expanded tool detail
+  is held in memory, scoped by agent/message and cleared with connection/session
+  teardown. Sign-out clears the active workspace; it is not a secure erase of all
+  browser storage or previously received content.
+- **Hosted Cloudflare/Supabase control plane:** Supabase holds account and device
+  records, linking/pairing data and approval requests. Cloudflare Durable Object
+  storage persists host hello/app state and recent-message snapshots for offline
+  replay. Each compacted agent snapshot has a size bound, but there is currently
+  no documented automatic content-expiry deadline.
+- **Relay frames/detail:** the current Worker forwards JPEG frames and expanded
+  message-detail replies without explicitly persisting those payloads. Recent
+  transcript snapshots can still contain portions of the same text.
+- **Go signaling:** offline envelopes are queued temporarily in memory; Web Push
+  subscriptions may be stored when enabled. Hosted signaling also uses Durable
+  Object storage for queued envelopes.
+- **TURN:** handles encrypted WebRTC packets and operational connection metadata.
+  Its logging and credential retention depend on the deployment configuration.
 
-## Secret redaction
+Do not interpret bounded snapshot size as a retention policy. Hosted backup,
+deletion, and provider-log retention need separate operational verification.
 
-`SecretRedactor` runs on every outbound chat message and every captured PTY output. Defaults cover:
+## Redaction And Remote Controls
 
-- AWS access keys (`AKIA…`) and secret-access-key assignments
-- Google API keys (`AIza…`)
-- GitHub PAT/OAuth/server tokens (`ghp_…`, `gho_…`, `ghs_…`)
-- OpenAI keys (`sk-…`), Anthropic keys (`sk-ant-…`), Stripe secret keys (`sk_live_…`)
-- JWT tokens (`eyJ…eyJ…`)
-- SSH private-key blocks
-- `Authorization: Bearer …` headers
-- Assignment lines whose variable name includes SECRET/TOKEN/PASSWORD/API_KEY/PRIVATE_KEY
+`SecretRedactor` applies best-effort pattern matching to supported outbound
+transcript text, tool titles and expanded message detail. Defaults include common
+API-token patterns, bearer headers, JWTs, private-key blocks and secret-like
+assignments. Matching text is replaced with labeled redaction placeholders.
 
-Matches are replaced with `<redacted:NAME>`. Users can extend the pattern list in Settings. Redaction is **one-way**: once a match is replaced, the phone never sees the original bytes.
+Redaction is not a guarantee that secrets never leave the Mac. It does not sanitize
+screen pixels, arbitrary uploaded attachments, all metadata, or every possible
+secret format. In particular, phone-origin input traversing the relay reaches the
+server before any Mac-side processing. Do not send or display production
+credentials through the tunnel.
 
-Redaction is best-effort. It will miss anything that doesn't match the default patterns and custom patterns the user has added. Security-critical workflows should pair redaction with `Read-only mode`.
+Read-only mode blocks several input-dispatch paths, but is session-level behavior,
+not an immutable administrator policy or a complete per-device permission system.
+Its coverage of every action and resistance to remote setting changes must be
+validated before stronger claims are made.
 
-## Attack resistance
+The browser unlock screen uses a platform authenticator when available and can
+fall back to a confirmation tap. It is a local UI gate, not mandatory Face ID on
+every cold start or server-enforced reauthentication.
 
-### Replay
+## Revocation And Replay Limitations
 
-Every envelope carries `envelope_id` (UUID) + `sent_at_unix_ms`. Both clients authenticate their WebSocket connection by signing a server nonce, and then sign each outbound envelope with the same device key.
+Local device revocation updates the Mac registry and affects device-trust checks.
+Do not assume it immediately closes every existing WebRTC/content-relay connection
+or invalidates all hosted authorization. The hosted relay currently authenticates
+a client at connection time; end-to-end active-session revocation needs additional
+implementation and cross-surface tests. There is no supported sub-second revocation
+guarantee.
 
-We do not currently reject time-skewed envelopes or keep an envelope replay cache — this is a deliberate tradeoff because mobile clocks on LTE drift and the signaling layer only carries setup/control traffic. Replay-to-impersonate is mitigated by device signatures, channel-level DTLS, and by the fact that content lives on the WebRTC channel, not the envelope.
+Signed signaling envelopes carry IDs and timestamps, but signature verification
+alone does not provide a complete application replay policy. The hosted JSON
+command path also needs its own replay/authorization analysis. Neither the local
+unlock UI nor an encrypted transport should be advertised as solving these gaps.
 
-### Man-in-the-middle at signaling
+For an urgent loss of trust, stop the Mac host or disable its network access, then
+review account sessions and device authorization. Revocation cannot retract content
+already received by a browser or operator.
 
-The signaling server can drop, delay, replay, or shuffle envelopes. It cannot forge accepted envelopes between linked devices because clients verify envelope signatures against the trusted key learned from the account host-claim flow.
+## Logging And Telemetry
 
-### Evil-twin server
+The Mac uses Apple's unified logging for operational events. The PWA can write
+browser-console warnings and the Worker logs relay persistence failures. Do not
+assume every operational identifier, error description or provider log is redacted.
+Avoid collecting raw diagnostic logs without reviewing them for private data.
 
-If the user types a malicious signaling URL in Settings before linking the Mac, that host could MITM the handshake in theory. In practice:
+The repository does not include an analytics SDK, a crash-reporting SDK, a crash-
+reporting Settings toggle, or a Glasstunnel telemetry-ingestion endpoint. Operating
+systems, browsers, and hosting providers may still produce their own diagnostic or
+request logs. Provider retention and access controls require operational review.
 
-1. Account linking needs a short-lived code generated by the real Mac.
-2. A malicious server cannot produce a valid `auth_ok` response without the private key.
-3. The browser stores the host public key at host-claim time and verifies host-origin envelopes against it later.
+## Source Map And Follow-Up
 
-### Compromised phone
+- Relay authentication, content handling and storage:
+  `apps/cloudflare-signal/src/index.ts`, `relaySnapshotCache.ts`.
+- Mac relay command routing and local controls:
+  `apps/host-macos/Sources/Transport/SessionManager.swift`.
+- Transcript redaction:
+  `apps/host-macos/Sources/Transport/RemoteAppController.swift`.
+- Browser sessions, offline snapshots and expanded detail:
+  `apps/mobile-pwa/src/lib/store.ts`, `UnlockScreen.tsx`.
+- Focused reconciliation status: [security-reconciliation.md](security-reconciliation.md).
 
-If the phone is stolen and unlocked, the attacker gets full access to the tunnel until you revoke from the Mac side (`Devices` tab). That's by design; device revocation is fast (< 1s) and effective immediately.
-
-## Logging and telemetry
-
-The Mac app uses Apple's unified logging for operational events such as remote-app actions and adapter lifecycle changes. Reviewed log calls do not intentionally include captured screen content, prompts, chats, or Terminal output; error descriptions are marked private where they are logged. The PWA may write a local browser-console warning when push registration fails, and the Cloudflare Worker logs relay-snapshot persistence failures for operational diagnosis.
-
-The repository does not include an analytics SDK, a crash-reporting SDK, a crash-reporting Settings toggle, or a Glasstunnel telemetry-ingestion endpoint. Operating systems, browsers, and hosting providers may still produce their own diagnostic or request logs according to the user's device settings and the deployment's provider configuration.
-
-## What about the signaling server operators?
-
-The public service uses Cloudflare, Supabase, and TURN infrastructure. Those services necessarily process operational metadata needed to route and secure connections, such as network addresses, request timing, account/device lifecycle records, and relay byte counts. The application is designed so that captured content and WebRTC DataChannel content remain end-to-end encrypted and are not available to the signaling or TURN services.
-
-- The hosted control plane does not receive plaintext WebRTC user content.
-- We do not log captured content, prompts, chats, media, SDP bodies, or ICE candidates.
-- The Go signaling server may inspect the `agentStateEvent` status metadata needed for Web Push. The Cloudflare worker currently treats push fanout as pending.
-- The repository does not define a universal provider-log retention period. Self-hosters control their own logging and retention; hosted-service retention is an operational configuration that must be reviewed separately from this source-code audit.
-
-If you don't trust us (which is a perfectly reasonable position), the self-hosting path is one `docker compose up` away. See [`docs/self-hosting.md`](self-hosting.md).
-
-## Reporting a vulnerability
-
-See [`SECURITY.md`](../SECURITY.md) at the repo root.
+Self-hosting changes who operates the service; it does not add encryption or fix
+protocol limitations by itself. See [self-hosting.md](self-hosting.md).
+Report vulnerabilities privately using [SECURITY.md](../SECURITY.md).
