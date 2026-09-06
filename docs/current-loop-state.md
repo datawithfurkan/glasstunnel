@@ -33,9 +33,10 @@ protected PRs, all five strict CI checks and the other branch protections; do no
 repeat the independent-contributor approval blocker. Stages 2-4 remain queued;
 stage 5 is E2E design only and requires a separate decision before implementation.
 Both PR and post-merge CI passed, and Dependabot reports zero open alerts. The
-next release gate is Cloudflare deployment preflight/access and explicit production
-approval, not GitHub contributor review. Local Wrangler currently lacks auth;
-do not claim that the hosted patch has shipped.
+next release gate is explicit production approval and the remaining deployment
+preflight, not GitHub contributor review or Cloudflare authentication. Wrangler
+OAuth was restored on 2026-09-06 and read-only deployment queries passed for the
+PWA, site and Worker. Do not claim that the hosted patch has shipped.
 See `docs/security-reconciliation.md` for the first pass's evidence and remaining
 risks. After stage 1, the next security slice is authorization and active-session
 revocation across the Mac, hosted relay and WebRTC. Do not
