@@ -26,9 +26,16 @@ product-development loop should start from the highest-impact remaining beta ris
 
 Security reconciliation takes priority over further product improvements. The
 approved sequential roadmap is `docs/architecture/security-hardening-plan.md`.
-Stage 1 is active: deliver the existing locally tested security patch through a
-protected PR and explicitly approved deployment. Stages 2-4 remain queued; stage
-5 is E2E design only and requires a separate decision before implementation.
+Stage 1 is active: PR #32 merged the tested security patch at `da9a1bc3`;
+production deployment and its canary are still pending. The sole maintainer
+explicitly authorized zero required contributor approvals on 2026-09-06. Keep
+protected PRs, all five strict CI checks and the other branch protections; do not
+repeat the independent-contributor approval blocker. Stages 2-4 remain queued;
+stage 5 is E2E design only and requires a separate decision before implementation.
+Both PR and post-merge CI passed, and Dependabot reports zero open alerts. The
+next release gate is Cloudflare deployment preflight/access and explicit production
+approval, not GitHub contributor review. Local Wrangler currently lacks auth;
+do not claim that the hosted patch has shipped.
 See `docs/security-reconciliation.md` for the first pass's evidence and remaining
 risks. After stage 1, the next security slice is authorization and active-session
 revocation across the Mac, hosted relay and WebRTC. Do not
