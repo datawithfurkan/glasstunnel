@@ -28,8 +28,11 @@ and [UI parity](../agent-ui-contract.md).
 - Use disposable local identities. Never test adversarial commands against a
   personal account or production infrastructure.
 - Iterate locally; one consolidated review-branch push per completed stage.
-- Honor protected-main checks and the required approving review. No administrator
-  bypass, self-approval, force-push or weaker branch protection.
+- Use protected PRs with all five strict status checks. On 2026-09-06 the sole
+  maintainer explicitly authorized zero required contributor approvals. Review
+  the diff and evidence before merging; do not fabricate an independent review.
+  Keep conversation resolution, linear history, and force-push/deletion blocks.
+  No administrator bypass or further protection change without authorization.
 - Inspect one resulting CI run per push. A main merge may trigger the repository's
   separate automatic confirmation run; do not dispatch or rerun CI manually.
 - Production deployment is a separate explicit approval point. Confirm an exact
@@ -49,7 +52,7 @@ and [UI parity](../agent-ui-contract.md).
 
 | Stage | Current status | Exit gate |
 | --- | --- | --- |
-| 1. Existing patch | In progress: reviewed locally; preparing PR | Required review/checks, approved deployment and bounded verification |
+| 1. Existing patch | PR #32 merged; deployment pending | Protected PR/checks, approved deployment and bounded verification |
 | 2. Revocation | Queued | Active/new sessions denied across relay and WebRTC; UI confirmation is truthful |
 | 3. Permissions | Queued | Host policy rejects unauthorized actions regardless of browser behavior |
 | 4. Retention | Queued | Tested expiry/deletion and account-scoped cache behavior |
@@ -75,9 +78,10 @@ protocol schema changes in this patch.
 
 - [x] Fetch upstream and verify no unrelated changes or merge conflicts.
 - [x] Read the patch and inspect the existing session, cache and auth boundaries.
-- [x] Verify GitHub protection and workflow triggers. `main` requires five checks
-  and one approving review. Review branches run CI when a PR is opened, not on
-  their ordinary branch push. Deploy uses `workflow_dispatch` only.
+- [x] Verify GitHub protection and workflow triggers. `main` requires five checks;
+  the original one-review rule was changed to zero by explicit maintainer decision
+  below. Review branches run CI when a PR is opened, not on their ordinary branch
+  push. Deploy uses `workflow_dispatch` only.
 - [x] Refresh local validation for the exact review candidate:
 
 ```sh
@@ -101,15 +105,19 @@ checks passed. Browser evidence for the unchanged runtime patch is recorded in
 `docs/security-reconciliation.md`; it was not repeated for this plan-only change.
 Existing bundle-size and Node localStorage warnings remain non-failing.
 
-- [ ] Commit this plan and handoff updates; push `codex/security-reconciliation`
+- [x] Commit this plan and handoff updates; push `codex/security-reconciliation`
   once and open a PR to `main`. Include prior browser evidence and current test
   results. State explicitly that hosted revocation and E2E are not implemented.
-- [ ] Inspect the PR's single CI run. If it fails, diagnose the logs and reproduce
+- [x] Inspect the PR's single CI run. If it fails, diagnose the logs and reproduce
   locally before considering one corrective push. Do not rerun a successful job.
-- [ ] Obtain the required review. The CLI uses the maintainer's GitHub account;
-  that account cannot approve its own PR. Request an eligible independent
-  reviewer through Telegram, never manufacture a second identity or bypass.
-- [ ] Merge through the normal protected workflow after its gates pass.
+- [x] Resolve the review-policy gate. Telegram reached the maintainer, who
+  confirmed sole ownership and explicitly removed the requirement for another
+  contributor approval. Set only `required_approving_review_count` to zero;
+  verify all five strict checks and the other protections remain unchanged.
+- [x] Merge through the normal protected workflow after its gates pass.
+  [PR #32](https://github.com/datawithfurkan/glasstunnel/pull/32) merged at
+  `da9a1bc3659b33e480219e53226976eaef38d9ff`. Its five checks passed in
+  [PR CI](https://github.com/datawithfurkan/glasstunnel/actions/runs/34042442055).
 - [ ] Obtain approval to deploy the exact merged SHA; record the current deployed
   web/Worker revisions first. The current Deploy workflow redeploys the PWA, site
   and Worker together. Do not assume Worker code is unchanged relative to what is
@@ -119,6 +127,9 @@ Existing bundle-size and Node localStorage warnings remain non-failing.
   canary. No Mac release, signing, notarization or version bump is required here.
 - [ ] Record PR, immutable CI/deploy URLs, exact SHA and canary result. Verify
   Dependabot state once after integration; indexing delay is not a reason to push.
+
+After merge, the live Dependabot API reported zero open alerts on 2026-09-06.
+This confirms advisory cleanup, not completion of the remaining security stages.
 
 **Acceptance:** the reviewed patch reaches users, the source and website describe
 the real relay trust boundary, CI passes, rollback is recorded, and no claim is
@@ -252,11 +263,24 @@ every check. Use the PR/check/deploy URLs as external evidence without creating
 extra documentation-only CI runs while an approval is pending.
 
 - Active stage: 1.
-- Working branch: `codex/security-reconciliation`.
-- Patch source: `70fa8051`; plan is a documentation-only descendant.
+- Working branch: `codex/security-follow-up`; policy/handoff updates remain local
+  for the next meaningful batch, avoiding an extra documentation-only CI push.
+- Merged source: `da9a1bc3659b33e480219e53226976eaef38d9ff` via PR #32. GitHub
+  rebased the original patch/plan commits; the merged tree matches the tested tree.
 - Production authority: not yet granted for a specific deployment.
-- Review authority: required GitHub approving review remains a real human gate.
+- Review authority: sole maintainer authorized zero contributor approvals;
+  protected PRs and the five strict checks remain required.
 - Local validation: passed for the security patch and this plan on 2026-09-06.
-- Next action: commit the plan, open the review PR and inspect its one CI run;
-  obtain the required independent approving review before merge.
+- Main CI: all five checks passed in the automatic post-merge confirmation,
+  not a manually dispatched rerun:
+  https://github.com/datawithfurkan/glasstunnel/actions/runs/34042927618
+- Deployment preflight: local Wrangler has no authenticated Cloudflare access;
+  the read-only Pages deployment-list request failed before returning records.
+  No login, credentials, configuration or deployment was changed. The latest
+  successful GitHub Deploy record is run `33844017476` (workflow head `44b8cb92`),
+  but this alone does not verify current live Cloudflare deployment IDs. Compared
+  with that source revision, the candidate has no Worker/protocol source changes.
+- Next action: restore authenticated Cloudflare read access, verify current
+  rollback references and obtain approval for deployment of `da9a1bc3`; deploy
+  once and verify before opening stage 2. No contributor review is needed.
 - Later stages remain queued; no changes to their runtime behavior are claimed.
