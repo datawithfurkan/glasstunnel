@@ -24,10 +24,14 @@ account details, absolute machine paths, and personal credentials out of Git. Th
 product-development loop should start from the highest-impact remaining beta risk in
 `docs/public-release-readiness.md` rather than replaying this release movement.
 
-Security reconciliation takes priority over further product improvements. See
-`docs/security-reconciliation.md` for completed local fixes, actual validation and
-the ordered remaining security queue. The next security slice is authorization
-and active-session revocation across the Mac, hosted relay and WebRTC. Do not
+Security reconciliation takes priority over further product improvements. The
+approved sequential roadmap is `docs/architecture/security-hardening-plan.md`.
+Stage 1 is active: deliver the existing locally tested security patch through a
+protected PR and explicitly approved deployment. Stages 2-4 remain queued; stage
+5 is E2E design only and requires a separate decision before implementation.
+See `docs/security-reconciliation.md` for the first pass's evidence and remaining
+risks. After stage 1, the next security slice is authorization and active-session
+revocation across the Mac, hosted relay and WebRTC. Do not
 equate corrected privacy wording or a clean dependency audit with that slice
 being implemented.
 
