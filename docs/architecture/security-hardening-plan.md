@@ -59,8 +59,8 @@ and [UI parity](../agent-ui-contract.md).
 | --- | --- | --- |
 | 1. Existing patch | Complete; deployed and verified 2026-09-06 | Protected PR/checks, approved deployment and bounded verification |
 | 2. Revocation | Complete in source and hosted services; Mac binary publication remains separate | Active/new sessions denied across relay and WebRTC; UI confirmation is truthful |
-| 3. Permissions | Active | Host policy rejects unauthorized actions regardless of browser behavior |
-| 4. Retention | Queued | Tested expiry/deletion and account-scoped cache behavior |
+| 3. Permissions | Complete in source and hosted services; Mac binary publication remains separate | Host policy rejects unauthorized actions regardless of browser behavior |
+| 4. Retention | Policy proposed; maintainer decision pending | Tested expiry/deletion and account-scoped cache behavior |
 | 5. E2E design | Queued, design only | Maintainer approves the threat model and migration design |
 
 Advance only when the current stage's gate passes. A human-gated stage stays open;
@@ -297,7 +297,7 @@ as securing an account whose credentials an attacker still controls.
   that were queued before the permission changed.
 - [x] Reflect effective permissions in Mac and web controls with visible denied
   results. Do not silently discard commands or claim successful execution.
-- [ ] Run targeted and full Swift tests, PWA build/test/lint, protocol checks if
+- [x] Run targeted and full Swift tests, PWA build/test/lint, protocol checks if
   changed, and disposable-account command tests. Ship through the same gates.
 
 **Acceptance:** hiding/disabling a web button is not the enforcement mechanism;
@@ -326,10 +326,25 @@ the host rejects the same unauthorized message sent directly over either transpo
 - Ordinary account/Terminal, desktop/mobile Chromium fixtures and mobile WebKit
   fixtures passed. PWA build/lint, protocol generation/build, lab unit tests,
   security/privacy and public audits, and whitespace validation passed.
-- Shipping is pending the protected PR and exact-commit hosted deployment.
+- Protected PR #34 merged at `cc3377b1c2cbb283aadde58ec1eeb351048ce22c`;
+  the tree equals tested `73314330`. All five checks passed in CI `34061166134`.
+  Deploy `34061593757` passed for both hosted jobs. Isolated Chromium/WebKit
+  shell and reload canaries passed without page errors; public PWA/site,
+  service worker and signaling health returned 200. Service worker remains
+  `public, no-cache, must-revalidate`. Deployment IDs appear in the handoff below.
   A new Mac release is separate; source/hosted integration is not binary delivery.
 
 ## Stage 4: Bounded Content Lifetime
+
+The concrete decision and migration proposal is
+[`content-retention-proposal.md`](content-retention-proposal.md). Recommended:
+24-hour offline replica lifetime, account-scoped browser caches, clearing on
+sign-out/removal, and discarding legacy copies with unverifiable age/ownership.
+This does not delete original chats or files. Policy approval is still pending;
+no retention runtime changes or existing hosted data deletion have occurred.
+One deduplicated Telegram policy-decision notification was delivered on
+2026-09-06. Further work while waiting was limited to the source-grounded
+proposal and handoff; there is no repeated authentication or routine approval gate.
 
 **Inspect/modify:** `apps/cloudflare-signal/src/relaySnapshotCache.ts`,
 `RelayHub` persistence/alarm in `src/index.ts`,
@@ -383,10 +398,12 @@ Update this section and `docs/current-loop-state.md` when a gate changes, not on
 every check. Use the PR/check/deploy URLs as external evidence without creating
 extra documentation-only CI runs while an approval is pending.
 
-- Active stage: 3. Stages 1-2 passed in source and hosted services. The public
+- Active stage: 4 policy decision. Stages 1-3 passed in source and hosted services. The public
   Mac binary still needs a separately coordinated release for the new host code.
-- Working branch: `codex/security-permissions`, from the tested stage 2 merge.
-- Merged source: `c4acdc2a62c4e43a67d4d653a8d907340a1706ed` via
+- Working branch: `codex/security-retention`, from the tested stage 3 merge.
+  Only the proposal and completed-stage handoff are local changes; no retention
+  runtime implementation or production deletion is included.
+- Stage 2 merged source: `c4acdc2a62c4e43a67d4d653a8d907340a1706ed` via
   [PR #33](https://github.com/datawithfurkan/glasstunnel/pull/33). The merged tree
   exactly matches tested candidate `db998a2c`. All five protected checks passed
   in [PR CI](https://github.com/datawithfurkan/glasstunnel/actions/runs/34057336269).
@@ -434,6 +451,18 @@ extra documentation-only CI runs while an approval is pending.
   Chromium/WebKit mobile-view shell and reload checks passed with no page errors;
   service worker and signaling health returned 200, with service worker caching
   still `public, no-cache, must-revalidate`. No personal account was used.
-- Next action: implement and prove the stage 3 task packet above. The lab is
-  stopped. No routine approval or Cloudflare login is needed. Stages 4-5 remain
-  queued; stage 4's exact deletion policy and stage 5's design are decision gates.
+- Stage 3 source: `cc3377b1c2cbb283aadde58ec1eeb351048ce22c`, normal protected
+  [PR #34](https://github.com/datawithfurkan/glasstunnel/pull/34), with all five
+  checks in [CI](https://github.com/datawithfurkan/glasstunnel/actions/runs/34061166134)
+  passing. One consolidated review-branch push, no successful workflow rerun.
+- Stage 3 hosted delivery:
+  [Deploy](https://github.com/datawithfurkan/glasstunnel/actions/runs/34061593757)
+  succeeded. PWA `78b3cc2f-80b9-42bb-b4d9-d4cc45673d39` and site
+  `54f220ed-b496-4dd7-b68e-45287c598b7f` both report `cc3377b`; Worker traffic
+  is 100% `e270b0d9-bae4-473f-a195-f1b5b05344a2`. The immediately preceding
+  stage 2 deployment IDs above were freshly checked as rollback references.
+  No storage migration, retention purge, Mac release or installed-app change.
+- Next action: obtain the stage 4 policy decision, then implement its local
+  deterministic-clock, cache-isolation and offline tests before one reviewed
+  rollout. The lab is stopped. No routine approval or Cloudflare login is needed.
+  Stage 5 remains queued and design-only. Do not bypass either substantive gate.

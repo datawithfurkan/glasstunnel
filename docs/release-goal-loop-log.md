@@ -161,3 +161,17 @@ changes or a blocker is materially narrowed.
 - Next action: Stage 3 host-owned permissions; retention and E2E design remain queued.
 - End commit: c4acdc2a62c4e43a67d4d653a8d907340a1706ed.
 - CI/deploy: https://github.com/datawithfurkan/glasstunnel/actions/runs/34057717088 succeeded. One dispatch, no reruns, tags, signing or notarization.
+
+## 2026-09-06 - Host-owned permissions hosted rollout
+
+- Start commit: c4acdc2a
+- Release gate: Mac-authoritative read-only control across relay and DataChannel, independent browser self-restrictions and truthful UI.
+- Files changed: Mac Settings/policy/transports, additive Hello capability, Worker targeted denial routing, PWA controls, local account E2E and reusable security audit.
+- Validation: 462 Swift tests (eight environment skips), 244 PWA tests, 46 Worker tests and 52 lab unit tests passed. Local two-browser forged-command/permission/revocation, ordinary account Terminal and Chromium/WebKit fixtures passed. Protocol, build, lint, security/privacy, public audit and whitespace checks passed.
+- Manual testing: Inspected the ignored phone capture showing host-policy banner, disabled controls and targeted rejection. Isolated Chromium/WebKit hosted shell/reload checks passed with zero page errors. No personal-account, installed-app, Keychain, TCC or native capture mutation.
+- Outcome: passed in source and hosted services. The public 0.1.9 binary has not been replaced and lacks the new host enforcement.
+- Evidence: PR #34 merged tested tree 73314330 as cc3377b1; all five checks passed in CI 34061166134. Deploy 34061593757 succeeded; PWA 78b3cc2f-80b9-42bb-b4d9-d4cc45673d39, site 54f220ed-b496-4dd7-b68e-45287c598b7f, Worker 100% e270b0d9-bae4-473f-a195-f1b5b05344a2. Prior stage 2 versions are the checked rollback baseline.
+- Limits: Read-only does not cancel already-executing work, replace account security or create a complete per-device administrator policy. Retention and E2E are not implemented by this slice.
+- Next action: Review the concrete stage 4 cache lifetime/deletion proposal, then continue its local implementation. No repeated routine approval is required.
+- End commit: cc3377b1c2cbb283aadde58ec1eeb351048ce22c.
+- CI/deploy: https://github.com/datawithfurkan/glasstunnel/actions/runs/34061593757 succeeded. One dispatch, no reruns or Mac release. All lab-owned services are stopped.
