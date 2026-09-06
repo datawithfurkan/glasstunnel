@@ -6,7 +6,7 @@ import type {
   ScreenShareQuality,
 } from '@glasstunnel/protocol';
 import { AgentStatus } from '@glasstunnel/protocol';
-import { useAppStore } from '../lib/store';
+import { effectiveReadOnly, useAppStore } from '../lib/store';
 import {
   describeScreenVideoStatus,
   hasFreshRelayScreenFrame,
@@ -57,7 +57,7 @@ export function ScreenRemotePanel({
 }: ScreenRemotePanelProps) {
   const stream = useAppStore((s) => s.videoStreams[app.agentId]);
   const relayFrame = useAppStore((s) => s.relayScreenFrames[app.agentId]);
-  const readOnlyMode = useAppStore((s) => s.readOnlyMode);
+  const readOnlyMode = useAppStore(effectiveReadOnly);
   const requestRemoteAppAction = useAppStore((s) => s.requestRemoteAppAction);
   const startVideoPeer = useAppStore((s) => s.startVideoPeer);
   const stopVideoPeer = useAppStore((s) => s.stopVideoPeer);
@@ -530,6 +530,7 @@ export function ScreenRemotePanel({
   };
 
   const setScreenSharing = (enabled: boolean) => {
+    if (readOnlyMode) return;
     startRequestedRef.current = false;
     setVideoRenderPhase('idle');
     setVideoRenderDetail(null);
@@ -549,6 +550,7 @@ export function ScreenRemotePanel({
   };
 
   const chooseQuality = (quality: ScreenShareQuality) => {
+    if (readOnlyMode) return;
     if (screenShareQuality === quality) return;
     setScreenShareQuality(quality);
     if (!screenSharingEnabled) {
@@ -593,7 +595,7 @@ export function ScreenRemotePanel({
         </div>
         <ScreenSharingSwitch
           enabled={screenSharingEnabled}
-          disabled={hostOnline === false}
+          disabled={readOnlyMode || hostOnline === false}
           onToggle={setScreenSharing}
         />
       </div>
@@ -601,6 +603,7 @@ export function ScreenRemotePanel({
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-[color:var(--gt-border)] px-4 py-2">
         <SegmentedControl
           label="Screen quality"
+          disabled={readOnlyMode}
           className="min-w-[11rem] flex-1"
           options={[
             { value: 'fast', label: 'Fast' },
@@ -707,6 +710,7 @@ export function ScreenRemotePanel({
                   )}
                   <button
                     type="button"
+                    disabled={readOnlyMode}
                     onClick={
                       screenStopping
                         ? () => setScreenSharing(false)
@@ -904,12 +908,14 @@ function ScreenSharingSwitch({
 
 function SegmentedControl({
   label,
+  disabled = false,
   className = '',
   options,
   value,
   onChange,
 }: {
   label: string;
+  disabled?: boolean;
   className?: string;
   options: { value: string; label: string }[];
   value: string;
@@ -924,6 +930,7 @@ function SegmentedControl({
         <button
           key={option.value}
           type="button"
+          disabled={disabled}
           onClick={() => onChange(option.value)}
           className={`min-w-0 flex-1 rounded-full px-3 py-1.5 text-xs font-semibold transition ${
             value === option.value

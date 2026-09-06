@@ -147,6 +147,7 @@ run_check "Secret redaction tests" swift test --package-path apps/host-macos --f
 run_check "Local device registry revocation tests" swift test --package-path apps/host-macos --filter DeviceRegistryTests
 run_check "Device key and envelope signature tests" swift test --package-path apps/host-macos --filter DeviceKeyTests
 run_check "Session routing policy tests" swift test --package-path apps/host-macos --filter SessionManagerTests
+run_check "Host-owned control permission tests" swift test --package-path apps/host-macos --filter 'HostPermissionTests|AutoLockTests'
 run_check "Hosted authorization and revocation tests" pnpm worker:test
 run_check "Browser content and account boundary tests" pnpm --filter @glasstunnel/mobile-pwa test -- src/lib/storePrivacy.test.ts
 run_check "Normal settings wording boundary" swift test --package-path apps/host-macos --filter SettingsContentPolicyTests

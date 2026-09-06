@@ -111,10 +111,19 @@ secret format. In particular, phone-origin input traversing the relay reaches th
 server before any Mac-side processing. Do not send or display production
 credentials through the tunnel.
 
-Read-only mode blocks several input-dispatch paths, but is session-level behavior,
-not an immutable administrator policy or a complete per-device permission system.
-Its coverage of every action and resistance to remote setting changes must be
-validated before stronger claims are made.
+The September 2026 source makes the Mac Settings read-only switch authoritative
+and persistent. Relay and WebRTC dispatch reject prompts, attachments, pointer
+input, input answers, interrupts, target/model changes and app lifecycle actions
+when the Mac restricts control, including work queued before the restriction.
+Existing streams and message-detail reads remain available. A browser can restrict
+its own control, but cannot relax the Mac setting or change another browser's
+restriction. Denials are visible only to the requesting browser.
+
+**The published 0.1.9 Mac binary does not contain this new permission boundary.**
+Updated browsers expose the per-browser switch only when a matching host advertises
+the policy; they do not send permission updates to legacy hosts. This is not a
+complete per-device administrator policy, account reauthentication, or cancellation
+of operations already executing in a coding app. Idle-lock behavior is unchanged.
 
 The browser unlock screen uses a platform authenticator when available and can
 fall back to a confirmation tap. It is a local UI gate, not mandatory Face ID on

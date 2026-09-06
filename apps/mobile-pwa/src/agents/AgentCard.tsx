@@ -13,6 +13,7 @@ import { AdapterKind, AgentStatus, ChatRole, QuickReplyKind } from '@glasstunnel
 import {
   codexPromptDeliveryUnavailable,
   cursorPromptDeliveryUnavailable,
+  effectiveReadOnly,
   statusColor,
   useAppStore,
 } from '../lib/store';
@@ -277,7 +278,7 @@ export function AgentCard({
   const selectTarget = useAppStore((s) => s.selectTarget);
   const updateRuntimeSettings = useAppStore((s) => s.updateRuntimeSettings);
   const videoStreams = useAppStore((s) => s.videoStreams);
-  const readOnly = useAppStore((s) => s.readOnlyMode);
+  const readOnly = useAppStore(effectiveReadOnly);
   const pairedHostDeviceId = useAppStore((s) => s.pairedHost?.deviceId ?? null);
 
   const [prompt, setPrompt] = useState('');

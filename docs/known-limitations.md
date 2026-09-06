@@ -51,8 +51,9 @@ disclosures, not hidden implementation details.
   revocation in the September source. The new operation needs a matching Mac,
   Worker and PWA; local failure is not proof of server cutoff. Revocation affects
   one browser identity on one Mac, not an account whose credentials are compromised.
-  Browser unlock is not mandatory biometric reauthentication, and read-only mode
-  is not a complete per-device policy. See the version boundary in `docs/security.md`.
+  Browser unlock is not mandatory biometric reauthentication. The host-owned
+  read-only boundary in September source also needs a new Mac binary; it is not
+  a complete per-device administrator policy. See `docs/security.md`.
 - Screen Recording and Accessibility are powerful macOS permissions. Grant them only
   to a Glasstunnel build you trust and revoke them in System Settings when unused.
 - Secret redaction is best-effort. Do not intentionally display or send credentials,

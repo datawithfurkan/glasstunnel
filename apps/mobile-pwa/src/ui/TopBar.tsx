@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useAppStore } from '../lib/store';
+import { effectiveReadOnly, useAppStore } from '../lib/store';
 import { BrandMark } from './Brand';
 
 export function TopBar() {
@@ -10,6 +10,9 @@ export function TopBar() {
   const signOut = useAppStore((s) => s.signOut);
   const error = useAppStore((s) => s.error);
   const relayHostOnline = useAppStore((s) => s.relayHostOnline);
+  const hostReadOnly = useAppStore((s) => s.hostHello?.hostReadOnly);
+  const readOnly = useAppStore(effectiveReadOnly);
+  const setReadOnly = useAppStore((s) => s.setReadOnly);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
@@ -141,6 +144,13 @@ export function TopBar() {
                   )}
                   <MenuItem label="Your Macs" detail="Choose a linked Mac" onClick={() => goTo('hosts')} />
                   <MenuItem label="Profile" detail="Account details" onClick={() => goTo('profile')} />
+                  {inWorkspace && hostReadOnly !== undefined && (
+                    <label className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+                      Read-only in this browser
+                      <input type="checkbox" checked={readOnly} disabled={hostReadOnly === true}
+                        onChange={(event) => setReadOnly(event.target.checked)} />
+                    </label>
+                  )}
 
                   <div className="my-1 h-px bg-[color:var(--gt-border)]" />
 
@@ -164,6 +174,11 @@ export function TopBar() {
       {errorDetail && (
         <div className="pb-2 text-xs text-err" title={errorDetail}>
           ! {errorDetail}
+        </div>
+      )}
+      {inWorkspace && readOnly && (
+        <div role="status" className="pb-2 text-xs text-warn">
+          {hostReadOnly ? 'Read-only on this Mac. Change access in Mac Settings.' : 'Read-only in this browser.'}
         </div>
       )}
     </header>

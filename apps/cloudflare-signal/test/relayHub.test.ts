@@ -733,7 +733,7 @@ describe('RelayHub message detail replies', () => {
     vi.unstubAllGlobals();
   });
 
-  it('forwards a relay_message_detail only to the client it names', async () => {
+  it.each(['relay_message_detail', 'relay_agent_state'])('forwards a targeted %s only to the named client without caching it', async (type) => {
     const host = await createDeviceIdentity();
     const phoneA = await createDeviceIdentity();
     const phoneB = await createDeviceIdentity();
@@ -759,8 +759,13 @@ describe('RelayHub message detail replies', () => {
     const [socketA, socketB] = clients;
 
     const detail = { agentId: 'claude-desktop', messageId: 'm-7', text: 'full output', redacted: false, truncated: false };
-    hostSocket.client.send(JSON.stringify({ type: 'relay_message_detail', client_device_id: phoneA.deviceId, detail }));
-    await expect(socketA.nextMessage()).resolves.toMatchObject({ type: 'relay_message_detail', detail });
+    const payload = type === 'relay_message_detail' ? { detail } : { snapshot: { agentId: 'private-rejection', statusDetail: 'read-only mode is on' } };
+    hostSocket.client.send(JSON.stringify({ type, client_device_id: phoneA.deviceId, ...payload }));
+    await expect(socketA.nextMessage()).resolves.toMatchObject({ type, ...payload });
+    await runInDurableObject(stub, async (_hub, state) => {
+      const entries = await state.storage.list();
+      expect(JSON.stringify([...entries])).not.toContain('private-rejection');
+    });
 
     // B never sees it: the next thing B receives is a broadcast sent afterwards.
     hostSocket.client.send(JSON.stringify({ type: 'relay_agent_state', snapshot: { agentId: 'claude-desktop' } }));

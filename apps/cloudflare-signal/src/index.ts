@@ -2281,6 +2281,17 @@ export class RelayHub extends DurableObject<Env> {
       case "relay_agent_state": {
         const snapshot = parsed.snapshot as Record<string, JsonValue> | undefined;
         if (!snapshot || typeof snapshot.agentId !== "string" || !snapshot.agentId) return;
+        if ("client_device_id" in parsed) {
+          // Host permission replies are private to the requesting browser, never cached.
+          const id = parsed.client_device_id;
+          if (typeof id !== "string" || !id || this.revokedDevices.has(id)) return;
+          const target = this.clientSockets.get(id);
+          if (!target) return;
+          const session = this.getRelaySession(target);
+          if (!session || this.closeExpiredClient(target, session)) return;
+          if (!sendToOpenSocket(target, JSON.stringify(parsed))) await this.unregisterRelaySocket(target);
+          return;
+        }
         const agentId = snapshot.agentId;
         this.latestAgentSnapshots.set(agentId, snapshot);
         this.broadcastToClients(parsed);

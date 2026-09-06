@@ -157,6 +157,10 @@ public final class SessionManager {
         }
         #endif
         self.currentRemoteApps = remoteAppController.remoteAppsSnapshot()
+        autoLock.onReadOnlyChange = { [weak self] in
+            self?.publishRelayHello()
+            self?.sessions.values.forEach { $0.publishPermissions() }
+        }
     }
 
     public func start() async throws {
@@ -289,7 +293,8 @@ public final class SessionManager {
             hostDeviceLabel: hostDeviceLabel,
             supportedAdapters: AdapterKind.advertisedDisplayNames,
             currentLayout: remoteAppController.deprecatedLayout(),
-            remoteApps: currentRemoteApps
+            remoteApps: currentRemoteApps,
+            hostReadOnly: autoLock.isReadOnly
         )
     }
 
@@ -698,6 +703,7 @@ public final class SessionManager {
     func handleRelayCommand(_ msg: DataChannelMessage, from clientDeviceID: DeviceID?) {
         guard isRelayClientAllowed(clientDeviceID) else { return }
         autoLock.heartbeat()
+        guard permitsRelayControl(msg, from: clientDeviceID) else { return }
 
         switch msg.body {
         case .userInput(let input):
@@ -720,6 +726,7 @@ public final class SessionManager {
             guard canPerformRelaySessionAction(agentId: request.agentId) else { return }
             Task { [weak self, controller = remoteAppController, agentId = request.agentId] in
                 guard self?.isRelayClientAllowed(clientDeviceID) == true else { return }
+                guard self?.permitsRelayControl(msg, from: clientDeviceID) == true else { return }
                 do {
                     try await controller.interrupt(agentId: agentId)
                 } catch {
@@ -734,6 +741,7 @@ public final class SessionManager {
             guard !autoLock.isLocked, let clientDeviceID else { return }
             Task { [weak self, controller = remoteAppController, request, clientDeviceID] in
                 guard self?.isRelayClientAllowed(clientDeviceID) == true else { return }
+                guard self?.permitsRelayControl(msg, from: clientDeviceID) == true else { return }
                 guard let detail = await controller.messageDetail(agentId: request.agentId, messageId: request.messageId) else {
                     return
                 }
@@ -745,6 +753,7 @@ public final class SessionManager {
             guard canPerformRelaySessionAction(agentId: request.agentId) else { return }
             Task { [weak self, controller = remoteAppController, agentId = request.agentId, targetId = request.targetId] in
                 guard self?.isRelayClientAllowed(clientDeviceID) == true else { return }
+                guard self?.permitsRelayControl(msg, from: clientDeviceID) == true else { return }
                 do {
                     try await controller.selectTarget(agentId: agentId, targetId: targetId)
                 } catch {
@@ -758,6 +767,7 @@ public final class SessionManager {
             guard canPerformRelaySessionAction(agentId: request.agentId) else { return }
             Task { [weak self, controller = remoteAppController, request] in
                 guard self?.isRelayClientAllowed(clientDeviceID) == true else { return }
+                guard self?.permitsRelayControl(msg, from: clientDeviceID) == true else { return }
                 do {
                     try await controller.renameTarget(request)
                 } catch {
@@ -771,6 +781,7 @@ public final class SessionManager {
             guard canPerformRelaySessionAction(agentId: update.agentId) else { return }
             Task { [weak self, controller = remoteAppController, update] in
                 guard self?.isRelayClientAllowed(clientDeviceID) == true else { return }
+                guard self?.permitsRelayControl(msg, from: clientDeviceID) == true else { return }
                 do {
                     try await controller.updateRuntimeSettings(update)
                 } catch {
@@ -794,6 +805,7 @@ public final class SessionManager {
             }
             Task { [weak self, controller = remoteAppController, response] in
                 guard self?.isRelayClientAllowed(clientDeviceID) == true else { return }
+                guard self?.permitsRelayControl(msg, from: clientDeviceID) == true else { return }
                 do {
                     try await controller.respondToInputRequest(response)
                     #if os(macOS)
@@ -813,6 +825,7 @@ public final class SessionManager {
             guard canAcceptRelayInput(agentId: input.agentId) else { return }
             Task { @MainActor [weak self, controller = remoteAppController, screenPointerInputHandler, input] in
                 guard self?.isRelayClientAllowed(clientDeviceID) == true else { return }
+                guard self?.permitsRelayControl(msg, from: clientDeviceID) == true else { return }
                 do {
                     if let screenPointerInputHandler {
                         try await screenPointerInputHandler(input)
@@ -825,8 +838,9 @@ public final class SessionManager {
                 }
             }
         case .readOnlyModeUpdate(let update):
-            autoLock.setReadOnly(update.readOnly)
-            publishRelayHello()
+            if let clientDeviceID {
+                autoLock.setClientReadOnly(update.readOnly, deviceID: clientDeviceID)
+            }
         case .heartbeatPing:
             publishRelayHello()
             publishRelayRemoteApps(currentRemoteApps)
@@ -834,12 +848,14 @@ public final class SessionManager {
             guard canAcceptRelayInput(agentId: input.agentId) else { return }
             Task { [weak self] in
                 guard self?.isRelayClientAllowed(clientDeviceID) == true else { return }
+                guard self?.permitsRelayControl(msg, from: clientDeviceID) == true else { return }
                 await self?.handleRelayImageAttachment(input)
             }
         case .imageAttachmentChunk(let chunk):
             guard canAcceptRelayInput(agentId: chunk.agentId), let clientDeviceID else { return }
             Task { [weak self] in
                 guard self?.isRelayClientAllowed(clientDeviceID) == true else { return }
+                guard self?.permitsRelayControl(msg, from: clientDeviceID) == true else { return }
                 await self?.handleRelayImageAttachmentChunk(chunk, from: clientDeviceID)
             }
         case .messageDetail:
@@ -849,6 +865,7 @@ public final class SessionManager {
             guard canAcceptRelayInput(agentId: chunk.agentId), let clientDeviceID else { return }
             Task { [weak self] in
                 guard self?.isRelayClientAllowed(clientDeviceID) == true else { return }
+                guard self?.permitsRelayControl(msg, from: clientDeviceID) == true else { return }
                 await self?.handleRelayFileAttachmentChunk(chunk, from: clientDeviceID)
             }
         case .hello,
@@ -884,6 +901,8 @@ public final class SessionManager {
 
         Task { @MainActor [weak self, controller = remoteAppController, request, agentId, isScreenAction, clientDeviceID] in
             guard self?.isRelayClientAllowed(clientDeviceID) == true else { return }
+            guard self?.permitsRelayControl(.init(body: .remoteAppActionRequest(request)), from: clientDeviceID) == true,
+                  self?.canPerformRelayRemoteAppAction(agentId: agentId, action: request.action) == true else { return }
             if isScreenAction, [.enable, .start, .launch, .newSession].contains(request.action) {
                 self?.applyScreenStreamQuality(request.screenQuality ?? .readable)
             }
@@ -1092,6 +1111,8 @@ public final class SessionManager {
 
         Task { [weak self, controller = remoteAppController, agentId, text, submit, failureLabel] in
             guard self?.isRelayClientAllowed(clientDeviceID) == true else { return }
+            guard self?.permitsRelayControl(.init(body: .userInput(.init(agentId: agentId, text: text))), from: clientDeviceID) == true,
+                  self?.canAcceptRelayInput(agentId: agentId) == true else { return }
             do {
                 try await controller.sendInput(agentId: agentId, text: text, submit: submit)
             } catch {
@@ -1608,7 +1629,7 @@ public final class SessionManager {
         }
     }
 
-    private func emitRelaySystemMessage(agentId: AgentID, text: String) {
+    private func emitRelaySystemMessage(agentId: AgentID, text: String, to clientDeviceID: DeviceID? = nil) {
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         let app = currentRemoteApps.first { $0.agentId == agentId }
         let message = AgentChatMessage(
@@ -1617,7 +1638,7 @@ public final class SessionManager {
             text: text,
             atUnixMs: now
         )
-        let snapshot = AgentStateSnapshot(
+        var snapshot = AgentStateSnapshot(
             agentId: agentId,
             agentLabel: app?.displayName ?? agentId,
             adapterKind: app?.adapterKind ?? .unspecified,
@@ -1628,7 +1649,20 @@ public final class SessionManager {
             hasVideoTrack: app?.hasVideo ?? false,
             remoteAppId: app?.remoteAppId
         )
-        broadcastAgentState(snapshot)
+        if let clientDeviceID {
+            // A denied action must not replace the shared app state for other browsers.
+            if var current = remoteAppController.cachedSnapshots().first(where: { $0.agentId == agentId }) {
+                current.recentMessages.append(message)
+                snapshot = current
+            }
+            guard let relay else { return }
+            Task { [weak self, relay, snapshot] in
+                guard self?.isRelayClientAllowed(clientDeviceID) == true else { return }
+                try? await relay.publishAgentState(snapshot, to: clientDeviceID)
+            }
+        } else {
+            broadcastAgentState(snapshot)
+        }
     }
 
     // MARK: - Envelope routing
@@ -1636,6 +1670,15 @@ public final class SessionManager {
     private func isRelayClientAllowed(_ id: DeviceID?) -> Bool {
         guard let id, !id.isEmpty else { return false }
         return !registry.isRevoked(id)
+    }
+
+    private func permitsRelayControl(_ message: DataChannelMessage, from id: DeviceID?) -> Bool {
+        guard let agentID = message.body.controlAgentID else { return true }
+        guard let id, !autoLock.isReadOnly(for: id) else {
+            emitRelaySystemMessage(agentId: agentID, text: "action blocked: read-only mode is on", to: id)
+            return false
+        }
+        return true
     }
 
     private func handleEnvelope(_ env: Envelope) {

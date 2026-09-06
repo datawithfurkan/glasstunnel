@@ -220,6 +220,7 @@ public struct Hello: Codable, Sendable, Hashable {
     public var currentLayout: GridLayout
     public var remoteApps: [RemoteApp]
     public var protocolVersion: UInt32
+    public var hostReadOnly: Bool?
 
     public init(
         hostVersion: String,
@@ -228,7 +229,8 @@ public struct Hello: Codable, Sendable, Hashable {
         supportedAdapters: [String],
         currentLayout: GridLayout,
         remoteApps: [RemoteApp] = [],
-        protocolVersion: UInt32 = GlasstunnelProtocol.currentProtocolVersion
+        protocolVersion: UInt32 = GlasstunnelProtocol.currentProtocolVersion,
+        hostReadOnly: Bool? = nil
     ) {
         self.hostVersion = hostVersion
         self.hostOsVersion = hostOsVersion
@@ -237,6 +239,7 @@ public struct Hello: Codable, Sendable, Hashable {
         self.currentLayout = currentLayout
         self.remoteApps = remoteApps
         self.protocolVersion = protocolVersion
+        self.hostReadOnly = hostReadOnly
     }
 }
 
