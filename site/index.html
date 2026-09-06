@@ -419,7 +419,7 @@
             <div class="eyebrow">Connection model</div>
             <h2 id="connection-title">Your Mac remains the workspace.</h2>
             <p>
-              Projects and developer tools stay where they already run. Screen video and remote input travel over end-to-end encrypted WebRTC. Prompts, chat, and agent state currently route through the hosted relay, which can read them.
+              Projects and developer tools stay on your Mac. WebRTC video is end-to-end encrypted. The hosted relay can read prompts, chat, remote commands, attachments, and JPEG screen fallback frames, and caches recent transcripts.
             </p>
             <p class="metadata-note">
               Hosted services process account, routing, device, and network metadata, and the relay retains recent agent messages to restore your session. Self-host the control plane if you need neither.
@@ -432,7 +432,7 @@
             <div class="connection-node">
               <i data-lucide="laptop"></i><strong>Your Mac</strong><small>Project + agent</small>
             </div>
-            <div class="encrypted-line"><span>Video + input · DTLS-SRTP</span><i data-lucide="lock-keyhole"></i></div>
+            <div class="encrypted-line"><span>WebRTC video · DTLS-SRTP</span><i data-lucide="lock-keyhole"></i></div>
             <div class="connection-node">
               <i data-lucide="smartphone"></i><strong>Your phone</strong><small>Authenticated browser</small>
             </div>
@@ -502,11 +502,11 @@ brew install --cask datawithfurkan/glasstunnel/glasstunnel</code></pre>
           <div class="faq-list reveal">
             <details>
               <summary>Does my project move to the cloud?<i data-lucide="plus"></i></summary>
-              <p>No. Your project and coding tools continue running on your Mac. The phone receives the media and control data needed for the remote session over encrypted WebRTC.</p>
+              <p>Your project and coding tools continue running on your Mac. Remote-session content, including code shown in chat or on screen, can leave the Mac through WebRTC or the hosted relay.</p>
             </details>
             <details>
               <summary>What can the hosted service see?<i data-lucide="plus"></i></summary>
-              <p>The hosted control plane processes account, device, routing, request, and network metadata. It does not receive plaintext WebRTC media or DataChannel content.</p>
+              <p>The hosted relay can read prompts, chat, tool output, remote commands, attachments, and JPEG screen fallback frames. It caches recent transcript snapshots and processes account and connection metadata. WebRTC traffic is separately end-to-end encrypted. The hosted relay is not.</p>
             </details>
             <details>
               <summary>Which coding agents are supported?<i data-lucide="plus"></i></summary>

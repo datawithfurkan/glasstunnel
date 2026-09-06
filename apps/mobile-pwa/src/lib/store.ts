@@ -120,8 +120,8 @@ export interface AppState {
   hostHello: Hello | null;
   workspaceHostDeviceId: string | null;
   agents: Record<string, AgentStateSnapshot>;
-  /** Full text of messages fetched on request, keyed by message id. */
-  messageDetails: Record<string, MessageDetail>;
+  /** Full text fetched on request, scoped to agent and message IDs. */
+  messageDetails: Record<string, Record<string, MessageDetail>>;
   videoStreams: Record<string, MediaStream>;
   relayScreenFrames: Record<string, RelayScreenFrame>;
   screenShareQuality: ScreenShareQuality;
@@ -319,11 +319,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   async forgetCurrentMac() {
-    peerStartGeneration += 1;
-    videoPeerStartGeneration += 1;
-    peerFlowAbortRegistry.cancelAll();
-    clearReconnectTimer();
-    forgetVideoPeer();
+    get().disconnectPeer();
     const pairedHost = get().pairedHost;
     if (pairedHost) {
       localStorage.removeItem(`gt.webauthn.enrolled.${pairedHost.deviceId}`);
@@ -341,6 +337,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       relay: null,
       relayHostOnline: null,
       agents: {},
+      messageDetails: {},
       videoStreams: {},
       relayScreenFrames: {},
       layout: null,
@@ -370,6 +367,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       layout: null,
       remoteApps: [],
       agents: {},
+      messageDetails: {},
       workspaceHostDeviceId: null,
       videoStreams: {},
       relayScreenFrames: {},
@@ -413,6 +411,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       // reconnect to the same Mac keeps the list it was just showing.
       remoteApps: canReuseCurrentWorkspace ? current.remoteApps : (cached?.remoteApps ?? []),
       agents: cached?.agents ?? (canReuseCurrentWorkspace ? current.agents : {}),
+      messageDetails: canReuseCurrentWorkspace ? current.messageDetails : {},
       workspaceHostDeviceId: cached || canReuseCurrentWorkspace ? pairedHost.deviceId : null,
       relayScreenFrames: {},
       error: cached
@@ -513,7 +512,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         },
         onMessageDetail: (detail) => {
           if (!isCurrent()) return;
-          set((prev) => ({ messageDetails: { ...prev.messageDetails, [detail.messageId]: detail } }));
+          cacheMessageDetail(set, detail);
         },
         onScreenFrame: (frame) => {
           if (!isCurrent()) return;
@@ -754,19 +753,8 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   async signOut() {
     sessionSyncVersion += 1;
-    peerStartGeneration += 1;
-    videoPeerStartGeneration += 1;
-    peerFlowAbortRegistry.cancelAll();
-    clearReconnectTimer();
-    forgetVideoPeer();
-    get().peer?.close();
-    get().signaling?.disconnect();
-    get().relay?.disconnect();
-    await idbDel(PAIRED_HOST_KEY);
-    if (supabase) {
-      const { error } = await supabase.auth.signOut();
-      if (error) throw error;
-    }
+    // Local content and transports must disappear even if remote logout fails.
+    get().disconnectPeer();
     set({
       user: null,
       availableHosts: [],
@@ -785,6 +773,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       locked: true,
       route: fallbackEntryRoute(),
     });
+    await idbDel(PAIRED_HOST_KEY);
+    if (supabase) {
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+    }
   },
 
   async refreshHosts(options) {
@@ -873,6 +866,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
 
     const pairedHost = mapAccountHostToPairedHost(host);
+    get().disconnectPeer();
     await savePairedHost(pairedHost);
     const cached = await loadRelayCache(pairedHost.deviceId);
     clearPendingScreenStop();
@@ -1039,7 +1033,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   requestMessageDetail(agentId, messageId) {
-    if (get().messageDetails[messageId]) return true;
+    if (get().messageDetails[agentId]?.[messageId]) return true;
     const relay = get().relay;
     const peer = get().peer;
     return (
@@ -1205,6 +1199,18 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 }));
 
+function cacheMessageDetail(set: SetState, detail: MessageDetail): void {
+  set((prev) => ({
+    messageDetails: {
+      ...prev.messageDetails,
+      [detail.agentId]: {
+        ...prev.messageDetails[detail.agentId],
+        [detail.messageId]: detail,
+      },
+    },
+  }));
+}
+
 async function synchronizeSession(
   set: SetState,
   get: () => AppState,
@@ -1213,8 +1219,23 @@ async function synchronizeSession(
 ) {
   const syncVersion = ++sessionSyncVersion;
   const isCurrentSync = () => syncVersion === sessionSyncVersion;
+  const previousUser = get().user;
+  const accountChanged = !!previousUser && previousUser.id !== session?.user?.id;
+  if (!session?.user || accountChanged) {
+    get().disconnectPeer();
+    set({
+      user: null,
+      availableHosts: [],
+      pairedHost: null,
+      locked: true,
+      route: session?.user ? 'hosts' : fallbackEntryRoute(),
+    });
+  }
   const state = get();
-  const storedHost = ((await idbGet(PAIRED_HOST_KEY)) as PairedHost | undefined) ?? null;
+  const storedHost = accountChanged || !session?.user
+    ? null
+    : ((await idbGet(PAIRED_HOST_KEY)) as PairedHost | undefined) ?? null;
+  if (accountChanged || !session?.user) await idbDel(PAIRED_HOST_KEY);
   const pendingLinkCode = currentURLHasLinkCode();
   if (!isCurrentSync()) return;
 
@@ -1297,6 +1318,8 @@ async function synchronizeSession(
     await idbDel(PAIRED_HOST_KEY);
   }
 
+  if (!isCurrentSync()) return;
+
   const shouldRestoreWorkspace =
     !!storedHost && !!selected && storedHost.deviceId === selected.deviceId;
   let nextRoute: Route = 'hosts';
@@ -1328,6 +1351,7 @@ async function synchronizeSession(
           layout: null,
           remoteApps: [],
           agents: {},
+          messageDetails: {},
           workspaceHostDeviceId: null,
           relayScreenFrames: {},
         }),
@@ -1740,7 +1764,7 @@ async function startWebRtcPeerFlow(
       },
       onMessageDetail: (detail) => {
         if (!isCurrent()) return;
-        set((prev) => ({ messageDetails: { ...prev.messageDetails, [detail.messageId]: detail } }));
+        cacheMessageDetail(set, detail);
       },
       onVideoTrack: (agentId, stream) => {
         if (!isCurrent()) return;

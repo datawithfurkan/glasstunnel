@@ -55,7 +55,10 @@ check_docs() {
   require_file docs/self-hosting.md
 
   require_text README.md "end-to-end encrypted"
-  require_text README.md "not your code, chats, prompts, or media"
+  require_text README.md "Hosted relay content is not end-to-end encrypted"
+  require_text README.md "caches recent transcript snapshots"
+  reject_text README.md "Everything between Mac and phone is end-to-end encrypted"
+  reject_text README.md "not your code, chats, prompts, or media"
   require_text README.md "**Supported:** Mac Screen and the scoped Terminal shell path"
   require_text README.md "Preview and Experimental paths are included for testing and contribution"
 
@@ -64,15 +67,20 @@ check_docs() {
   require_text SECURITY.md "Please do not open a public issue"
 
   require_text docs/security.md "Hosted Cloudflare/Supabase control plane"
-  require_text docs/security.md "does not store captured content, prompts, chats, or media"
+  require_text docs/security.md "Hosted relay content is not"
+  require_text docs/security.md "storage persists host hello/app state and recent-message snapshots"
+  require_text docs/security.md "end-to-end active-session revocation needs additional"
   require_text docs/security.md "SecretRedactor"
   require_text docs/security.md "best-effort"
-  require_text docs/security.md "We do not log captured content, prompts, chats, media, SDP bodies, or ICE candidates"
   require_text docs/security.md "does not include an analytics SDK"
   require_text docs/security.md "hosting providers may still produce their own diagnostic or request logs"
   require_text docs/security.md "self-hosting"
   reject_text docs/security.md "GLASSTUNNEL_CRASH_REPORTS"
   reject_text docs/security.md "billing Pro-tier users"
+  reject_text docs/security.md "does not store captured content, prompts, chats, or media"
+  reject_text docs/security.md "revocation is fast (< 1s)"
+  require_text site/index.html "The hosted relay can read prompts"
+  require_text site/index.html "caches recent transcript snapshots"
 
   require_text docs/known-limitations.md "Preview and Experimental paths are not public-beta promises"
   require_text docs/known-limitations.md "moves to"
@@ -134,8 +142,10 @@ run_check "Public security/privacy documentation" check_docs
 run_check "Tracked secret-file guard" check_tracked_secret_files
 run_check "Signaling log content guard" check_signaling_logs
 run_check "Secret redaction tests" swift test --package-path apps/host-macos --filter SecretRedactorTests
-run_check "Device revocation tests" swift test --package-path apps/host-macos --filter DeviceRegistryTests
-run_check "Envelope trust boundary tests" swift test --package-path apps/host-macos --filter SessionManagerTests
+run_check "Local device registry revocation tests" swift test --package-path apps/host-macos --filter DeviceRegistryTests
+run_check "Device key and envelope signature tests" swift test --package-path apps/host-macos --filter DeviceKeyTests
+run_check "Session routing policy tests" swift test --package-path apps/host-macos --filter SessionManagerTests
+run_check "Browser content and account boundary tests" pnpm --filter @glasstunnel/mobile-pwa test -- src/lib/storePrivacy.test.ts
 run_check "Normal settings wording boundary" swift test --package-path apps/host-macos --filter SettingsContentPolicyTests
 
 echo "Security/privacy release audit completed."
