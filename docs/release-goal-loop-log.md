@@ -131,3 +131,19 @@ changes or a blocker is materially narrowed.
 - Next action: Create `v0.1.9` on the release documentation commit, upload the immutable and stable DMG assets, then verify the public download URL and a Homebrew upgrade.
 - End commit: The final release documentation and cask commit is the result of record.
 - CI/deploy: CI is green on `f660996b`; Deploy run 33796452115 from `f660996b` succeeded for the web app, the marketing site (support table now lists the Claude cards as Preview), and the Signaling Worker; the release documentation and cask commit is checked by one CI run before `v0.1.9` is tagged.
+
+## 2026-09-06 17:15 UTC - Security reconciliation hosted rollout
+
+- Start commit: da9a1bc3
+- Release gate: Deliver the reviewed dependency, PWA privacy-state and public-disclosure patch without a new Mac release.
+- Why chosen: The verified patch was merged but production still served the earlier web baseline.
+- Files changed: No new runtime changes during rollout; deployed the exact PR #32 merge and updated stage/handoff documentation locally.
+- Validation: All five PR and main CI checks passed; one Deploy dispatch succeeded. Public site, PWA, service worker and signaling health returned HTTP 200; app-shell and service-worker cache revalidation remained enabled.
+- Manual testing: No personal-account or native UI mutation. Automated isolated mobile-viewport Chromium and WebKit canaries verified the hosted relay disclosure, signed-out shell and reload with zero page errors.
+- Evidence recorded: Deploy run 34047515720; PWA e0bc7bd0-f769-42ae-a7f3-1beb0a602c80; site 6c592a78-39ff-4323-8202-4b9d31b2a4ca; Worker 46a2def2-dbb4-41f4-80b9-8d4bb6818adb. Exact rollback references are in the security-hardening plan.
+- Outcome: passed
+- Uncertainty: Active-session revocation, host-owned permission enforcement, bounded content lifetime and E2E design remain separate security stages; these are not proved by the hosted canary.
+- Stale-loop risk: Low; one manual deployment, no rerun, no version bump, tag, signing or notarization.
+- Next action: Stage 2 authorization and revocation, using disposable local identities.
+- End commit: da9a1bc3659b33e480219e53226976eaef38d9ff (deployed source).
+- CI/deploy: https://github.com/datawithfurkan/glasstunnel/actions/runs/34047515720 succeeded; main CI 34042927618 passed.

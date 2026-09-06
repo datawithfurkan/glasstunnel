@@ -104,8 +104,10 @@ struct TerminalLiveHostHarness {
             print("LINK_CODE \(linkCode.code)")
             fflush(stdout)
 
+            let revocationTask = startRevocationControl(env: env, signalingURL: signalingURL, manager: manager)
             let seconds = UInt64(env["GT_TERMINAL_LIVE_HOST_SECONDS"].flatMap(UInt64.init) ?? 120)
             try await Task.sleep(nanoseconds: seconds * 1_000_000_000)
+            revocationTask?.cancel()
             windowRefreshTask.cancel()
             manager.stop()
         } catch {
@@ -114,6 +116,37 @@ struct TerminalLiveHostHarness {
             exit(1)
         }
     }
+
+    // Test executable only: an opt-in local file channel exercises the same
+    // SessionManager operation as Access, without touching the installed app.
+    @MainActor
+    private static func startRevocationControl(env: [String: String], signalingURL: URL, manager: SessionManager) -> Task<Void, Never>? {
+        guard env["GLASSTUNNEL_DEV"] == "1",
+              ["127.0.0.1", "localhost", "::1"].contains(signalingURL.host ?? ""),
+              let path = env["GT_TERMINAL_LIVE_REVOCATION_CONTROL"] else { return nil }
+        let requestURL = URL(fileURLWithPath: path)
+        let resultURL = URL(fileURLWithPath: path + ".result")
+        return Task { @MainActor in
+            while !Task.isCancelled {
+                if let data = try? Data(contentsOf: requestURL),
+                   let request = try? JSONDecoder().decode(RevocationRequest.self, from: data) {
+                    do {
+                        try FileManager.default.removeItem(at: requestURL)
+                        try await manager.revokeDevice(request.deviceID)
+                        let result = RevocationResult(requestID: request.requestID, confirmed: true)
+                        try JSONEncoder().encode(result).write(to: resultURL, options: [.atomic, .completeFileProtection])
+                    } catch {
+                        let result = RevocationResult(requestID: request.requestID, confirmed: false)
+                        try? JSONEncoder().encode(result).write(to: resultURL, options: [.atomic, .completeFileProtection])
+                    }
+                }
+                try? await Task.sleep(nanoseconds: 200_000_000)
+            }
+        }
+    }
+
+    private struct RevocationRequest: Decodable { let requestID: String; let deviceID: String }
+    private struct RevocationResult: Encodable { let requestID: String; let confirmed: Bool }
 
     @MainActor
     private static func startWindowRefresh(remoteApps: RemoteAppController) -> Task<Void, Never> {

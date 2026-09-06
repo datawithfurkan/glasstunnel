@@ -47,9 +47,12 @@ disclosures, not hidden implementation details.
 - Hosted relay content is not end-to-end encrypted. The relay can read prompts,
   chat, tool output, commands, attachments and JPEG fallback frames, and stores
   recent transcript snapshots without a defined automatic content-expiry deadline.
-- Local device revocation does not yet provide a verified immediate cutoff across
-  all active relay and WebRTC sessions. Browser unlock is not mandatory biometric
-  reauthentication, and read-only mode is not a complete per-device policy.
+- The published 0.1.9 Mac does not include the new acknowledged cross-transport
+  revocation in the September source. The new operation needs a matching Mac,
+  Worker and PWA; local failure is not proof of server cutoff. Revocation affects
+  one browser identity on one Mac, not an account whose credentials are compromised.
+  Browser unlock is not mandatory biometric reauthentication, and read-only mode
+  is not a complete per-device policy. See the version boundary in `docs/security.md`.
 - Screen Recording and Accessibility are powerful macOS permissions. Grant them only
   to a Glasstunnel build you trust and revoke them in System Settings when unused.
 - Secret redaction is best-effort. Do not intentionally display or send credentials,

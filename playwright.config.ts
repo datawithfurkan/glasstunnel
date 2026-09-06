@@ -53,6 +53,11 @@ export default defineConfig({
       },
     },
     {
+      name: 'local-revocation-mobile-chromium',
+      grep: /@revocation-account/,
+      use: { ...devices['Pixel 7'] },
+    },
+    {
       name: 'local-account-mobile-chromium',
       grep: /@account/,
       use: {

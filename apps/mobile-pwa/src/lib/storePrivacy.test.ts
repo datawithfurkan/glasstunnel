@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { MessageDetail } from '@glasstunnel/protocol';
+import { GridShape, type Hello, type MessageDetail } from '@glasstunnel/protocol';
 import type { RelayConnectionOptions } from '../transport/RelayConnection';
 
 const mocks = vi.hoisted(() => ({
   getSession: vi.fn(),
   signOut: vi.fn(),
   registerBrowserDevice: vi.fn(),
+  fetchAccountHosts: vi.fn(),
   idbGet: vi.fn<(key: string) => Promise<unknown>>().mockResolvedValue(undefined),
   idbSet: vi.fn(async () => {}),
   relays: [] as Array<{
@@ -27,6 +28,7 @@ vi.mock('./supabase', () => ({
 vi.mock('./accountApi', async (importOriginal) => ({
   ...await importOriginal<typeof import('./accountApi')>(),
   registerBrowserDevice: mocks.registerBrowserDevice,
+  fetchAccountHosts: mocks.fetchAccountHosts,
 }));
 vi.mock('@glasstunnel/shared-crypto', async (importOriginal) => ({
   ...await importOriginal<typeof import('@glasstunnel/shared-crypto')>(),
@@ -81,12 +83,13 @@ describe('browser content security boundaries', () => {
     mocks.signOut.mockReset().mockResolvedValue({ error: null });
     mocks.getSession.mockReset().mockResolvedValue({ data: { session: signedInSession('one') }, error: null });
     mocks.registerBrowserDevice.mockReset().mockResolvedValue([host]);
+    mocks.fetchAccountHosts.mockReset().mockResolvedValue([host]);
     useAppStore.setState({
       user: { id: 'one', email: 'one@glasstunnel.test', displayName: 'Test' },
       phoneKeypair: { deviceId: 'test-phone', publicKey: new Uint8Array(32), privateKey: new Uint8Array(32) },
       pairedHost: host, availableHosts: [host], workspaceHostDeviceId: host.deviceId,
       agents: {}, messageDetails: {}, peer: null, signaling: null, relay: null,
-      route: 'workspace', locked: false,
+      route: 'workspace', locked: false, accessRevocationNotice: null,
     });
   });
 
@@ -105,6 +108,20 @@ describe('browser content security boundaries', () => {
     return relay;
   }
 
+  it.each([true, false])('keeps cached greeting presence truthful when online=%s', async (online) => {
+    await useAppStore.getState().startPeer();
+    const relay = mocks.relays.at(-1)!;
+    relay.opts.onState?.({ connected: true, online });
+    const hello: Hello = {
+      hostVersion: 'test', hostOsVersion: 'test', hostDeviceLabel: 'Test Mac',
+      supportedAdapters: [], currentLayout: { shape: GridShape.OneByOne, cells: [] }, remoteApps: [], protocolVersion: 4,
+    };
+    relay.opts.onHello?.(hello, true);
+    expect(useAppStore.getState().relayHostOnline).toBe(online);
+    if (online) expect(useAppStore.getState().error).toBeNull();
+    else expect(useAppStore.getState().error).toBeTruthy();
+  });
+
   it('clears expanded output on disconnect and ignores late responses', async () => {
     const relay = await connectWithDetail();
     useAppStore.getState().disconnectPeer();
@@ -112,11 +129,34 @@ describe('browser content security boundaries', () => {
     expect(useAppStore.getState().messageDetails).toEqual({});
   });
 
+  it('leaves the workspace and stops reconnecting after access is revoked', async () => {
+    const relay = await connectWithDetail();
+    relay.opts.onClose?.({ code: 4003, reason: 'access revoked' } as CloseEvent, false);
+    relay.opts.onMessageDetail?.(detail);
+    expect(useAppStore.getState().route).toBe('hosts');
+    expect(useAppStore.getState().pairedHost).toBeNull();
+    expect(useAppStore.getState().messageDetails).toEqual({});
+    expect(useAppStore.getState().accessRevocationNotice).toMatch(/access.*revoked/i);
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(mocks.relays).toHaveLength(1);
+    expect(useAppStore.getState().user?.id).toBe('one');
+  });
+
   it('clears expanded output when forgetting the Mac', async () => {
     await connectWithDetail();
     await useAppStore.getState().forgetCurrentMac();
     expect(useAppStore.getState().messageDetails).toEqual({});
     expect(useAppStore.getState().pairedHost).toBeNull();
+  });
+
+  it('reauthenticates after routine expiry without treating it as revocation', async () => {
+    const relay = await connectWithDetail();
+    relay.opts.onClose?.({ code: 4001, reason: 'authentication expired' } as CloseEvent, false);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(mocks.relays.length).toBeGreaterThan(1);
+    expect(useAppStore.getState().pairedHost?.deviceId).toBe(host.deviceId);
+    expect(useAppStore.getState().route).toBe('workspace');
+    expect(useAppStore.getState().accessRevocationNotice).toBeNull();
   });
 
   it('does not reuse another agent\'s expanded message with the same ID', async () => {

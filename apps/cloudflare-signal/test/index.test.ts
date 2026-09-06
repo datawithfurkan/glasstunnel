@@ -25,6 +25,11 @@ describe('Glasstunnel signaling Worker', () => {
     await expect(response.json()).resolves.toEqual({ ok: false, error: 'not found' });
   });
 
+  it('does not expose internal revocation or access checks through the public Worker', async () => {
+    expect((await fetchWorker('/internal/revoke-device', { method: 'POST', body: '{}' })).status).toBe(404);
+    expect((await fetchWorker('/internal/device-access?device_id=example')).status).toBe(404);
+  });
+
   it('returns exact CORS headers to the configured browser origin', async () => {
     const response = await fetchWorker('/health', {
       headers: { origin: allowedOrigin },

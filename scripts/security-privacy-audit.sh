@@ -69,7 +69,9 @@ check_docs() {
   require_text docs/security.md "Hosted Cloudflare/Supabase control plane"
   require_text docs/security.md "Hosted relay content is not"
   require_text docs/security.md "storage persists host hello/app state and recent-message snapshots"
-  require_text docs/security.md "end-to-end active-session revocation needs additional"
+  require_text docs/security.md "binary publication is a separate release step"
+  require_text docs/security.md "do not assume hosted delivery is cut off until confirmation"
+  require_text docs/security.md "compromised account requires account-level recovery"
   require_text docs/security.md "SecretRedactor"
   require_text docs/security.md "best-effort"
   require_text docs/security.md "does not include an analytics SDK"
@@ -145,6 +147,7 @@ run_check "Secret redaction tests" swift test --package-path apps/host-macos --f
 run_check "Local device registry revocation tests" swift test --package-path apps/host-macos --filter DeviceRegistryTests
 run_check "Device key and envelope signature tests" swift test --package-path apps/host-macos --filter DeviceKeyTests
 run_check "Session routing policy tests" swift test --package-path apps/host-macos --filter SessionManagerTests
+run_check "Hosted authorization and revocation tests" pnpm worker:test
 run_check "Browser content and account boundary tests" pnpm --filter @glasstunnel/mobile-pwa test -- src/lib/storePrivacy.test.ts
 run_check "Normal settings wording boundary" swift test --package-path apps/host-macos --filter SettingsContentPolicyTests
 

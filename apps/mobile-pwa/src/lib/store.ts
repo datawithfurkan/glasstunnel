@@ -113,6 +113,7 @@ export interface AppState {
   phoneKeypair: DeviceKeypair | null;
   pairedHost: PairedHost | null;
   availableHosts: AccountHost[];
+  accessRevocationNotice: string | null;
   user: AuthenticatedUser | null;
   authConfigured: boolean;
   layout: GridLayout | null;
@@ -234,6 +235,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   phoneKeypair: null,
   pairedHost: null,
   availableHosts: [],
+  accessRevocationNotice: null,
   user: null,
   authConfigured: hasSupabaseAuth(),
   layout: null,
@@ -446,9 +448,26 @@ export const useAppStore = create<AppState>((set, get) => ({
             set({ error: state.error });
           }
         },
-        onClose: (_event, intentional) => {
+        onClose: (event, intentional) => {
           if (!isCurrent()) return;
           if (intentional) return;
+          if (event.code === 4003) {
+            get().disconnectPeer();
+            set((state) => ({
+              pairedHost: null,
+              availableHosts: state.availableHosts.filter((host) => host.deviceId !== pairedHost.deviceId),
+              route: state.user ? 'hosts' : fallbackEntryRoute(),
+              error: null,
+              accessRevocationNotice: 'Access to this Mac was revoked.',
+            }));
+            void Promise.all([
+              idbDel(PAIRED_HOST_KEY),
+              idbDel(`${RELAY_CACHE_PREFIX}${pairedHost.deviceId}`),
+            ]).catch(() => {
+              // Access stays denied even when browser storage is unavailable.
+            });
+            return;
+          }
           const error = connectionStatusCopy('reconnecting');
           set({
             signaling: null,
@@ -472,7 +491,7 @@ export const useAppStore = create<AppState>((set, get) => ({
             remoteApps,
             workspaceHostDeviceId: pairedHost.deviceId,
             relayHostOnline: cached ? (prev.relayHostOnline ?? false) : true,
-            error: cached
+            error: cached && prev.relayHostOnline !== true
               ? (prev.error ?? connectionStatusCopy('offline-cached'))
               : null,
           }));
@@ -757,6 +776,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     get().disconnectPeer();
     set({
       user: null,
+      accessRevocationNotice: null,
       availableHosts: [],
       pairedHost: null,
       peer: null,
@@ -874,6 +894,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       pairedHost,
       locked: false,
       route: 'workspace',
+      accessRevocationNotice: null,
       hostHello: cached?.hostHello ?? null,
       layout: cached?.layout ?? null,
       remoteApps: cached?.remoteApps ?? [],

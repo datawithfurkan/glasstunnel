@@ -43,9 +43,24 @@ interface RelaySessionAttachment {
   publicKeyB64?: string;
   role?: "host" | "client";
   userId?: string;
+  deviceLabel?: string;
+  pairedAt?: string;
+  authorizationExpiresAt?: number;
   hostDeviceId: string;
   issuedAt: number;
   nonceB64: string;
+}
+
+// Supabase verifies the token before this is used. Only its expiry is retained,
+// never the bearer token. Reauthentication also bounds stale account decisions.
+function relayAuthorizationDeadline(verifiedToken: string): number {
+  const maximum = Date.now() + 5 * 60_000;
+  try {
+    const payload = verifiedToken.split(".")[1];
+    const claims = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/"))) as { exp?: number };
+    return typeof claims.exp === "number" && Number.isFinite(claims.exp)
+      ? Math.min(maximum, claims.exp * 1000) : maximum;
+  } catch { return maximum; }
 }
 
 interface RelayCommandMessage {
@@ -57,6 +72,7 @@ interface RelayCommandMessage {
 interface QueuedEnvelope {
   raw: string;
   enqueuedAt: number;
+  source?: Pick<SessionAttachment, "deviceId" | "publicKeyB64" | "role">;
 }
 
 interface AccountAuthorizationCacheEntry {
@@ -122,6 +138,8 @@ interface DevicePairingRow {
   paired_at: string;
   revoked_at: string | null;
 }
+
+class DeviceAuthorizationError extends Error {}
 
 interface HostLinkCodeRow {
   id: string;
@@ -521,6 +539,10 @@ async function upsertUserDevice(
     metadata?: Record<string, JsonValue>;
   },
 ): Promise<DeviceRow> {
+  try {
+    const key = bytesFromBase64(input.publicKeyB64);
+    if (key.length !== 32 || deviceIdFromPublicKey(key) !== input.deviceId) throw new Error();
+  } catch { throw new DeviceAuthorizationError("device_id does not match public_key"); }
   const payload = {
     user_id: input.userId,
     device_id: input.deviceId,
@@ -531,21 +553,35 @@ async function upsertUserDevice(
     app_version: input.appVersion ?? null,
     metadata: input.metadata ?? {},
     last_seen_at: isoNow(),
-    revoked_at: null,
   };
 
   const existing = await findDeviceByDeviceId(env, input.deviceId);
   if (existing && existing.user_id !== input.userId) {
     throw new Error("device belongs to another account");
   }
+  if (existing && (existing.revoked_at || existing.public_key_b64 !== input.publicKeyB64 ||
+      (existing.kind === "host") !== (input.kind === "host"))) {
+    throw new DeviceAuthorizationError("device registration is not authorized");
+  }
 
-  const rows = await supabaseRest<DeviceRow[]>(env, `/devices?on_conflict=device_id`, {
-    method: "POST",
+  // Conditional updates cannot resurrect a concurrent revocation or transfer
+  // ownership. New identities use INSERT, never conflict-merging another row.
+  const path = existing
+    ? `/devices?id=eq.${encodeFilterValue(existing.id)}&user_id=eq.${encodeFilterValue(input.userId)}&revoked_at=is.null`
+    : "/devices";
+  const rows = await supabaseRest<DeviceRow[]>(env, path, {
+    method: existing ? "PATCH" : "POST",
     headers: {
-      Prefer: "resolution=merge-duplicates,return=representation",
+      Prefer: "return=representation",
     },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(existing ? {
+      label: payload.label, platform: payload.platform, app_version: payload.app_version,
+      metadata: payload.metadata, last_seen_at: payload.last_seen_at,
+    } : payload),
   });
+  if (!rows[0] || rows[0].revoked_at) {
+    throw new DeviceAuthorizationError("device registration is not authorized");
+  }
   return rows[0];
 }
 
@@ -659,16 +695,18 @@ async function listHostsForUser(
   // Account-first access means the signed-in device can open linked hosts immediately.
   // Keep this listing path read-only and bounded; creating missing pairings here made
   // /account/hosts scale with host count and could exceed Workers subrequest limits.
-  const activePairings = await supabaseRest<DevicePairingRow[]>(
+  const pairings = await supabaseRest<DevicePairingRow[]>(
     env,
-    `/device_pairings?owner_user_id=eq.${encodeFilterValue(userId)}&phone_device_uuid=eq.${encodeFilterValue(requester.id)}&revoked_at=is.null&select=host_device_uuid,paired_at`,
+    `/device_pairings?owner_user_id=eq.${encodeFilterValue(userId)}&phone_device_uuid=eq.${encodeFilterValue(requester.id)}&select=host_device_uuid,paired_at,revoked_at`,
   );
   const pairedAtByHost = new Map<string, string>();
-  for (const pairing of activePairings) {
+  const revokedHosts = new Set<string>();
+  for (const pairing of pairings) {
+    if (pairing.revoked_at) revokedHosts.add(pairing.host_device_uuid);
     pairedAtByHost.set(pairing.host_device_uuid, pairing.paired_at);
   }
 
-  return hosts.map((host) =>
+  return hosts.filter((host) => !revokedHosts.has(host.id)).map((host) =>
     publicHostRecord(
       host,
       true,
@@ -690,6 +728,18 @@ async function findActivePairing(
     `/device_pairings?owner_user_id=eq.${encodeFilterValue(ownerUserId)}&host_device_uuid=eq.${encodeFilterValue(hostDeviceUuid)}&phone_device_uuid=eq.${encodeFilterValue(requesterDeviceUuid)}&revoked_at=is.null&select=*`,
   );
   return rows[0] ?? null;
+}
+
+async function hasRevokedPairing(
+  env: Env,
+  host: DeviceRow,
+  requester: DeviceRow,
+): Promise<boolean> {
+  const rows = await supabaseRest<DevicePairingRow[]>(
+    env,
+    `/device_pairings?owner_user_id=eq.${encodeFilterValue(host.user_id)}&host_device_uuid=eq.${encodeFilterValue(host.id)}&phone_device_uuid=eq.${encodeFilterValue(requester.id)}&revoked_at=not.is.null&select=id&limit=1`,
+  );
+  return rows.length > 0;
 }
 
 async function findPendingApproval(
@@ -766,6 +816,9 @@ async function ensurePairing(
     metadata?: Record<string, JsonValue>;
   },
 ): Promise<DevicePairingRow> {
+  const denied = await supabaseRest<DevicePairingRow[]>(env,
+    `/device_pairings?owner_user_id=eq.${encodeFilterValue(input.ownerUserId)}&host_device_uuid=eq.${encodeFilterValue(input.hostDeviceUuid)}&phone_device_uuid=eq.${encodeFilterValue(input.requesterDeviceUuid)}&revoked_at=not.is.null&select=id&limit=1`);
+  if (denied.length) throw new DeviceAuthorizationError("Access to this Mac was revoked.");
   const existing = await findActivePairing(env, input.ownerUserId, input.hostDeviceUuid, input.requesterDeviceUuid);
   if (existing) return existing;
 
@@ -826,6 +879,7 @@ export class SignalingHub extends DurableObject<Env> {
   /** Last message from each host socket; the Mac pings every 20 s. */
   private readonly hostLastSeenAt = new Map<string, number>();
   private accountAuthorizationCache = new Map<string, AccountAuthorizationCacheEntry>();
+  private readonly revokedPairs = new Set<string>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -1070,7 +1124,7 @@ export class SignalingHub extends DurableObject<Env> {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "unknown error";
-      const status =
+      const status = error instanceof DeviceAuthorizationError ? 403 :
         message === "missing bearer token" || message.startsWith("auth ")
           ? 401
           : message.includes("another account")
@@ -1390,12 +1444,59 @@ export class SignalingHub extends DurableObject<Env> {
         await this.unlinkHost(ws, session);
         return;
       }
+      case "revoke_device": {
+        if (session.role !== "host") return;
+        await this.revokeAccountDevice(ws, session, message);
+        return;
+      }
       case "ping":
         if (!sendJsonToOpenSocket(ws, { type: "pong", at: Date.now() })) this.unregisterPeer(ws);
         return;
       default:
         return;
     }
+  }
+
+  private async revokeAccountDevice(ws: WebSocket, session: SessionAttachment, message: ControlMessage): Promise<void> {
+    const deviceId = stringField(message.device_id);
+    const requestId = stringField(message.request_id);
+    if (!deviceId || !requestId || !session.deviceId || !session.publicKeyB64) return;
+    let ok = false;
+    try {
+      const host = await findDeviceByDeviceId(this.env, session.deviceId);
+      if (!host || host.kind !== "host" || host.revoked_at || host.public_key_b64 !== session.publicKeyB64) {
+        throw new DeviceAuthorizationError("host is not authorized");
+      }
+      const key = accountAuthorizationCacheKey(deviceId, host.device_id);
+      this.revokedPairs.add(key);
+      this.accountAuthorizationCache.delete(key);
+      await this.ctx.storage.put(`revoked-pair:${key}`, true);
+      for (const [destination, queue] of this.offlineQueues) {
+        this.offlineQueues.set(destination, queue.filter((entry) => {
+          try { return !this.isRevokedEnvelope(JSON.parse(entry.raw)); } catch { return false; }
+        }));
+      }
+      await this.persistOfflineQueues();
+      const relay = this.env.RELAY_HUB.get(this.env.RELAY_HUB.idFromName(host.device_id));
+      const response = await relay.fetch("https://relay.glasstunnel.internal/internal/revoke-device", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ hostDeviceId: host.device_id, hostPublicKeyB64: session.publicKeyB64, deviceId }),
+      });
+      const result = await response.json() as { ok?: boolean };
+      ok = response.ok && result.ok === true;
+    } catch {
+      // Keep the local denial and report an unconfirmed operation, never success.
+    }
+    sendJsonToOpenSocket(ws, {
+      type: "device_revoked", request_id: requestId, device_id: deviceId, ok,
+      ...(ok ? {} : { reason: "Could not confirm revocation. Retry on the Mac." }),
+    });
+  }
+
+  private isRevokedEnvelope(value: unknown): boolean {
+    if (!isEnvelope(value) || !value.fromDeviceId || !value.toDeviceId) return true;
+    return this.revokedPairs.has(accountAuthorizationCacheKey(value.fromDeviceId, value.toDeviceId)) ||
+      this.revokedPairs.has(accountAuthorizationCacheKey(value.toDeviceId, value.fromDeviceId));
   }
 
   private async createHostLinkCode(
@@ -1543,6 +1644,7 @@ export class SignalingHub extends DurableObject<Env> {
     if (parsed.fromDeviceId !== session.deviceId || !parsed.toDeviceId) {
       return;
     }
+    if (this.isRevokedEnvelope(parsed)) return;
 
     await this.evictExpiredState();
 
@@ -1559,32 +1661,42 @@ export class SignalingHub extends DurableObject<Env> {
       this.unregisterPeer(destination);
       destination = undefined;
     }
+    const authorized = await this.authorizeAccountEnvelopeToHost(session, destination, parsed);
+    if (!authorized || this.isRevokedEnvelope(parsed)) return;
     if (destination) {
-      const authorized = await this.authorizeAccountEnvelopeToHost(session, destination, parsed);
-      if (!authorized) return;
       if (sendToOpenSocket(destination, raw)) return;
       // The destination closed while authorization was in flight; queue the envelope
       // for its next connection like any other offline peer.
       this.unregisterPeer(destination);
     }
 
+    if (this.isRevokedEnvelope(parsed)) return;
     const queue = this.offlineQueues.get(parsed.toDeviceId) ?? [];
-    queue.push({ raw, enqueuedAt: Date.now() });
+    queue.push({ raw, enqueuedAt: Date.now(), source: {
+      deviceId: session.deviceId, publicKeyB64: session.publicKeyB64, role: session.role,
+    } });
     while (queue.length > MAX_QUEUED_PER_PEER) queue.shift();
     this.offlineQueues.set(parsed.toDeviceId, queue);
     await this.persistOfflineQueues();
   }
 
   private async authorizeAccountEnvelopeToHost(
-    session: SessionAttachment,
-    destination: WebSocket,
+    session: Pick<SessionAttachment, "deviceId" | "publicKeyB64" | "role">,
+    destination: WebSocket | undefined,
     envelope: EnvelopeLike,
   ): Promise<boolean> {
     if (!session.deviceId || !session.publicKeyB64 || !envelope.toDeviceId) return false;
-    if (session.role === "host") return true;
+    if (session.role === "host") {
+      const [host, requester] = await Promise.all([
+        findDeviceByDeviceId(this.env, session.deviceId),
+        findDeviceByDeviceId(this.env, envelope.toDeviceId),
+      ]);
+      return !!host && !!requester && host.kind === "host" && requester.kind !== "host" &&
+        !host.revoked_at && !requester.revoked_at && host.user_id === requester.user_id &&
+        host.public_key_b64 === session.publicKeyB64 && !(await hasRevokedPairing(this.env, host, requester));
+    }
 
-    const destinationSession = this.getSession(destination);
-    if (destinationSession?.role !== "host") return true;
+    const destinationSession = destination ? this.getSession(destination) : null;
     const cacheKey = accountAuthorizationCacheKey(session.deviceId, envelope.toDeviceId);
     const cached = this.accountAuthorizationCache.get(cacheKey);
     if (
@@ -1592,7 +1704,7 @@ export class SignalingHub extends DurableObject<Env> {
       cached.expiresAt > Date.now() &&
       cached.requesterPublicKeyB64 === session.publicKeyB64
     ) {
-      if (cached.notifiedHostSessionIssuedAt !== destinationSession.issuedAt) {
+      if (destination && destinationSession && cached.notifiedHostSessionIssuedAt !== destinationSession.issuedAt) {
         this.sendAccountDeviceAuthorized(destination, cached);
         cached.notifiedHostSessionIssuedAt = destinationSession.issuedAt;
       }
@@ -1614,6 +1726,8 @@ export class SignalingHub extends DurableObject<Env> {
       return false;
     }
 
+    if (await hasRevokedPairing(this.env, host, requester)) return false;
+
     const pairing = await ensurePairing(this.env, {
       ownerUserId: host.user_id,
       hostDeviceUuid: host.id,
@@ -1626,10 +1740,11 @@ export class SignalingHub extends DurableObject<Env> {
       requesterLabel: requester.label,
       pairedAt: pairing.paired_at,
       expiresAt: Date.now() + ACCOUNT_AUTH_CACHE_TTL_MS,
-      notifiedHostSessionIssuedAt: destinationSession.issuedAt,
+      notifiedHostSessionIssuedAt: destinationSession?.issuedAt,
     };
+    if (this.isRevokedEnvelope(envelope)) return false;
     this.accountAuthorizationCache.set(cacheKey, cacheEntry);
-    this.sendAccountDeviceAuthorized(destination, cacheEntry);
+    if (destination) this.sendAccountDeviceAuthorized(destination, cacheEntry);
     return true;
   }
 
@@ -1666,27 +1781,22 @@ export class SignalingHub extends DurableObject<Env> {
     const destination = this.peers.get(deviceId);
     if (!destination) return;
 
-    const queued = (this.offlineQueues.get(deviceId) ?? []).filter(
-      (entry) => Date.now() - entry.enqueuedAt <= OFFLINE_QUEUE_TTL_MS,
-    );
-
-    if (queued.length === 0) {
-      if (this.offlineQueues.delete(deviceId)) {
-        await this.persistOfflineQueues();
+    const queued = this.offlineQueues.get(deviceId) ?? [];
+    this.offlineQueues.delete(deviceId);
+    for (const entry of queued) {
+      if (!entry.source || Date.now() - entry.enqueuedAt > OFFLINE_QUEUE_TTL_MS) continue;
+      try {
+        const envelope: unknown = JSON.parse(entry.raw);
+        if (!isEnvelope(envelope) || this.isRevokedEnvelope(envelope) || entry.source.deviceId !== envelope.fromDeviceId) continue;
+        if (!(await this.authorizeAccountEnvelopeToHost(entry.source, destination, envelope)) || this.isRevokedEnvelope(envelope)) continue;
+        if (!sendToOpenSocket(destination, entry.raw)) {
+          const remaining = this.offlineQueues.get(deviceId) ?? [];
+          remaining.push(entry);
+          this.offlineQueues.set(deviceId, remaining.slice(-MAX_QUEUED_PER_PEER));
+        }
+      } catch {
+        // Legacy/malformed or no-longer-authorized signaling is not replayed.
       }
-      return;
-    }
-
-    let delivered = 0;
-    while (delivered < queued.length && sendToOpenSocket(destination, queued[delivered].raw)) {
-      delivered += 1;
-    }
-    if (delivered < queued.length) {
-      // The peer went away mid-flush; keep the undelivered rest for its next connection.
-      this.unregisterPeer(destination);
-      this.offlineQueues.set(deviceId, queued.slice(delivered));
-    } else {
-      this.offlineQueues.delete(deviceId);
     }
     await this.persistOfflineQueues();
   }
@@ -1757,6 +1867,8 @@ export class SignalingHub extends DurableObject<Env> {
   }
 
   private async loadState(): Promise<void> {
+    const denied = await this.ctx.storage.list<boolean>({ prefix: "revoked-pair:" });
+    for (const key of denied.keys()) this.revokedPairs.add(key.slice("revoked-pair:".length));
     const queues =
       (await this.ctx.storage.get<Record<string, QueuedEnvelope[]>>(STORAGE_OFFLINE_QUEUES_KEY)) ??
       {};
@@ -1797,6 +1909,7 @@ export class RelayHub extends DurableObject<Env> {
   private readonly sessions = new Map<WebSocket, RelaySessionAttachment>();
   private hostSocket: WebSocket | null = null;
   private readonly clientSockets = new Map<string, WebSocket>();
+  private readonly revokedDevices = new Set<string>();
   private latestRemoteApps: JsonValue | null = null;
   private latestHello: JsonValue | null = null;
   private latestAgentSnapshots = new Map<string, JsonValue>();
@@ -1809,12 +1922,20 @@ export class RelayHub extends DurableObject<Env> {
 
     this.ctx.blockConcurrencyWhile(async () => {
       await this.loadRelayState();
+      const denied = await this.ctx.storage.list<boolean>({ prefix: "revoked-device:" });
+      for (const key of denied.keys()) this.revokedDevices.add(key.slice("revoked-device:".length));
       for (const ws of this.ctx.getWebSockets()) {
         const attachment = asAttachmentSocket(ws).deserializeAttachment();
         if (!attachment || (attachment as RelaySessionAttachment).kind !== "relay") continue;
         const relayAttachment = attachment as RelaySessionAttachment;
         this.sessions.set(ws, relayAttachment);
         if (!relayAttachment.authenticated || !relayAttachment.deviceId) continue;
+        if (relayAttachment.role === "client" && this.revokedDevices.has(relayAttachment.deviceId)) {
+          ws.close(4003, "access revoked");
+          this.sessions.delete(ws);
+          continue;
+        }
+        if (this.closeExpiredClient(ws, relayAttachment)) continue;
         if (relayAttachment.role === "host") {
           this.hostSocket = ws;
         } else {
@@ -1826,6 +1947,11 @@ export class RelayHub extends DurableObject<Env> {
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    // These paths are only reachable through the namespace binding. The public
+    // Worker forwards /relay and /account/*, never /internal/*.
+    if (url.pathname === "/internal/revoke-device" && request.method === "POST") {
+      return this.revokeDevice(request);
+    }
     if (url.pathname === "/health") {
       return json({
         ok: true,
@@ -1891,7 +2017,19 @@ export class RelayHub extends DurableObject<Env> {
     }
 
     if (!session.authenticated) {
-      await this.handleRelayAuth(ws, parsed);
+      try { await this.handleRelayAuth(ws, parsed); }
+      catch {
+        if (isSocketOpen(ws)) ws.close(1008, "authorization unavailable");
+        await this.unregisterRelaySocket(ws);
+      }
+      return;
+    }
+
+    if (this.closeExpiredClient(ws, session)) return;
+
+    if (!isSocketOpen(ws) || (session.role === "client" && this.revokedDevices.has(session.deviceId ?? ""))) {
+      if (isSocketOpen(ws)) ws.close(4003, "access revoked");
+      await this.unregisterRelaySocket(ws);
       return;
     }
 
@@ -1978,13 +2116,21 @@ export class RelayHub extends DurableObject<Env> {
     }
 
     let userId = "";
+    let deviceLabel: string | undefined;
+    let pairedAt: string | undefined;
+    let authorizationExpiresAt: number | undefined;
     if (role === "host") {
       if (deviceId !== session.hostDeviceId) {
         ws.close(1008, "host device mismatch");
         return;
       }
       const host = await findDeviceByDeviceId(this.env, deviceId);
-      userId = host?.user_id ?? "";
+      if (!host || host.kind !== "host" || host.revoked_at ||
+          !host.user_id || host.public_key_b64 !== publicKeyB64) {
+        ws.close(1008, "host is not authorized");
+        return;
+      }
+      userId = host.user_id;
     } else {
       const accessToken = stringField(parsed.access_token);
       if (!accessToken) {
@@ -1992,6 +2138,11 @@ export class RelayHub extends DurableObject<Env> {
         return;
       }
       const user = await resolveUserFromAccessToken(this.env, accessToken);
+      authorizationExpiresAt = relayAuthorizationDeadline(accessToken);
+      if (authorizationExpiresAt <= Date.now()) {
+        ws.close(4001, "authentication expired");
+        return;
+      }
       const [host, requester] = await Promise.all([
         findDeviceByDeviceId(this.env, session.hostDeviceId),
         findDeviceByDeviceId(this.env, deviceId),
@@ -2010,7 +2161,21 @@ export class RelayHub extends DurableObject<Env> {
         ws.close(1008, "device is not authorized for this host");
         return;
       }
+      if (await hasRevokedPairing(this.env, host, requester)) {
+        ws.close(4003, "access revoked");
+        return;
+      }
       userId = user.id;
+      deviceLabel = requester.label;
+      pairedAt = requester.created_at;
+    }
+
+    // Authentication yielded to database I/O; revocation may have completed
+    // meanwhile, including before this socket had an authenticated attachment.
+    if (role === "client" && this.revokedDevices.has(deviceId)) {
+      if (isSocketOpen(ws)) ws.close(4003, "access revoked");
+      await this.unregisterRelaySocket(ws);
+      return;
     }
 
     // The Supabase checks above can take long enough for the socket to close, or for a
@@ -2028,6 +2193,9 @@ export class RelayHub extends DurableObject<Env> {
       publicKeyB64,
       role,
       userId,
+      deviceLabel,
+      pairedAt,
+      authorizationExpiresAt,
     };
     this.sessions.set(ws, updated);
     asAttachmentSocket(ws).serializeAttachment(updated);
@@ -2052,6 +2220,10 @@ export class RelayHub extends DurableObject<Env> {
         return;
       }
       this.broadcastPresence(true);
+      for (const client of this.clientSockets.values()) {
+        const authorized = this.getRelaySession(client);
+        if (authorized && !this.closeExpiredClient(client, authorized)) this.notifyHostOfClient(authorized);
+      }
       return;
     }
 
@@ -2065,12 +2237,32 @@ export class RelayHub extends DurableObject<Env> {
       return;
     }
     this.clientSockets.set(deviceId, ws);
+    this.notifyHostOfClient(updated);
     if (
       !sendJsonToOpenSocket(ws, { type: "auth_ok", device_id: deviceId, at: Date.now() }) ||
       !this.replayCachedState(ws)
     ) {
       await this.unregisterRelaySocket(ws);
     }
+    await this.scheduleAlarm(authorizationExpiresAt ?? Date.now() + 60_000, true);
+  }
+
+  private notifyHostOfClient(session: RelaySessionAttachment): void {
+    if (!this.hostSocket || !session.deviceId || this.revokedDevices.has(session.deviceId)) return;
+    sendJsonToOpenSocket(this.hostSocket, {
+      type: "account_device_authorized", requester_device_id: session.deviceId,
+      requester_public_key_b64: session.publicKeyB64,
+      requester_label: session.deviceLabel ?? "Signed-in device", paired_at: session.pairedAt,
+    });
+  }
+
+  private closeExpiredClient(ws: WebSocket, session: RelaySessionAttachment): boolean {
+    if (session.role !== "client" || !session.authenticated ||
+        (session.authorizationExpiresAt ?? 0) > Date.now()) return false;
+    if (isSocketOpen(ws)) ws.close(4001, "authentication expired");
+    if (session.deviceId && this.clientSockets.get(session.deviceId) === ws) this.clientSockets.delete(session.deviceId);
+    this.sessions.delete(ws);
+    return true;
   }
 
   private async handleHostRelayMessage(parsed: Record<string, unknown>): Promise<void> {
@@ -2103,7 +2295,9 @@ export class RelayHub extends DurableObject<Env> {
         const clientDeviceId = parsed.client_device_id;
         if (typeof clientDeviceId !== "string" || !clientDeviceId) return;
         const target = this.clientSockets.get(clientDeviceId);
-        if (!target) return;
+        if (!target || this.revokedDevices.has(clientDeviceId)) return;
+        const session = this.getRelaySession(target);
+        if (!session || this.closeExpiredClient(target, session)) return;
         if (!sendToOpenSocket(target, JSON.stringify(parsed))) await this.unregisterRelaySocket(target);
         return;
       }
@@ -2119,6 +2313,7 @@ export class RelayHub extends DurableObject<Env> {
     session: RelaySessionAttachment,
     parsed: Record<string, unknown>,
   ): Promise<void> {
+    if (!isSocketOpen(ws) || this.revokedDevices.has(session.deviceId ?? "")) return;
     if (parsed.type !== "relay_command") return;
     const host = this.hostSocket;
     if (host) {
@@ -2154,6 +2349,7 @@ export class RelayHub extends DurableObject<Env> {
 
   /** Replays cached host state to a freshly authenticated client; false if it closed midway. */
   private replayCachedState(ws: WebSocket): boolean {
+    if (this.revokedDevices.has(this.getRelaySession(ws)?.deviceId ?? "")) return false;
     const frames: Record<string, unknown>[] = [
       {
         type: "relay_presence",
@@ -2187,9 +2383,58 @@ export class RelayHub extends DurableObject<Env> {
 
   private broadcastToClients(value: Record<string, unknown>): void {
     const raw = JSON.stringify(value);
-    for (const ws of this.clientSockets.values()) {
+    for (const [deviceId, ws] of this.clientSockets) {
+      if (this.revokedDevices.has(deviceId)) continue;
+      const session = this.getRelaySession(ws);
+      if (!session || this.closeExpiredClient(ws, session)) continue;
       // Closed sockets are skipped here and removed by their close/error callbacks.
       sendToOpenSocket(ws, raw);
+    }
+  }
+
+  private async revokeDevice(request: Request): Promise<Response> {
+    try {
+      const body = await readJsonBody<Record<string, unknown>>(request);
+      const hostDeviceId = stringField(body.hostDeviceId);
+      const deviceId = stringField(body.deviceId);
+      const [host, requester] = await Promise.all([
+        findDeviceByDeviceId(this.env, hostDeviceId),
+        findDeviceByDeviceId(this.env, deviceId),
+      ]);
+      if (!host || host.kind !== "host" || host.revoked_at ||
+          host.public_key_b64 !== stringField(body.hostPublicKeyB64) ||
+          !requester || requester.kind === "host" || requester.user_id !== host.user_id ||
+          !this.ctx.id.equals(this.env.RELAY_HUB.idFromName(hostDeviceId))) {
+        return json({ ok: false, error: "revocation is not authorized" }, { status: 403 });
+      }
+
+      this.revokedDevices.add(deviceId);
+      for (const [ws, session] of this.sessions) {
+        if (session.role !== "client" || session.deviceId !== deviceId) continue;
+        if (isSocketOpen(ws)) ws.close(4003, "access revoked");
+        await this.unregisterRelaySocket(ws);
+      }
+      // Durable denial is established before the account acknowledgement. A
+      // database outage leaves access denied and the host can retry confirmation.
+      await this.ctx.storage.put(`revoked-device:${deviceId}`, true);
+      if (!(await hasRevokedPairing(this.env, host, requester))) {
+        await supabaseRest<DevicePairingRow[]>(this.env, "/device_pairings", {
+          method: "POST", headers: { Prefer: "return=representation" },
+          body: JSON.stringify({
+            owner_user_id: host.user_id, host_device_uuid: host.id,
+            phone_device_uuid: requester.id, revoked_at: isoNow(),
+            metadata: { revoked_via: "host" },
+          }),
+        });
+      }
+      await supabaseRest<DevicePairingRow[]>(this.env,
+        `/device_pairings?host_device_uuid=eq.${encodeFilterValue(host.id)}&phone_device_uuid=eq.${encodeFilterValue(requester.id)}&revoked_at=is.null`, {
+          method: "PATCH", headers: { Prefer: "return=minimal" },
+          body: JSON.stringify({ revoked_at: isoNow() }),
+        });
+      return json({ ok: true, device_id: deviceId });
+    } catch {
+      return json({ ok: false, error: "Could not confirm revocation. Retry on the Mac." }, { status: 503 });
     }
   }
 
@@ -2243,6 +2488,7 @@ export class RelayHub extends DurableObject<Env> {
 
   async alarm(): Promise<void> {
     const now = Date.now();
+    for (const [ws, session] of this.sessions) this.closeExpiredClient(ws, session);
     const host = this.hostSocket;
     if (host) {
       const silentMs = now - this.lastHostSeenAt;
@@ -2263,6 +2509,7 @@ export class RelayHub extends DurableObject<Env> {
     if (this.lastHostSeenAt > 0 && now - this.lastHostSeenAt >= RELAY_PRESENCE_STALE_MS) {
       this.broadcastPresence(false);
     }
+    if (this.clientSockets.size) await this.scheduleAlarm(now + 5 * 60_000, true);
   }
 
   private async markHostSeen(forcePersist = false): Promise<void> {
@@ -2278,6 +2525,10 @@ export class RelayHub extends DurableObject<Env> {
 
   /** Moves the alarm, skipping the storage write when it moved moments ago. */
   private async scheduleAlarm(at: number, force = false): Promise<void> {
+    if (this.hostSocket) at = Math.min(at, this.lastHostSeenAt + HOST_SILENCE_CLOSE_MS);
+    for (const session of this.sessions.values()) {
+      if (session.role === "client" && session.authenticated) at = Math.min(at, session.authorizationExpiresAt ?? Date.now());
+    }
     if (
       !force &&
       this.alarmScheduledAt > 0 &&

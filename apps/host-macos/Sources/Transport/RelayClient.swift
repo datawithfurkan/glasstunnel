@@ -18,6 +18,7 @@ public final class RelayClient: NSObject, URLSessionWebSocketDelegate, @unchecke
 
     public var onCommand: (@Sendable (DataChannelMessage, DeviceID?) -> Void)?
     public var onState: (@Sendable (State) -> Void)?
+    public var onAuthorizedDevice: (@Sendable (DeviceRegistry.PairedDevice) -> Void)?
 
     private let url: URL
     private let deviceKey: DeviceKey
@@ -178,6 +179,16 @@ public final class RelayClient: NSObject, URLSessionWebSocketDelegate, @unchecke
         }
 
         switch type {
+        case "account_device_authorized":
+            guard let id = obj["requester_device_id"] as? String,
+                  let encodedKey = obj["requester_public_key_b64"] as? String,
+                  let key = Data(base64Encoded: encodedKey),
+                  DeviceKey.deviceId(fromRawPublicKey: key) == id else { return }
+            onAuthorizedDevice?(DeviceRegistry.PairedDevice(
+                deviceId: id, publicKey: key,
+                label: obj["requester_label"] as? String ?? "Signed-in device",
+                pairedAt: (obj["paired_at"] as? String).flatMap { ISO8601DateFormatter().date(from: $0) } ?? Date()
+            ))
         case "relay_command":
             guard let command = obj["command"] else { return }
             do {

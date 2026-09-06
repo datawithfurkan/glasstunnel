@@ -122,12 +122,26 @@ every cold start or server-enforced reauthentication.
 
 ## Revocation And Replay Limitations
 
-Local device revocation updates the Mac registry and affects device-trust checks.
-Do not assume it immediately closes every existing WebRTC/content-relay connection
-or invalidates all hosted authorization. The hosted relay currently authenticates
-a client at connection time; end-to-end active-session revocation needs additional
-implementation and cross-surface tests. There is no supported sub-second revocation
-guarantee.
+The September 2026 source adds acknowledged device revocation across the Mac,
+hosted relay and signaling paths. **The published 0.1.9 Mac binary does not contain
+this new operation.** Source integration and a hosted deployment do not update an
+installed Mac; binary publication is a separate release step.
+
+With the matching Mac/Worker/PWA versions, Revoke Access stops that device's local
+WebRTC session and further host command dispatch. The Mac shows confirmation
+pending until the server persists its denial and revokes the account pairing.
+Failure leaves local access blocked and offers a retry; do not assume hosted
+delivery is cut off until confirmation. Removing a device hides its row but keeps
+the denial. Restarts, cached authorization and re-registering the same identity
+must not restore it. A revoked browser clears its active workspace and stops
+automatic reconnects; another authorized browser can continue.
+
+Relay clients reauthenticate at token expiry or after five minutes, whichever is
+earlier. This bounds stale account decisions, not the network latency of an explicit
+revocation. There is no supported sub-second guarantee. Revocation cannot cancel
+a command already executing in a coding app, retract received content, or invalidate
+every Supabase account session. Same-account onboarding can authorize a new browser
+identity, so a compromised account requires account-level recovery as well.
 
 Signed signaling envelopes carry IDs and timestamps, but signature verification
 alone does not provide a complete application replay policy. The hosted JSON

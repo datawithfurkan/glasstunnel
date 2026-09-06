@@ -4,6 +4,7 @@ import { useAppStore } from '../lib/store';
 
 export function HostsScreen() {
   const user = useAppStore((s) => s.user);
+  const accessRevocationNotice = useAppStore((s) => s.accessRevocationNotice);
   const availableHosts = useAppStore((s) => s.availableHosts);
   const chooseHost = useAppStore((s) => s.chooseHost);
   const refreshHosts = useAppStore((s) => s.refreshHosts);
@@ -11,6 +12,7 @@ export function HostsScreen() {
   const [linkCode, setLinkCode] = useState('');
   const [busyHostId, setBusyHostId] = useState<string | null>(null);
   const [linking, setLinking] = useState(false);
+  const [pendingClaimedHostId, setPendingClaimedHostId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -71,7 +73,11 @@ export function HostsScreen() {
       }
 
       await claimLinkedHostAndOpen(normalized, {
-        claimHostLinkCode,
+        claimHostLinkCode: async (code) => {
+          const host = await claimHostLinkCode(code);
+          setPendingClaimedHostId(host.online ? null : host.deviceId);
+          return host;
+        },
         chooseHost,
         setLinkCode,
         setStatus,
@@ -117,6 +123,18 @@ export function HostsScreen() {
     };
   }, [refreshHostsVisible, user]);
 
+  useEffect(() => {
+    if (!pendingClaimedHostId) return;
+    const host = availableHosts.find((entry) => entry.deviceId === pendingClaimedHostId);
+    if (host?.online) {
+      setPendingClaimedHostId(null);
+      void chooseHost(host.deviceId).catch(() => setStatus('Mac added. Open it below.'));
+      return;
+    }
+    const interval = window.setInterval(() => void refreshHostsVisible(), 10_000);
+    return () => window.clearInterval(interval);
+  }, [pendingClaimedHostId, availableHosts, chooseHost, refreshHostsVisible]);
+
   const hasHosts = availableHosts.length > 0;
 
   return (
@@ -141,16 +159,16 @@ export function HostsScreen() {
           </button>
         </section>
 
-        {(status || error) && (
+        {(status || error || accessRevocationNotice) && (
           <section
             aria-live="polite"
             className={`rounded-[6px] border px-5 py-4 text-sm ${
-              error
+              error || accessRevocationNotice
                 ? 'border-err/30 bg-err/10 text-err'
                 : 'border-accent/30 bg-accent/10 text-accent'
             }`}
           >
-            {error ?? status}
+            {error ?? accessRevocationNotice ?? status}
           </section>
         )}
 

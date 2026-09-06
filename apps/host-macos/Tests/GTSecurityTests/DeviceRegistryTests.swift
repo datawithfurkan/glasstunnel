@@ -47,7 +47,7 @@ final class DeviceRegistryTests: XCTestCase {
         XCTAssertTrue(reloaded.isRevoked(device.deviceId))
     }
 
-    func testRemoveDeletesDevice() throws {
+    func testRemoveHidesDeviceButRetainsRevocationAcrossReload() throws {
         let url = registryURL()
         let registry = DeviceRegistry(fileURL: url)
         let device = makeDevice(id: "gt-phone-3")
@@ -57,10 +57,35 @@ final class DeviceRegistryTests: XCTestCase {
 
         XCTAssertNil(registry.get(device.deviceId))
         XCTAssertFalse(registry.isKnown(device.deviceId))
-        XCTAssertFalse(registry.isRevoked(device.deviceId))
+        XCTAssertTrue(registry.isRevoked(device.deviceId))
+        XCTAssertTrue(registry.all().isEmpty)
 
         let reloaded = DeviceRegistry(fileURL: url)
         XCTAssertNil(reloaded.get(device.deviceId))
+        XCTAssertTrue(reloaded.isRevoked(device.deviceId))
+        XCTAssertThrowsError(try reloaded.add(device))
+    }
+
+    func testAutomaticTrustCannotReAddRevokedIdentity() throws {
+        let url = registryURL()
+        let registry = DeviceRegistry(fileURL: url)
+        let device = makeDevice(id: "gt-revoked")
+        try registry.add(device)
+        try registry.revoke(device.deviceId)
+        XCTAssertThrowsError(try registry.add(device))
+        XCTAssertTrue(DeviceRegistry(fileURL: url).isRevoked(device.deviceId))
+    }
+
+    func testRevocationConfirmationPersistsSeparatelyFromLocalDenial() throws {
+        let url = registryURL()
+        let registry = DeviceRegistry(fileURL: url)
+        let device = makeDevice(id: "gt-confirmed")
+        try registry.add(device)
+        XCTAssertThrowsError(try registry.confirmRevocation(device.deviceId))
+        try registry.revoke(device.deviceId)
+        XCTAssertNil(registry.get(device.deviceId)?.revocationConfirmedAt)
+        try registry.confirmRevocation(device.deviceId)
+        XCTAssertNotNil(DeviceRegistry(fileURL: url).get(device.deviceId)?.revocationConfirmedAt)
     }
 
     func testUpdateLastSeenPersists() throws {
@@ -79,9 +104,10 @@ final class DeviceRegistryTests: XCTestCase {
     }
 
     private func registryURL() -> URL {
-        FileManager.default.temporaryDirectory
+        let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("glasstunnel-device-registry-\(UUID().uuidString)")
-            .appendingPathComponent("devices.json")
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+        return directory.appendingPathComponent("devices.json")
     }
 
     private func makeDevice(id: String) -> DeviceRegistry.PairedDevice {

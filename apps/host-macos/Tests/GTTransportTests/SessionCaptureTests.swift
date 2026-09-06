@@ -8,6 +8,15 @@ import WebRTC
 
 @MainActor
 final class SessionCaptureTests: XCTestCase {
+    func testStoppedSessionCannotDispatchAnAlreadyQueuedDataChannelCommand() async throws {
+        let harness = try SessionHarness()
+        harness.peer.onDataChannelMessage?(DataChannelMessage(body: .readOnlyModeUpdate(ReadOnlyModeUpdate(readOnly: true))))
+        await harness.session.stop().value
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertFalse(harness.session.autoLock.isReadOnly, "an event queued before cutoff must not execute afterward")
+        harness.peer.close()
+    }
+
     func testScreenCaptureRestartsAfterAStreamError() async throws {
         let harness = try SessionHarness()
         harness.session.applyRemoteApps([screenApp()])

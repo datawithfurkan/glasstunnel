@@ -31,8 +31,10 @@ test artifacts are intentionally not stored in the public repository.
 - [x] Maintainer approved the visibility change and the repository is public.
 - [x] Repository description, homepage, topics, vulnerability alerts, secret scanning,
       and push protection are configured.
-- [x] Protect `main` with the five required CI checks, linear history, one approving
-      review for contributor pull requests, and force-push/deletion prevention.
+- [x] Protect `main` with five strict required CI checks, linear history,
+      conversation resolution, and force-push/deletion prevention. On 2026-09-06,
+      the sole maintainer authorized zero required contributor approvals;
+      protected PRs and all other checks remain required.
 
 ## First downloadable public beta
 

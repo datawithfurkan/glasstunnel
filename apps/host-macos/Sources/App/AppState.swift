@@ -31,6 +31,8 @@ final class AppState: ObservableObject {
     @Published var selectedTab: AppNavigationTab = .workspace
     @Published var availableWindows: [CapturableWindow] = []
     @Published var pairedDevices: [DeviceRegistry.PairedDevice] = []
+    @Published var pendingDeviceRevocations: Set<DeviceID> = []
+    @Published var deviceRevocationErrors: [DeviceID: String] = [:]
     @Published var signalingURL: URL = AppState.loadSignalingURL() {
         didSet {
             UserDefaults.standard.set(signalingURL.absoluteString, forKey: DefaultsKey.signalingURL)
@@ -390,14 +392,31 @@ final class AppState: ObservableObject {
         remoteAppController.selectedWindow(for: remoteAppId)
     }
 
-    func revokeDevice(_ id: DeviceID) {
-        try? registry.revoke(id)
-        refreshPairedDevices()
+    func revokeDevice(_ id: DeviceID) async {
+        await changeDeviceAccess(id, remove: false)
     }
 
-    func removeDevice(_ id: DeviceID) {
-        try? registry.remove(id)
-        refreshPairedDevices()
+    func removeDevice(_ id: DeviceID) async {
+        await changeDeviceAccess(id, remove: true)
+    }
+
+    private func changeDeviceAccess(_ id: DeviceID, remove: Bool) async {
+        guard pendingDeviceRevocations.insert(id).inserted else { return }
+        deviceRevocationErrors[id] = nil
+        defer {
+            pendingDeviceRevocations.remove(id)
+            refreshPairedDevices()
+        }
+        do {
+            guard let sessionManager else {
+                try registry.revoke(id)
+                throw SessionManager.RevocationError.unconfirmed
+            }
+            try await sessionManager.revokeDevice(id)
+            if remove { try registry.remove(id) }
+        } catch {
+            deviceRevocationErrors[id] = error.localizedDescription
+        }
     }
 
     // MARK: - Session

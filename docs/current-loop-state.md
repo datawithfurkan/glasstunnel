@@ -26,17 +26,23 @@ product-development loop should start from the highest-impact remaining beta ris
 
 Security reconciliation takes priority over further product improvements. The
 approved sequential roadmap is `docs/architecture/security-hardening-plan.md`.
-Stage 1 is active: PR #32 merged the tested security patch at `da9a1bc3`;
-production deployment and its canary are still pending. The sole maintainer
+Stage 1 passed: PR #32 merged the tested security patch at `da9a1bc3`;
+Deploy run `34047515720` succeeded and the public Chromium/WebKit canary passed.
+Stage 2 is active: authorization and active-session revocation. The sole maintainer
 explicitly authorized zero required contributor approvals on 2026-09-06. Keep
 protected PRs, all five strict CI checks and the other branch protections; do not
-repeat the independent-contributor approval blocker. Stages 2-4 remain queued;
+repeat the independent-contributor approval blocker. Stages 3-4 remain queued;
 stage 5 is E2E design only and requires a separate decision before implementation.
 Both PR and post-merge CI passed, and Dependabot reports zero open alerts. The
-next release gate is explicit production approval and the remaining deployment
-preflight, not GitHub contributor review or Cloudflare authentication. Wrangler
+maintainer approved the proposed `da9a1bc3` rollout and instructed the driver to
+continue routine planned steps without repeated approval requests. The next gate
+is protected integration of the locally tested revocation slice, not another
+routine approval. The local gate passed: 45 Worker tests, 452 Swift tests with
+eight environment-gated skips, 242 PWA tests, and the disposable two-browser
+revocation journey. The latter also exposed and verified a fix for cached
+greetings incorrectly disabling an online composer's input. Wrangler
 OAuth was restored on 2026-09-06 and read-only deployment queries passed for the
-PWA, site and Worker. Do not claim that the hosted patch has shipped.
+PWA, site and Worker. The first security patch has shipped; revocation has not.
 See `docs/security-reconciliation.md` for the first pass's evidence and remaining
 risks. After stage 1, the next security slice is authorization and active-session
 revocation across the Mac, hosted relay and WebRTC. Do not
