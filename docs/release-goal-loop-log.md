@@ -175,3 +175,21 @@ changes or a blocker is materially narrowed.
 - Next action: Review the concrete stage 4 cache lifetime/deletion proposal, then continue its local implementation. No repeated routine approval is required.
 - End commit: cc3377b1c2cbb283aadde58ec1eeb351048ce22c.
 - CI/deploy: https://github.com/datawithfurkan/glasstunnel/actions/runs/34061593757 succeeded. One dispatch, no reruns or Mac release. All lab-owned services are stopped.
+
+## 2026-09-07 09:02 UTC - Bounded cache retention deployed and verified
+
+- Start commit: cc3377b1.
+- Gate: fixed 24-hour relay/browser replicas, account isolation, browser clearing and background expiry without deleting source content or security records.
+- Files changed: Worker cache envelopes/alarms and count-only maintenance RPC; PWA scoped storage, expiry/Profile feedback and logout recovery; local lab regressions, bounded operator and security documentation.
+- Validation: 64 Worker, 261 PWA, 52 lab and three operator CLI tests passed. Real local two-account retention, ordinary account/Terminal, permission/revocation and 24 Chromium/WebKit fixtures passed. Build/type/lint, security/privacy, public-repository and diff checks passed.
+- Blocker resolved: Docker's read-only VM interrupted local Supabase. One Telegram escalation led to explicit restart approval; Docker Desktop restart restored health without deleting volumes or containers. Lab test resets were limited to its disposable database.
+- Protected integration: PR #35 merged tested tree f2bcafd6 at 0f98a93d. All five checks passed in PR CI 34102762574 and automatic main CI 34103071925. One consolidated push; no protection bypass or successful workflow rerun.
+- Hosted delivery: Deploy 34103107240 succeeded. PWA b9d8e353-2fb6-45be-8521-727faf1c7a9c and site 9eae421a-a5ac-4a9d-a7d2-2625e44e7089 report the exact merged SHA. Worker deployment 499ca15f-7449-4fab-bf4f-3d16c6ded9eb routes 100% to 17a86291-faa3-4692-aa8b-455e5d57455e.
+- Hosted verification: isolated Chromium/WebKit sign-in shell/reload, synthetic legacy-cache discard and unrelated-key preservation passed, with zero page errors. Screenshots inspected. Public surfaces/health returned 200; service worker remains revalidated.
+- Approved migration: inventory visited 183 objects and counted 509 cache records; apply removed exactly 503 expired/unverifiable records. A separate fresh-enumeration verify found six valid records, zero invalid records, active retention everywhere and zero cleanup failures. No content was returned. Original chats/files, Mac attachments, account/device identities, credentials and denial tombstones were excluded.
+- Cleanup: ignored private ledger retained at .cache/retention/ledger.json with mode 0600; temporary operator directories/processes removed; no lab-owned services running.
+- Outcome: stage 4 passed in source and hosted services. Installed/public Mac 0.1.9 unchanged; no signing, release or TCC changes.
+- Limits: provider backups are not erased by active-key deletion; closed browsers purge on resume; a live Mac can publish fresh copies of older source messages. Do not roll back to a pre-retention Worker or restore legacy cache keys.
+- Next action: stage 5 design decision in docs/architecture/relay-e2e-design.md. The proposal compares maintained libraries, exposes the PWA code-delivery trust limit and requests only a bounded local feasibility stage. It does not implement E2E. Coordinate the already-tested Mac security update separately.
+- End commit: 0f98a93d047f435ea41f2fc62c954c7516e6b980 (deployed runtime). Final evidence and design are a local-only follow-up to avoid another documentation CI cycle.
+- CI/deploy: https://github.com/datawithfurkan/glasstunnel/actions/runs/34102762574 and https://github.com/datawithfurkan/glasstunnel/actions/runs/34103107240 passed.

@@ -2,11 +2,12 @@
 
 Last updated: 2026-09-07.
 
-Stage 4 update: the maintainer explicitly approved the 24-hour offline-cache
-policy and legacy-cache removal. Implementation and local validation passed
-on `codex/security-retention`. Hosted deletion remains gated on a content-free
-inventory and verified cache-only scope; original content and security records
-are excluded.
+Stage 4 passed: the approved 24-hour cache policy is deployed at `0f98a93d`.
+Inventory/apply/verify covered 183 hosted objects: 503 expired/unverifiable cache
+records removed, six fresh records preserved, zero invalid records or cleanup
+failures afterward. Original content and security records were excluded.
+Stage 5's design proposal is ready for a maintainer decision; encryption is not
+implemented. See `docs/architecture/relay-e2e-design.md`.
 
 ## Baseline
 
@@ -47,15 +48,15 @@ stage 5 is E2E design only and requires a separate decision before implementatio
 Stage 1 PR/post-merge CI passed, and its live Dependabot check reported zero open
 alerts on 2026-09-06. Stage 2-3 PR checks also passed. The
 maintainer approved the proposed `da9a1bc3` rollout and instructed the driver to
-continue routine planned steps without repeated approval requests. The next gate
-is local validation, protected integration, exact-SHA deployment and the bounded
-inventory/apply/verify sweep, not another policy or routine-action approval.
+continue routine planned steps without repeated approval requests. Stage 4's
+local, protected integration, exact-SHA deployment and bounded hosted migration
+gates have now passed. Do not repeat those operations merely to refresh a log.
 The revocation local gate passed: 45 Worker tests, 452 Swift tests with
 eight environment-gated skips, 242 PWA tests, and the disposable two-browser
 revocation journey. The latter also exposed and verified a fix for cached
 greetings incorrectly disabling an online composer's input. Wrangler
 OAuth was restored on 2026-09-06 and read-only deployment queries passed for the
-PWA, site and Worker. All three hosted security slices have shipped. The new Mac
+PWA, site and Worker. All four hosted security slices have shipped. The new Mac
 revocation and permission operations are source-only until a coordinated binary release;
 the installed/public 0.1.9 app has not been replaced.
 See `docs/security-reconciliation.md` for the first pass's evidence and remaining
@@ -67,20 +68,42 @@ restrictions cannot affect another identity. The UI advertises this only on
 matching hosts. Protected integration and hosted deployment passed; do not
 equate those results with an updated public Mac binary.
 
-Current working branch: `codex/security-retention`, based on `cc3377b1`.
+Current working branch: `codex/security-e2e-design`, based on `0f98a93d`.
 The approved 24-hour implementation includes relay expiry/alarms, account-scoped
 browser storage, a Profile clearing action and a resumable, count-only operator
 sweep. Local validation passed: 64 Worker tests, 261 PWA tests, 52 lab tests,
 three operator CLI tests, real local two-account retention and permission/revocation
 journeys, ordinary account/Terminal and Chromium/WebKit fixtures, build/type/lint
-and security/public audits. No hosted cache deletion has occurred yet.
+and security/public audits. PR #35 merged the exact tested tree `f2bcafd6` as
+`0f98a93d047f435ea41f2fc62c954c7516e6b980`. All five checks passed in PR CI
+`34102762574`; automatic main CI `34103071925` also passed. A single Deploy
+`34103107240` succeeded. PWA/site source IDs and aggregate sweep evidence are in
+the security plan. Isolated live Chromium/WebKit tests confirmed signed-out
+render/reload, synthetic legacy-cache removal and preservation of unrelated
+storage, with no page errors. The service worker still requires revalidation.
 Original chats, project files, local attachments, account/device identities and
 denial tombstones are excluded. Lab-owned services are stopped after each test.
 One deduplicated Telegram message requested the retention-policy decision on
-2026-09-06 and was delivered; approval was received on 2026-09-07. No other
-approval or authentication is pending. Docker's read-only VM interrupted a test;
+2026-09-06 and was delivered; approval was received on 2026-09-07. No further
+retention approval or authentication is pending. Docker's read-only VM interrupted a test;
 one Telegram message led to explicit approval for a Docker Desktop restart, which
 restored local Supabase health. Tests then passed; no volumes were deleted.
+
+The content-free sweep verified all 183 objects at 09:02 UTC on 2026-09-07.
+Its ignored mode-0600 ledger is `.cache/retention/ledger.json`; temporary operator
+directories/processes were removed. The six surviving fresh records retain their
+original deadlines. Provider backups and closed browsers remain disclosed limits.
+Do not roll the Worker back to pre-retention source or restore legacy cache keys.
+
+Next substantive gate: review the E2E design's endpoint-trusted threat model,
+Mac-approved enrollment and re-enrollment recovery, then decide whether to run
+its bounded local MLS interoperability spike. No crypto implementation, paid
+review or production change is authorized by the proposal. A separate coordinated
+Mac release is still needed to deliver the already-tested host security changes.
+Final evidence and the E2E proposal are kept locally on the branch above,
+not pushed as an extra documentation-only CI cycle. Runtime main is synchronized.
+One deduplicated Telegram notification for this E2E design decision was delivered
+on 2026-09-07. It is not a repeated retention or Docker approval request.
 
 Paused product-audit slice: First-Run Activation. Use
 `docs/product-audit-backlog.md` as the durable queue. After completing the

@@ -46,7 +46,7 @@ disclosures, not hidden implementation details.
 
 - Hosted relay content is not end-to-end encrypted. The relay can read prompts,
   chat, tool output, commands, attachments and JPEG fallback frames, and stores
-  recent transcript snapshots. The September retention source bounds offline
+  recent transcript snapshots. The September 7 hosted deployment bounds offline
   replicas to 24 hours; reads do not extend their lifetime. This does not delete
   source conversations or provider backups, and a live Mac can publish new copies
   of older messages. Old browser versions must reload to adopt the browser policy.

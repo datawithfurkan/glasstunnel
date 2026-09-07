@@ -2,6 +2,14 @@
 
 Started: 2026-09-06. Baseline: `8f7305fc`.
 
+This is the initial reconciliation evidence, not current deployment status.
+Subsequent stages 1-4 shipped in source/hosted services by 2026-09-07; the newer
+Mac security code still awaits a binary release. Use
+[current loop state](current-loop-state.md) and the
+[security hardening plan](architecture/security-hardening-plan.md) for the active
+gate, rollout evidence and E2E design decision. Historical local-only statements
+below describe this initial pass.
+
 ## Task Packet
 
 - Objective: reconcile dependency security, hosted transport/privacy claims, and
