@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   fetchAccountHosts: vi.fn(),
   idbGet: vi.fn<(key: string) => Promise<unknown>>().mockResolvedValue(undefined),
   idbSet: vi.fn(async () => {}),
+  idbDel: vi.fn<(key: string) => Promise<void>>().mockResolvedValue(undefined),
+  idbKeys: vi.fn(async () => [] as string[]),
   relays: [] as Array<{
     opts: RelayConnectionOptions;
     disconnect: ReturnType<typeof vi.fn>;
@@ -41,7 +43,8 @@ vi.mock('@glasstunnel/shared-crypto', async (importOriginal) => ({
 vi.mock('idb-keyval', () => ({
   get: mocks.idbGet,
   set: mocks.idbSet,
-  del: vi.fn(async () => {}),
+  del: mocks.idbDel,
+  keys: mocks.idbKeys,
 }));
 vi.mock('../notifications/push', () => ({ registerPushSubscription: vi.fn(async () => {}) }));
 vi.mock('../transport/RelayConnection', () => ({
@@ -84,6 +87,8 @@ describe('browser content security boundaries', () => {
     mocks.relays.length = 0;
     mocks.idbGet.mockReset().mockResolvedValue(undefined);
     mocks.idbSet.mockReset().mockResolvedValue(undefined);
+    mocks.idbDel.mockReset().mockResolvedValue(undefined);
+    mocks.idbKeys.mockReset().mockResolvedValue([]);
     mocks.signOut.mockReset().mockResolvedValue({ error: null });
     mocks.getSession.mockReset().mockResolvedValue({ data: { session: signedInSession('one') }, error: null });
     mocks.registerBrowserDevice.mockReset().mockResolvedValue([host]);
@@ -94,7 +99,7 @@ describe('browser content security boundaries', () => {
       pairedHost: host, availableHosts: [host], workspaceHostDeviceId: host.deviceId,
       agents: {}, messageDetails: {}, peer: null, signaling: null, relay: null,
       route: 'workspace', locked: false, accessRevocationNotice: null,
-      readOnlyMode: false, hostHello: null,
+      readOnlyMode: false, hostHello: null, signingOut: false, signOutError: null,
     });
   });
 
@@ -112,6 +117,94 @@ describe('browser content security boundaries', () => {
     expect(useAppStore.getState().requestMessageDetail(detail.agentId, detail.messageId)).toBe(true);
     return relay;
   }
+
+  it('erases account-scoped offline copies on logout, keeping credentials and other accounts', async () => {
+    mocks.idbKeys.mockResolvedValue([
+      'gt.relay.cache.v2.["one","test-mac"]', 'gt.relay.cache.v2.["two","test-mac"]',
+      'gt.relay.cache.old', 'gt.phoneKeypair',
+    ]);
+    await useAppStore.getState().signOut();
+    expect(mocks.idbDel).toHaveBeenCalledWith('gt.relay.cache.v2.["one","test-mac"]');
+    expect(mocks.idbDel).toHaveBeenCalledWith('gt.relay.cache.old');
+    expect(mocks.idbDel).not.toHaveBeenCalledWith('gt.relay.cache.v2.["two","test-mac"]');
+    expect(mocks.idbDel).not.toHaveBeenCalledWith('gt.phoneKeypair');
+  });
+
+  it('still requests remote sign-out and reports incomplete cleanup when browser deletion fails', async () => {
+    mocks.idbKeys.mockResolvedValue(['gt.relay.cache.old']);
+    mocks.idbDel.mockImplementation(async (key) => {
+      if (key === 'gt.relay.cache.old') throw new Error('storage failure');
+    });
+    await expect(useAppStore.getState().signOut()).rejects.toThrow();
+    expect(mocks.signOut).toHaveBeenCalledOnce();
+    expect(useAppStore.getState().user).toBeNull();
+    expect(useAppStore.getState().signOutError).toMatch(/cleanup.*incomplete/i);
+    expect(useAppStore.getState().signingOut).toBe(false);
+  });
+
+  it('retries failed account-cache deletion even after local sign-out cleared the user', async () => {
+    const key = 'gt.relay.cache.v2.["one","test-mac"]';
+    mocks.idbKeys.mockResolvedValue([key]);
+    mocks.idbDel.mockImplementation(async (entry) => {
+      if (entry === key) throw new Error('storage failure');
+    });
+    await expect(useAppStore.getState().signOut()).rejects.toThrow();
+    mocks.idbDel.mockReset().mockResolvedValue(undefined);
+    await useAppStore.getState().signOut();
+    expect(mocks.idbDel).toHaveBeenCalledWith(key);
+    expect(useAppStore.getState().signOutError).toBeNull();
+  });
+
+  it('keeps logout pending until auth removal completes and ignores a stale session during cleanup', async () => {
+    let finish!: () => void;
+    mocks.signOut.mockImplementation(() => new Promise((resolve) => {
+      finish = () => resolve({ error: null });
+    }));
+    const signingOut = useAppStore.getState().signOut();
+    expect(useAppStore.getState().signingOut).toBe(true);
+    await useAppStore.getState().bootstrap();
+    expect(useAppStore.getState().user).toBeNull();
+    finish();
+    await signingOut;
+    expect(useAppStore.getState().signingOut).toBe(false);
+  });
+
+  it('removes only legacy copies when restoring an already signed-out browser', async () => {
+    useAppStore.setState({ user: null });
+    mocks.getSession.mockResolvedValue({ data: { session: null }, error: null });
+    mocks.idbKeys.mockResolvedValue(['gt.relay.cache.old', 'gt.relay.cache.v2.["two","test-mac"]']);
+    await useAppStore.getState().bootstrap();
+    expect(mocks.idbDel).toHaveBeenCalledWith('gt.relay.cache.old');
+    expect(mocks.idbDel).not.toHaveBeenCalledWith('gt.relay.cache.v2.["two","test-mac"]');
+  });
+
+  it('reports an automatic session-cleanup failure and retains its account scope for retry', async () => {
+    const key = 'gt.relay.cache.v2.["one","test-mac"]';
+    mocks.getSession.mockResolvedValue({ data: { session: null }, error: null });
+    mocks.idbKeys.mockResolvedValue([key]);
+    mocks.idbDel.mockRejectedValue(new Error('storage failure'));
+    await useAppStore.getState().bootstrap();
+    expect(useAppStore.getState().signOutError).toMatch(/cleanup.*incomplete/i);
+    expect(useAppStore.getState().user).toBeNull();
+    mocks.idbDel.mockReset().mockResolvedValue(undefined);
+    await useAppStore.getState().signOut();
+    expect(mocks.idbDel).toHaveBeenCalledWith(key);
+  });
+
+  it('removes expired in-memory content at the relay deadline without a new frame', async () => {
+    await useAppStore.getState().startPeer();
+    const relay = mocks.relays.at(-1)!;
+    const now = Date.now();
+    relay.opts.onHello?.({ hostVersion: 'test', hostOsVersion: 'test', hostDeviceLabel: 'Test Mac',
+      supportedAdapters: [], currentLayout: { shape: GridShape.OneByOne, cells: [] }, remoteApps: [], protocolVersion: 4,
+    }, false, { version: 1, receivedAt: now - 100, expiresAt: now + 100 });
+    expect(useAppStore.getState().hostHello).not.toBeNull();
+    relay.opts.onState?.({ online: false });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(useAppStore.getState().hostHello).toBeNull();
+    expect(useAppStore.getState().layout).toBeNull();
+    expect(useAppStore.getState().error).toMatch(/expired/i);
+  });
 
   it.each([true, false])('keeps cached greeting presence truthful when online=%s', async (online) => {
     await useAppStore.getState().startPeer();

@@ -58,6 +58,11 @@ export default defineConfig({
       use: { ...devices['Pixel 7'] },
     },
     {
+      name: 'local-retention-mobile-chromium',
+      grep: /@retention-account/,
+      use: { ...devices['Pixel 7'] },
+    },
+    {
       name: 'local-account-mobile-chromium',
       grep: /@account/,
       use: {

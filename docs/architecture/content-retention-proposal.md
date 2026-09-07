@@ -1,10 +1,12 @@
 # Content Retention Proposal
 
-Status: proposed for stage 4, not implemented or approved for hosted deletion.
+Status: approved by the maintainer on 2026-09-07; stage 4 implementation active.
+Approval includes the 24-hour lifetime and bounded, inventory-verified removal
+of legacy cache copies. No hosted deletion has occurred yet.
 Source inspected: `cc3377b1` on 2026-09-06. Single-driver security plan;
 no personal content was inspected and no production data was deleted.
 
-## Decision Requested
+## Approved Decision
 
 Adopt a **24-hour maximum offline cache age** in the hosted relay and browser.
 Clear browser workspace copies on sign-out, account switch, access revocation,
@@ -18,7 +20,7 @@ conversation. A live Mac may publish a fresh snapshot containing older messages;
 this is a cache-replica lifetime, not a promise that all copies of a message
 disappear 24 hours after that message was originally written.
 
-## Verified Gaps
+## Verified Pre-Implementation Gaps (2026-09-06)
 
 - `RelayHub.loadRelayState` restores hello, app list, legacy aggregate snapshots
   and per-agent snapshots without an expiry record. Snapshot size compaction is
@@ -32,7 +34,7 @@ disappear 24 hours after that message was originally written.
   events rather than a dedicated persistent cleanup alarm. Keep the lifetime,
   but prove deletion when the destination never returns.
 
-## Proposed Contract
+## Approved Contract
 
 | Surface | Lifetime and clearing behavior |
 | --- | --- |
@@ -73,9 +75,10 @@ Additive protocol fields must preserve that mixed-version behavior explicitly.
 
 ## Hosted Migration Gate
 
-Policy approval is needed before deploying code that purges existing hosted
-cache copies. Routine implementation, local disposable tests, protected PR checks
-and the already-approved stage 3 deployment do not need another approval.
+The maintainer approved this policy and the legacy purge on 2026-09-07. Routine
+implementation, local disposable tests, protected PR checks and this planned
+deployment do not need another approval. Inventory, apply and verification still
+have to pass; approval does not substitute for evidence.
 
 Before migration, produce a bounded, content-free inventory/dry run of target
 cache records. Include dormant relay objects, not just currently connected Macs;
@@ -108,3 +111,7 @@ older Worker that serves timestamp-free records. Keep an expiry-aware rollback
 candidate. Cache deletion is intentionally irreversible at the application level;
 the Mac can publish fresh state after reconnect. Publish this limitation before
 activation and record the approved scope, migration counts and validation.
+
+Implementation and operator instructions: `ops/cache-retention/README.md`.
+Current deployment/migration evidence: `docs/current-loop-state.md` and the
+stage 4 record in `security-hardening-plan.md`.

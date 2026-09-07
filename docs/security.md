@@ -79,24 +79,41 @@ per-message abuse protection or a guarantee about every deployment's quotas.
   persists its session through its browser client. Offline workspace snapshots,
   including recent chat content, are also cached in IndexedDB. Expanded tool detail
   is held in memory, scoped by agent/message and cleared with connection/session
-  teardown. Sign-out clears the active workspace; it is not a secure erase of all
-  browser storage or previously received content.
+  teardown. The September retention source scopes each offline copy by account
+  and Mac, checks a per-item deadline of at most 24 hours, and clears the relevant
+  copies on sign-out, account switch, revocation and forgetting a Mac. Profile's
+  **Clear offline copies** erases this browser's copies, not server copies;
+  a connected Mac can publish fresh content afterward. Browser suspension/closure
+  delays physical deletion until execution resumes; expired copies are rejected
+  before restoration. Storage failures are not secure-erasure guarantees.
 - **Hosted Cloudflare/Supabase control plane:** Supabase holds account and device
   records, linking/pairing data and approval requests. Cloudflare Durable Object
   storage persists host hello/app state and recent-message snapshots for offline
-  replay. Each compacted agent snapshot has a size bound, but there is currently
-  no documented automatic content-expiry deadline.
+  replay. The September retention source gives each accepted host publication a
+  24-hour maximum replica lifetime. Viewer reads, replays and heartbeats do not
+  renew that deadline. Expired or unverifiable legacy copies cannot be replayed.
+  Persistent alarms remove active storage keys in bounded batches even when no
+  client is connected, with content-free failure counters and backoff. The
+  healthy-service cleanup target is 15 minutes after expiry, not an outage-proof
+  guarantee. See `ops/cache-retention/README.md` for activation and sweep evidence.
 - **Relay frames/detail:** the current Worker forwards JPEG frames and expanded
   message-detail replies without explicitly persisting those payloads. Recent
   transcript snapshots can still contain portions of the same text.
 - **Go signaling:** offline envelopes are queued temporarily in memory; Web Push
   subscriptions may be stored when enabled. Hosted signaling also uses Durable
-  Object storage for queued envelopes.
+  Object storage for queued envelopes. Its 60-second logical deadline is checked
+  before forwarding and maintained by a persistent cleanup alarm in the September
+  retention source. The legacy Go implementation is unchanged by this policy.
 - **TURN:** handles encrypted WebRTC packets and operational connection metadata.
   Its logging and credential retention depend on the deployment configuration.
 
-Do not interpret bounded snapshot size as a retention policy. Hosted backup,
-deletion, and provider-log retention need separate operational verification.
+A fresh Mac publication can contain older source messages: this is a replica
+lifetime, not deletion 24 hours after a message was written. Original chats,
+project files, received Mac attachments, identities and revocation tombstones are
+not part of cache cleanup. Old PWA versions must reload to adopt browser expiry.
+Cloudflare SQLite Durable Object point-in-time recovery can retain earlier storage
+for 30 days. Active-key deletion does not promise immediate provider-backup erasure;
+provider logs and Supabase backups need separate operational verification.
 
 ## Redaction And Remote Controls
 

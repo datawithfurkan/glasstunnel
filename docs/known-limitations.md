@@ -46,7 +46,10 @@ disclosures, not hidden implementation details.
 
 - Hosted relay content is not end-to-end encrypted. The relay can read prompts,
   chat, tool output, commands, attachments and JPEG fallback frames, and stores
-  recent transcript snapshots without a defined automatic content-expiry deadline.
+  recent transcript snapshots. The September retention source bounds offline
+  replicas to 24 hours; reads do not extend their lifetime. This does not delete
+  source conversations or provider backups, and a live Mac can publish new copies
+  of older messages. Old browser versions must reload to adopt the browser policy.
 - The published 0.1.9 Mac does not include the new acknowledged cross-transport
   revocation in the September source. The new operation needs a matching Mac,
   Worker and PWA; local failure is not proof of server cutoff. Revocation affects

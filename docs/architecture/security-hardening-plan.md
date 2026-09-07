@@ -60,7 +60,7 @@ and [UI parity](../agent-ui-contract.md).
 | 1. Existing patch | Complete; deployed and verified 2026-09-06 | Protected PR/checks, approved deployment and bounded verification |
 | 2. Revocation | Complete in source and hosted services; Mac binary publication remains separate | Active/new sessions denied across relay and WebRTC; UI confirmation is truthful |
 | 3. Permissions | Complete in source and hosted services; Mac binary publication remains separate | Host policy rejects unauthorized actions regardless of browser behavior |
-| 4. Retention | Policy proposed; maintainer decision pending | Tested expiry/deletion and account-scoped cache behavior |
+| 4. Retention | Local gates passed 2026-09-07; protected rollout and hosted sweep pending | Tested expiry/deletion and account-scoped cache behavior |
 | 5. E2E design | Queued, design only | Maintainer approves the threat model and migration design |
 
 Advance only when the current stage's gate passes. A human-gated stage stays open;
@@ -340,11 +340,11 @@ The concrete decision and migration proposal is
 [`content-retention-proposal.md`](content-retention-proposal.md). Recommended:
 24-hour offline replica lifetime, account-scoped browser caches, clearing on
 sign-out/removal, and discarding legacy copies with unverifiable age/ownership.
-This does not delete original chats or files. Policy approval is still pending;
-no retention runtime changes or existing hosted data deletion have occurred.
+This does not delete original chats or files. Policy approval was received on
+2026-09-07. Runtime implementation and local validation are active; hosted
+deletion has not yet occurred.
 One deduplicated Telegram policy-decision notification was delivered on
-2026-09-06. Further work while waiting was limited to the source-grounded
-proposal and handoff; there is no repeated authentication or routine approval gate.
+2026-09-06. There is no repeated authentication or routine approval gate.
 
 **Inspect/modify:** `apps/cloudflare-signal/src/relaySnapshotCache.ts`,
 `RelayHub` persistence/alarm in `src/index.ts`,
@@ -354,23 +354,58 @@ proposal and handoff; there is no repeated authentication or routine approval ga
 `relayHub.test.ts`, `apps/mobile-pwa/src/lib/storePrivacy.test.ts`, and the local
 account/offline-recovery journey.
 
-- [ ] Propose exact retention durations and deletion semantics for operator and
+- [x] Propose exact retention durations and deletion semantics for operator and
   user review before deleting existing hosted data. Distinguish normal logout,
   local offline cache, device removal, account removal and provider backups.
-- [ ] Write deterministic-clock tests for just-before/at/after expiry, restored
+- [x] Write deterministic-clock tests for just-before/at/after expiry, restored
   Durable Objects, malformed or missing timestamps, and legacy stored snapshots.
-- [ ] Key browser caches by account and host; deny cross-account restore. Test a
+- [x] Key browser caches by account and host; deny cross-account restore. Test a
   stale asynchronous write racing with logout/removal so erased content cannot
   reappear. Keep expanded tool details out of persistent caches.
-- [ ] Implement read-time expiry plus bounded background deletion, including while
+- [x] Implement read-time expiry plus bounded background deletion, including while
   the host is offline. Do not rely solely on a size cap or future user traffic.
-- [ ] Explain empty/expired/offline cache states in the PWA. Document which content
+- [x] Explain empty/expired/offline cache states in the PWA. Document which content
   is erased and which provider logs/backups are outside that guarantee.
-- [ ] Run Worker runtime tests, PWA tests/build/lint and local offline E2E; review
+- [x] Run Worker runtime tests, PWA tests/build/lint and local offline E2E; review
   migration behavior before the approved deployment.
 
 **Acceptance:** expired or wrong-account content is not returned; deletion is
 bounded and verifiable, including after restart, without erasing unrelated users.
+
+### Stage 4 Task Packet And Local Evidence (2026-09-07)
+
+- Objective: enforce the approved replica lifetime without altering original
+  chats/files, identities, credentials, attachment files or denial tombstones.
+- Surfaces: Worker persistent/read-time expiry and count-only operator RPC;
+  account/Mac-scoped browser storage, expiry feedback, Profile clearing and
+  sign-out lifecycle. Protocol timing/manifest fields are additive and negotiated.
+  No new Mac control is appropriate for a browser-local cache action; host payloads
+  remain compatible and the installed/public 0.1.9 binary is unchanged.
+- 64 Worker tests, 261 PWA tests, 52 lab unit tests and three operator CLI tests
+  pass. Workspace typecheck/build, PWA lint/build and shell syntax pass. Worker
+  tests include restart, no-peer alarm deletion, pagination, legacy records,
+  preserved tombstones and an injected cleanup failure followed by recovery.
+- The real local two-account retention journey passes: isolated Supabase auth,
+  Worker relay and Swift Terminal; browser-clock expiry, reload/reconnect,
+  browser clearing, sign-out and a second account in the same browser profile.
+  No production identity was used. Raw artifacts remain ignored.
+- Inspected mobile screenshots: Profile confirms clearing and possible live
+  refilling; an expired workspace contains no transcript and explains the retry.
+  The test found a real logout race: login UI preceded saved-session cleanup.
+  Pending/retry UI and regression tests now cover cleanup completion, stale auth
+  events, failed storage deletion and preservation of other-account copies.
+- 24 desktop/mobile Chromium and mobile WebKit fixtures passed against an isolated
+  local PWA server. These are browser-engine tests, not physical iPhone evidence.
+- Docker's VM became read-only during validation, preventing local Supabase startup.
+  One Telegram escalation was delivered. The maintainer explicitly approved a
+  Docker Desktop restart; it restored the test database/gateway to healthy state.
+  No volumes or containers were deleted as part of that restart. Ordinary lab
+  test resets affect only the disposable Glasstunnel test database.
+- Ordinary account/Terminal and two-browser permission/revocation compatibility
+  checks passed. The security/privacy audit (including targeted Swift policy and
+  redaction checks), 617-file public-repository audit and whitespace check passed.
+  Final protected integration, exact-SHA deploy and inventory/apply/verify remain
+  the exit gate. Hosted cache deletion has not occurred. Stage 5 remains queued.
 
 ## Stage 5: E2E Architecture Decision, Not Implementation
 
@@ -398,11 +433,11 @@ Update this section and `docs/current-loop-state.md` when a gate changes, not on
 every check. Use the PR/check/deploy URLs as external evidence without creating
 extra documentation-only CI runs while an approval is pending.
 
-- Active stage: 4 policy decision. Stages 1-3 passed in source and hosted services. The public
+- Active stage: 4 approved implementation/validation. Stages 1-3 passed in source and hosted services. The public
   Mac binary still needs a separately coordinated release for the new host code.
 - Working branch: `codex/security-retention`, from the tested stage 3 merge.
-  Only the proposal and completed-stage handoff are local changes; no retention
-  runtime implementation or production deletion is included.
+  Retention runtime changes, regression tests and the bounded migration operator
+  are local; production deletion remains pending the inventory gate.
 - Stage 2 merged source: `c4acdc2a62c4e43a67d4d653a8d907340a1706ed` via
   [PR #33](https://github.com/datawithfurkan/glasstunnel/pull/33). The merged tree
   exactly matches tested candidate `db998a2c`. All five protected checks passed
@@ -462,7 +497,7 @@ extra documentation-only CI runs while an approval is pending.
   is 100% `e270b0d9-bae4-473f-a195-f1b5b05344a2`. The immediately preceding
   stage 2 deployment IDs above were freshly checked as rollback references.
   No storage migration, retention purge, Mac release or installed-app change.
-- Next action: obtain the stage 4 policy decision, then implement its local
+- Next action: finish the approved stage 4 local
   deterministic-clock, cache-isolation and offline tests before one reviewed
   rollout. The lab is stopped. No routine approval or Cloudflare login is needed.
   Stage 5 remains queued and design-only. Do not bypass either substantive gate.

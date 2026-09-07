@@ -1,4 +1,5 @@
 import { useAppStore } from '../lib/store';
+import { useState } from 'react';
 
 export function ProfileScreen() {
   const user = useAppStore((s) => s.user);
@@ -6,6 +7,19 @@ export function ProfileScreen() {
   const availableHosts = useAppStore((s) => s.availableHosts);
   const navigateTo = useAppStore((s) => s.navigateTo);
   const signOut = useAppStore((s) => s.signOut);
+  const clearOfflineCopies = useAppStore((s) => s.clearOfflineCopies);
+  const [clearing, setClearing] = useState(false);
+  const [feedback, setFeedback] = useState('');
+  async function clearCopies() {
+    setClearing(true);
+    setFeedback('');
+    try {
+      await clearOfflineCopies();
+      setFeedback('Offline copies cleared from this browser. Connected Macs may send fresh copies.');
+    } catch {
+      setFeedback('Could not clear browser storage. Please retry.');
+    } finally { setClearing(false); }
+  }
   const onlineHosts = availableHosts.filter((host) => host.online).length;
 
   return (
@@ -33,12 +47,26 @@ export function ProfileScreen() {
 
             <button
               type="button"
-              onClick={() => void signOut()}
+              onClick={() => void signOut().catch(() => setFeedback('Sign-out could not finish. Retry to clear browser storage and end the session.'))}
               className="gt-button gt-button-secondary justify-center px-5 py-3 text-sm"
             >
               Sign out
             </button>
           </div>
+        </section>
+
+        <section className="border-t border-white/10 py-5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <h2 className="text-lg font-semibold">Offline copies</h2>
+              <p className="gt-muted mt-1 text-sm">Available for up to 24 hours. Original chats and files stay on your Mac.</p>
+            </div>
+            <button type="button" disabled={clearing} onClick={() => void clearCopies()}
+              className="gt-button gt-button-secondary shrink-0 justify-center px-5 py-3 text-sm">
+              {clearing ? 'Clearing...' : 'Clear offline copies'}
+            </button>
+          </div>
+          <p role="status" aria-live="polite" className="gt-muted mt-3 text-sm">{feedback}</p>
         </section>
 
         <section className="grid gap-3 md:grid-cols-3">

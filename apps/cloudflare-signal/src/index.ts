@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { cacheRecord, validCacheRecord, type CacheRecord } from './contentRetention';
 import {
   compactRelayAgentSnapshot,
   type CacheJsonValue,
@@ -46,6 +47,7 @@ interface RelaySessionAttachment {
   deviceLabel?: string;
   pairedAt?: string;
   authorizationExpiresAt?: number;
+  cacheRetentionVersion?: number;
   hostDeviceId: string;
   issuedAt: number;
   nonceB64: string;
@@ -198,6 +200,9 @@ const STORAGE_RELAY_AGENT_SNAPSHOTS_KEY = "relayAgentSnapshots";
 const STORAGE_RELAY_AGENT_SNAPSHOT_PREFIX = "relayAgentSnapshot:";
 const STORAGE_RELAY_HELLO_KEY = "relayHello";
 const STORAGE_RELAY_LAST_HOST_SEEN_KEY = "relayLastHostSeenAt";
+const STORAGE_RETENTION_ACTIVE_KEY = 'contentRetentionV1';
+// The first page also includes three fixed keys; storage.delete permits 128.
+const CACHE_CLEANUP_BATCH = 125;
 const RELAY_LAST_SEEN_PERSIST_INTERVAL_MS = 60_000;
 const RELAY_PRESENCE_STALE_MS = 2 * 60_000;
 /**
@@ -1784,11 +1789,11 @@ export class SignalingHub extends DurableObject<Env> {
     const queued = this.offlineQueues.get(deviceId) ?? [];
     this.offlineQueues.delete(deviceId);
     for (const entry of queued) {
-      if (!entry.source || Date.now() - entry.enqueuedAt > OFFLINE_QUEUE_TTL_MS) continue;
+      if (!entry.source || !this.freshEnvelope(entry)) continue;
       try {
         const envelope: unknown = JSON.parse(entry.raw);
         if (!isEnvelope(envelope) || this.isRevokedEnvelope(envelope) || entry.source.deviceId !== envelope.fromDeviceId) continue;
-        if (!(await this.authorizeAccountEnvelopeToHost(entry.source, destination, envelope)) || this.isRevokedEnvelope(envelope)) continue;
+        if (!(await this.authorizeAccountEnvelopeToHost(entry.source, destination, envelope)) || this.isRevokedEnvelope(envelope) || !this.freshEnvelope(entry)) continue;
         if (!sendToOpenSocket(destination, entry.raw)) {
           const remaining = this.offlineQueues.get(deviceId) ?? [];
           remaining.push(entry);
@@ -1876,7 +1881,57 @@ export class SignalingHub extends DurableObject<Env> {
   }
 
   private async persistOfflineQueues(): Promise<void> {
-    await this.ctx.storage.put(STORAGE_OFFLINE_QUEUES_KEY, Object.fromEntries(this.offlineQueues));
+    if (this.offlineQueues.size) {
+      await this.ctx.storage.put(STORAGE_OFFLINE_QUEUES_KEY, Object.fromEntries(this.offlineQueues));
+    } else {
+      await this.ctx.storage.delete(STORAGE_OFFLINE_QUEUES_KEY);
+    }
+    await this.scheduleQueueCleanup();
+  }
+
+  async cacheMaintenance(options: { dryRun: boolean }) {
+    if (typeof options?.dryRun !== 'boolean') throw new Error('dryRun is required');
+    const stored = await this.ctx.storage.get<Record<string, QueuedEnvelope[]>>(STORAGE_OFFLINE_QUEUES_KEY);
+    const entries = Object.values(stored ?? {}).flat();
+    const invalid = entries.filter((entry) => !this.freshEnvelope(entry)).length;
+    if (!options.dryRun) {
+      await this.evictExpiredState();
+      await this.persistOfflineQueues();
+      await this.ctx.storage.delete('retentionCleanupFailures');
+    }
+    return { scanned: entries.length, invalid, fresh: entries.length - invalid,
+      deleted: options.dryRun ? 0 : invalid, cursor: null, active: true,
+      cleanupFailures: await this.ctx.storage.get<number>('retentionCleanupFailures') ?? 0,
+      nextAlarmAt: await this.ctx.storage.getAlarm() };
+  }
+
+  private freshEnvelope(entry: QueuedEnvelope, now = Date.now()): boolean {
+    return !!entry && Number.isSafeInteger(entry.enqueuedAt) && entry.enqueuedAt > 0 &&
+      entry.enqueuedAt <= now && now - entry.enqueuedAt < OFFLINE_QUEUE_TTL_MS;
+  }
+
+  private async scheduleQueueCleanup(): Promise<void> {
+    let at = Infinity;
+    for (const queue of this.offlineQueues.values()) {
+      for (const entry of queue) at = Math.min(at, this.freshEnvelope(entry) ? entry.enqueuedAt + OFFLINE_QUEUE_TTL_MS : Date.now());
+    }
+    if (Number.isFinite(at)) await this.ctx.storage.setAlarm(at);
+    else await this.ctx.storage.deleteAlarm();
+  }
+
+  async alarm(): Promise<void> {
+    try {
+      await this.evictExpiredState();
+      // A prior failed write may already have pruned memory. Persist even when
+      // this retry finds no additional changes, so disk catches up as well.
+      await this.persistOfflineQueues();
+      await this.ctx.storage.delete('retentionCleanupFailures');
+    } catch {
+      const failures = (await this.ctx.storage.get<number>('retentionCleanupFailures') ?? 0) + 1;
+      await this.ctx.storage.put('retentionCleanupFailures', failures);
+      await this.ctx.storage.setAlarm(Date.now() + Math.min(15 * 60_000, 30_000 * 2 ** Math.min(failures, 5)));
+      console.error('Signaling cache cleanup failed; retry scheduled');
+    }
   }
 
   private async evictExpiredState(): Promise<void> {
@@ -1884,7 +1939,7 @@ export class SignalingHub extends DurableObject<Env> {
     let queuesChanged = false;
 
     for (const [deviceId, queue] of this.offlineQueues) {
-      const filtered = queue.filter((entry) => now - entry.enqueuedAt <= OFFLINE_QUEUE_TTL_MS);
+      const filtered = Array.isArray(queue) ? queue.filter((entry) => this.freshEnvelope(entry, now)) : [];
       if (filtered.length === 0) {
         this.offlineQueues.delete(deviceId);
         queuesChanged = true;
@@ -1901,6 +1956,7 @@ export class SignalingHub extends DurableObject<Env> {
     }
 
     if (queuesChanged) await this.persistOfflineQueues();
+    else await this.scheduleQueueCleanup();
   }
 
 }
@@ -1910,9 +1966,12 @@ export class RelayHub extends DurableObject<Env> {
   private hostSocket: WebSocket | null = null;
   private readonly clientSockets = new Map<string, WebSocket>();
   private readonly revokedDevices = new Set<string>();
-  private latestRemoteApps: JsonValue | null = null;
-  private latestHello: JsonValue | null = null;
-  private latestAgentSnapshots = new Map<string, JsonValue>();
+  private latestRemoteApps: CacheRecord<JsonValue> | null = null;
+  private latestHello: CacheRecord<JsonValue> | null = null;
+  private latestAgentSnapshots = new Map<string, CacheRecord<JsonValue>>();
+  private retentionActivated = false;
+  private cleanupAt = Infinity;
+  private cleanupCursor: string | undefined;
   private lastHostSeenAt = 0;
   private lastHostSeenPersistedAt = 0;
   private alarmScheduledAt = 0;
@@ -1942,6 +2001,7 @@ export class RelayHub extends DurableObject<Env> {
           this.clientSockets.set(relayAttachment.deviceId, ws);
         }
       }
+      if (Number.isFinite(this.cleanupAt)) await this.scheduleAlarm(this.cleanupAt, true);
     });
   }
 
@@ -2196,6 +2256,7 @@ export class RelayHub extends DurableObject<Env> {
       deviceLabel,
       pairedAt,
       authorizationExpiresAt,
+      cacheRetentionVersion: parsed.cache_retention_version === 1 ? 1 : undefined,
     };
     this.sessions.set(ws, updated);
     asAttachmentSocket(ws).serializeAttachment(updated);
@@ -2269,14 +2330,18 @@ export class RelayHub extends DurableObject<Env> {
     await this.markHostSeen();
     switch (parsed.type) {
       case "relay_hello":
-        this.latestHello = (parsed.hello as JsonValue) ?? null;
+        this.latestHello = cacheRecord((parsed.hello as JsonValue) ?? null);
         await this.ctx.storage.put(STORAGE_RELAY_HELLO_KEY, this.latestHello);
-        this.broadcastToClients(parsed);
+        this.cleanupAt = Math.min(this.cleanupAt, this.latestHello.expiresAt);
+        await this.scheduleAlarm(this.cleanupAt);
+        this.broadcastToClients({ ...parsed, cache: this.cacheTiming(this.latestHello), cached: false });
         return;
       case "relay_remote_apps":
-        this.latestRemoteApps = (parsed.remoteApps as JsonValue) ?? null;
+        this.latestRemoteApps = cacheRecord((parsed.remoteApps as JsonValue) ?? null);
         await this.ctx.storage.put(STORAGE_RELAY_REMOTE_APPS_KEY, this.latestRemoteApps);
-        this.broadcastToClients(parsed);
+        this.cleanupAt = Math.min(this.cleanupAt, this.latestRemoteApps.expiresAt);
+        await this.scheduleAlarm(this.cleanupAt);
+        this.broadcastToClients({ ...parsed, cache: this.cacheTiming(this.latestRemoteApps), cached: false });
         return;
       case "relay_agent_state": {
         const snapshot = parsed.snapshot as Record<string, JsonValue> | undefined;
@@ -2293,9 +2358,12 @@ export class RelayHub extends DurableObject<Env> {
           return;
         }
         const agentId = snapshot.agentId;
-        this.latestAgentSnapshots.set(agentId, snapshot);
-        this.broadcastToClients(parsed);
-        await this.persistAgentSnapshot(agentId, snapshot);
+        const record = cacheRecord(compactRelayAgentSnapshot(snapshot as Record<string, CacheJsonValue>) as JsonValue);
+        await this.ctx.storage.put(`${STORAGE_RELAY_AGENT_SNAPSHOT_PREFIX}${encodeURIComponent(agentId)}`, record);
+        this.latestAgentSnapshots.set(agentId, record);
+        this.cleanupAt = Math.min(this.cleanupAt, record.expiresAt);
+        await this.scheduleAlarm(this.cleanupAt);
+        this.broadcastToClients({ ...parsed, cache: this.cacheTiming(record), cached: false });
         return;
       }
       case "relay_screen_frame":
@@ -2368,20 +2436,33 @@ export class RelayHub extends DurableObject<Env> {
         last_seen_at: this.lastHostSeenAt,
       },
     ];
-    if (this.latestHello) {
-      frames.push({ type: "relay_hello", hello: this.latestHello, cached: true });
+    if (validCacheRecord(this.latestHello)) {
+      frames.push({ type: "relay_hello", hello: this.latestHello.data, cached: true, cache: this.cacheTiming(this.latestHello) });
     }
-    if (this.latestRemoteApps) {
+    if (validCacheRecord(this.latestRemoteApps)) {
       frames.push({
         type: "relay_remote_apps",
-        remoteApps: this.latestRemoteApps,
+        remoteApps: this.latestRemoteApps.data,
         cached: true,
+        cache: this.cacheTiming(this.latestRemoteApps),
       });
     }
-    for (const snapshot of this.latestAgentSnapshots.values()) {
-      frames.push({ type: "relay_agent_state", snapshot, cached: true });
+    for (const record of this.latestAgentSnapshots.values()) {
+      if (validCacheRecord(record)) frames.push({ type: "relay_agent_state", snapshot: record.data, cached: true, cache: this.cacheTiming(record) });
     }
+    if (this.getRelaySession(ws)?.cacheRetentionVersion === 1) frames.push(this.cacheManifest());
     return frames.every((frame) => sendJsonToOpenSocket(ws, frame));
+  }
+
+  private cacheTiming(record: CacheRecord) {
+    return { version: record.version, receivedAt: record.receivedAt, expiresAt: record.expiresAt };
+  }
+
+  private cacheManifest(): Record<string, unknown> {
+    return { type: 'relay_cache_manifest',
+      hello: validCacheRecord(this.latestHello), remoteApps: validCacheRecord(this.latestRemoteApps),
+      agentIds: [...this.latestAgentSnapshots].filter(([, value]) => validCacheRecord(value)).map(([id]) => id),
+    };
   }
 
   private broadcastPresence(online: boolean): void {
@@ -2466,39 +2547,113 @@ export class RelayHub extends DurableObject<Env> {
   }
 
   private async loadRelayState(): Promise<void> {
-    this.latestHello = (await this.ctx.storage.get<JsonValue>(STORAGE_RELAY_HELLO_KEY)) ?? null;
-    this.latestRemoteApps =
-      (await this.ctx.storage.get<JsonValue>(STORAGE_RELAY_REMOTE_APPS_KEY)) ?? null;
-    const snapshots =
-      (await this.ctx.storage.get<Record<string, JsonValue>>(STORAGE_RELAY_AGENT_SNAPSHOTS_KEY)) ?? {};
-    this.latestAgentSnapshots = new Map(Object.entries(snapshots));
-    const perAgentSnapshots = await this.ctx.storage.list<JsonValue>({
-      prefix: STORAGE_RELAY_AGENT_SNAPSHOT_PREFIX,
-    });
-    for (const [key, snapshot] of perAgentSnapshots) {
-      const agentId = decodeURIComponent(key.slice(STORAGE_RELAY_AGENT_SNAPSHOT_PREFIX.length));
-      if (agentId) this.latestAgentSnapshots.set(agentId, snapshot);
+    this.retentionActivated = (await this.ctx.storage.get(STORAGE_RETENTION_ACTIVE_KEY)) === true;
+    let cursor: string | undefined;
+    let hasRecords = false;
+    do {
+      const page = await this.cachePage(cursor);
+      for (const [key, value] of page.entries) {
+        hasRecords = true;
+        if (this.validStoredCopy(key, value)) {
+          const record = value as CacheRecord<JsonValue>;
+          if (key === STORAGE_RELAY_HELLO_KEY) this.latestHello = record;
+          else if (key === STORAGE_RELAY_REMOTE_APPS_KEY) this.latestRemoteApps = record;
+          else this.latestAgentSnapshots.set((record.data as { agentId: string }).agentId, record);
+          this.cleanupAt = Math.min(this.cleanupAt, record.expiresAt);
+        } else if (this.retentionActivated) {
+          this.cleanupAt = Date.now();
+        }
+      }
+      cursor = page.cursor;
+    } while (cursor);
+    if (!hasRecords && !this.retentionActivated) {
+      // Newly created objects need no legacy migration. Existing replicas stay
+      // unreadable until the operator's inventory-then-apply sweep visits them.
+      this.retentionActivated = true;
+      await this.ctx.storage.put(STORAGE_RETENTION_ACTIVE_KEY, true);
     }
     this.lastHostSeenAt =
       (await this.ctx.storage.get<number>(STORAGE_RELAY_LAST_HOST_SEEN_KEY)) ?? 0;
     this.lastHostSeenPersistedAt = this.lastHostSeenAt;
   }
 
-  private async persistAgentSnapshot(
-    agentId: string,
-    snapshot: Record<string, JsonValue>,
-  ): Promise<void> {
-    const storageKey = `${STORAGE_RELAY_AGENT_SNAPSHOT_PREFIX}${encodeURIComponent(agentId)}`;
-    const compacted = compactRelayAgentSnapshot(snapshot as Record<string, CacheJsonValue>);
-    try {
-      await this.ctx.storage.put(storageKey, compacted as JsonValue);
-    } catch (error) {
-      console.error("Unable to persist relay agent snapshot", agentId, error);
+  private validStoredCopy(key: string, value: unknown): value is CacheRecord<JsonValue> {
+    if (!validCacheRecord(value) || key === STORAGE_RELAY_AGENT_SNAPSHOTS_KEY) return false;
+    if (key === STORAGE_RELAY_HELLO_KEY || key === STORAGE_RELAY_REMOTE_APPS_KEY) return true;
+    const data = value.data as { agentId?: unknown } | null;
+    return !!data && typeof data.agentId === 'string' && !!data.agentId &&
+      key === `${STORAGE_RELAY_AGENT_SNAPSHOT_PREFIX}${encodeURIComponent(data.agentId)}`;
+  }
+
+  private async cachePage(cursor?: string) {
+    if (cursor !== undefined && !cursor.startsWith(STORAGE_RELAY_AGENT_SNAPSHOT_PREFIX)) throw new Error('Invalid cache cursor');
+    const agents = await this.ctx.storage.list<unknown>({ prefix: STORAGE_RELAY_AGENT_SNAPSHOT_PREFIX, limit: CACHE_CLEANUP_BATCH, startAfter: cursor });
+    const entries = cursor ? new Map<string, unknown>() : await this.ctx.storage.get<unknown>([
+      STORAGE_RELAY_HELLO_KEY, STORAGE_RELAY_REMOTE_APPS_KEY, STORAGE_RELAY_AGENT_SNAPSHOTS_KEY,
+    ]);
+    for (const [key, value] of agents) entries.set(key, value);
+    return { entries, cursor: agents.size === CACHE_CLEANUP_BATCH ? [...agents.keys()].at(-1) : undefined };
+  }
+
+  // RPC only: not forwarded by the public fetch handler. Returns counts and an
+  // opaque pagination cursor, never payloads. The operator inventories all pages
+  // before applying, and retains its resumable ledger outside the public repo.
+  async cacheMaintenance(options: { dryRun: boolean; cursor?: string }) {
+    // Only KV awaits occur here. Durable Object storage input gates serialize
+    // these reads/deletes with host publications without resetting the object
+    // on a recoverable cleanup error.
+    if (typeof options?.dryRun !== 'boolean') throw new Error('dryRun is required');
+    const page = await this.cachePage(options.cursor);
+    const invalid = [...page.entries].filter(([key, value]) => !this.validStoredCopy(key, value)).map(([key]) => key);
+    let deleted = 0;
+    if (!options.dryRun) {
+      if (invalid.length) deleted = await this.ctx.storage.delete(invalid);
+      if (!page.cursor) {
+        this.retentionActivated = true;
+        await this.ctx.storage.put(STORAGE_RETENTION_ACTIVE_KEY, true);
+      }
+      this.pruneMemory();
+      this.cleanupAt = page.cursor ? Date.now() + 1_000 : this.nextCacheExpiry();
+      if (Number.isFinite(this.cleanupAt)) await this.scheduleAlarm(this.cleanupAt, true);
     }
+    return { scanned: page.entries.size, invalid: invalid.length, fresh: page.entries.size - invalid.length, deleted, cursor: page.cursor ?? null,
+      active: this.retentionActivated, cleanupFailures: await this.ctx.storage.get<number>('retentionCleanupFailures') ?? 0,
+      nextAlarmAt: await this.ctx.storage.getAlarm() };
+  }
+
+  private pruneMemory(): void {
+    if (!validCacheRecord(this.latestHello)) this.latestHello = null;
+    if (!validCacheRecord(this.latestRemoteApps)) this.latestRemoteApps = null;
+    for (const [id, record] of this.latestAgentSnapshots) if (!validCacheRecord(record)) this.latestAgentSnapshots.delete(id);
+  }
+
+  private nextCacheExpiry(): number {
+    return Math.min(this.latestHello?.expiresAt ?? Infinity, this.latestRemoteApps?.expiresAt ?? Infinity,
+      ...[...this.latestAgentSnapshots.values()].map((record) => record.expiresAt));
   }
 
   async alarm(): Promise<void> {
     const now = Date.now();
+    this.alarmScheduledAt = 0;
+    this.pruneMemory();
+    if (this.retentionActivated && this.cleanupAt <= now) {
+      try {
+        const result = await this.cacheMaintenance({ dryRun: false, cursor: this.cleanupCursor });
+        this.cleanupCursor = result.cursor ?? undefined;
+        await this.ctx.storage.delete('retentionCleanupFailures');
+      } catch {
+        const failures = (await this.ctx.storage.get<number>('retentionCleanupFailures') ?? 0) + 1;
+        await this.ctx.storage.put('retentionCleanupFailures', failures);
+        this.cleanupAt = now + Math.min(15 * 60_000, 30_000 * 2 ** Math.min(failures, 5));
+        console.error('Relay cache cleanup failed; retry scheduled');
+      }
+    } else if (!this.retentionActivated) {
+      this.cleanupAt = this.nextCacheExpiry();
+    }
+    for (const ws of this.clientSockets.values()) {
+      const session = this.getRelaySession(ws);
+      if (session?.cacheRetentionVersion === 1 && !this.closeExpiredClient(ws, session)) sendJsonToOpenSocket(ws, this.cacheManifest());
+    }
     for (const [ws, session] of this.sessions) this.closeExpiredClient(ws, session);
     const host = this.hostSocket;
     if (host) {
@@ -2512,6 +2667,7 @@ export class RelayHub extends DurableObject<Env> {
           // Already closing.
         }
         await this.unregisterRelaySocket(host);
+        if (Number.isFinite(this.cleanupAt)) await this.scheduleAlarm(this.cleanupAt, true);
         return;
       }
       await this.scheduleAlarm(now + Math.max(1_000, HOST_SILENCE_CLOSE_MS - silentMs), true);
@@ -2520,7 +2676,8 @@ export class RelayHub extends DurableObject<Env> {
     if (this.lastHostSeenAt > 0 && now - this.lastHostSeenAt >= RELAY_PRESENCE_STALE_MS) {
       this.broadcastPresence(false);
     }
-    if (this.clientSockets.size) await this.scheduleAlarm(now + 5 * 60_000, true);
+    if (this.clientSockets.size || Number.isFinite(this.cleanupAt)) await this.scheduleAlarm(now + 5 * 60_000, true);
+    else await this.ctx.storage.deleteAlarm();
   }
 
   private async markHostSeen(forcePersist = false): Promise<void> {
@@ -2536,6 +2693,7 @@ export class RelayHub extends DurableObject<Env> {
 
   /** Moves the alarm, skipping the storage write when it moved moments ago. */
   private async scheduleAlarm(at: number, force = false): Promise<void> {
+    at = Math.min(at, this.cleanupAt);
     if (this.hostSocket) at = Math.min(at, this.lastHostSeenAt + HOST_SILENCE_CLOSE_MS);
     for (const session of this.sessions.values()) {
       if (session.role === "client" && session.authenticated) at = Math.min(at, session.authorizationExpiresAt ?? Date.now());

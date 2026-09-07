@@ -11,6 +11,9 @@ export function AuthScreen() {
   const signInWithPassword = useAppStore((s) => s.signInWithPassword);
   const signUpWithPassword = useAppStore((s) => s.signUpWithPassword);
   const authConfigured = useAppStore((s) => s.authConfigured);
+  const signOutError = useAppStore((s) => s.signOutError);
+  const signingOut = useAppStore((s) => s.signingOut);
+  const signOut = useAppStore((s) => s.signOut);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -47,6 +50,7 @@ export function AuthScreen() {
   };
 
   useEffect(() => {
+    if (signingOut) return;
     const provider = requestedProvider.current;
     if (!provider || providerRequestHandled.current) return;
     if (provider === 'email') {
@@ -75,7 +79,7 @@ export function AuthScreen() {
       setError((err as Error).message);
       setGithubBusy(false);
     });
-  }, [authConfigured, signInWithGitHub, signInWithGoogle]);
+  }, [authConfigured, signInWithGitHub, signInWithGoogle, signingOut]);
 
   const continueWithEmail = (event: FormEvent) => {
     event.preventDefault();
@@ -130,7 +134,9 @@ export function AuthScreen() {
 
           <div className="gt-panel p-5">
 
-        {authConfigured ? (
+        {signingOut ? (
+          <p role="status" className="gt-muted py-3 text-center">Signing out...</p>
+        ) : authConfigured ? (
           <div className="space-y-4">
             <div className="space-y-3">
               <button
@@ -269,9 +275,14 @@ export function AuthScreen() {
           </div>
         )}
 
-        {error && (
-          <div className="mt-4 rounded-[6px] border border-err/30 bg-err/10 px-4 py-3 text-sm text-err">
-            {error}
+        {(error || signOutError) && (
+          <div role="alert" className="mt-4 rounded-[6px] border border-err/30 bg-err/10 px-4 py-3 text-sm text-err">
+            {error || signOutError}
+            {signOutError && !signingOut && (
+              <button type="button" className="gt-button gt-button-secondary mt-3" onClick={() => { void signOut().catch(() => {}); }}>
+                Retry sign out
+              </button>
+            )}
           </div>
         )}
 
