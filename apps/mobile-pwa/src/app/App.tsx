@@ -75,6 +75,7 @@ export function App() {
     let recoverTimer: number | null = null;
     const recover = (request: LifecycleRecoveryRequest) => {
       if (document.visibilityState === 'hidden') return;
+      useAppStore.getState().expireOfflineCopies();
       pendingRecover = mergeLifecycleRecoveryRequest(pendingRecover, request);
       if (recoverTimer !== null) return;
       recoverTimer = window.setTimeout(() => {

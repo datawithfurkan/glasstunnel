@@ -64,6 +64,7 @@ vi.mock('idb-keyval', () => ({
   get: vi.fn(async () => undefined),
   set: vi.fn(async () => {}),
   del: vi.fn(async () => {}),
+  keys: vi.fn(async () => []),
 }));
 
 const startPeerFlowMock = vi.hoisted(() => ({

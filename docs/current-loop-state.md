@@ -1,6 +1,12 @@
 # Current loop state
 
-Last updated: 2026-09-06.
+Last updated: 2026-09-07.
+
+Stage 4 update: the maintainer explicitly approved the 24-hour offline-cache
+policy and legacy-cache removal. Implementation and local validation passed
+on `codex/security-retention`. Hosted deletion remains gated on a content-free
+inventory and verified cache-only scope; original content and security records
+are excluded.
 
 ## Baseline
 
@@ -35,15 +41,15 @@ services: PR #34 merged at `cc3377b1`, all five checks passed in CI `34061166134
 and Deploy `34061593757` plus public Chromium/WebKit canaries passed. The sole maintainer
 explicitly authorized zero required contributor approvals on 2026-09-06. Keep
 protected PRs, all five strict CI checks and the other branch protections; do not
-repeat the independent-contributor approval blocker. Stage 4 is at its substantive
-retention-policy decision, documented in `docs/architecture/content-retention-proposal.md`;
+repeat the independent-contributor approval blocker. Stage 4's retention-policy
+decision was approved on 2026-09-07, documented in `docs/architecture/content-retention-proposal.md`;
 stage 5 is E2E design only and requires a separate decision before implementation.
 Stage 1 PR/post-merge CI passed, and its live Dependabot check reported zero open
 alerts on 2026-09-06. Stage 2-3 PR checks also passed. The
 maintainer approved the proposed `da9a1bc3` rollout and instructed the driver to
 continue routine planned steps without repeated approval requests. The next gate
-is approval of the exact retention/deletion policy, not routine implementation,
-test, commit or planned deployment actions.
+is local validation, protected integration, exact-SHA deployment and the bounded
+inventory/apply/verify sweep, not another policy or routine-action approval.
 The revocation local gate passed: 45 Worker tests, 452 Swift tests with
 eight environment-gated skips, 242 PWA tests, and the disposable two-browser
 revocation journey. The latter also exposed and verified a fix for cached
@@ -62,13 +68,19 @@ matching hosts. Protected integration and hosted deployment passed; do not
 equate those results with an updated public Mac binary.
 
 Current working branch: `codex/security-retention`, based on `cc3377b1`.
-The 24-hour offline-cache proposal and completed-stage evidence are retained
-locally for the next slice without another documentation-only CI push. No
-retention implementation or hosted cache deletion has occurred. Original chats,
-project files, local attachments, account/device identities and denial tombstones
-are excluded from the proposed cache purge. The local lab is stopped.
+The approved 24-hour implementation includes relay expiry/alarms, account-scoped
+browser storage, a Profile clearing action and a resumable, count-only operator
+sweep. Local validation passed: 64 Worker tests, 261 PWA tests, 52 lab tests,
+three operator CLI tests, real local two-account retention and permission/revocation
+journeys, ordinary account/Terminal and Chromium/WebKit fixtures, build/type/lint
+and security/public audits. No hosted cache deletion has occurred yet.
+Original chats, project files, local attachments, account/device identities and
+denial tombstones are excluded. Lab-owned services are stopped after each test.
 One deduplicated Telegram message requested the retention-policy decision on
-2026-09-06 and was delivered. No other approval or authentication is pending.
+2026-09-06 and was delivered; approval was received on 2026-09-07. No other
+approval or authentication is pending. Docker's read-only VM interrupted a test;
+one Telegram message led to explicit approval for a Docker Desktop restart, which
+restored local Supabase health. Tests then passed; no volumes were deleted.
 
 Paused product-audit slice: First-Run Activation. Use
 `docs/product-audit-backlog.md` as the durable queue. After completing the

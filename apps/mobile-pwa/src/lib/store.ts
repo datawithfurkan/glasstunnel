@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import { del as idbDel, get as idbGet, set as idbSet } from 'idb-keyval';
+import { del as idbDel, get as idbGet, set as idbSet, keys as idbKeys } from 'idb-keyval';
+import { OfflineCache, type CacheTiming } from './offlineCache';
 import type { Session, User } from '@supabase/supabase-js';
 import {
   base64FromBytes,
@@ -131,12 +132,16 @@ export interface AppState {
   relay: RelayConnection | null;
   relayHostOnline: boolean | null;
   error: string | null;
+  signOutError: string | null;
+  signingOut: boolean;
 
   bootstrap: () => Promise<void>;
   navigateTo: (route: Route) => void;
   setLocked: (locked: boolean) => void;
   setReadOnly: (readOnly: boolean) => void;
   forgetCurrentMac: () => Promise<void>;
+  clearOfflineCopies: () => Promise<void>;
+  expireOfflineCopies: () => void;
   disconnectPeer: () => void;
   startPeer: (options?: StartPeerOptions) => Promise<void>;
   startVideoPeer: () => Promise<void>;
@@ -189,10 +194,14 @@ export interface AppState {
 
 const PHONE_KEY_KEY = 'gt.phone.keypair';
 const PAIRED_HOST_KEY = 'gt.pairedHost';
-const RELAY_CACHE_PREFIX = 'gt.relay.cache.';
+const offlineCache = new OfflineCache({ get: (key) => idbGet(key), set: (key, value) => idbSet(key, value), del: (key) => idbDel(key), keys: () => idbKeys() });
+let cacheExpiryTimer: ReturnType<typeof setTimeout> | undefined;
+const CACHE_EXPIRED_COPY = 'Offline copies expired. Reconnect your Mac to refresh this workspace.';
+const SIGN_OUT_FAILURE_COPY = 'Sign-out cleanup is incomplete. Reconnect and retry, or clear this site\'s browser data.';
 const SCREEN_SHARE_QUALITY_KEY = 'gt.screenShareQuality';
 let authSubscriptionAttached = false;
 let sessionSyncVersion = 0;
+let pendingSignOutAccount: string | undefined;
 let refreshHostsInFlight: Promise<void> | null = null;
 let lastRefreshHostsCompletedAt = 0;
 let peerStartGeneration = 0;
@@ -252,6 +261,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   relay: null,
   relayHostOnline: null,
   error: null,
+  signOutError: null,
+  signingOut: false,
 
   async bootstrap() {
     try {
@@ -323,11 +334,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   async forgetCurrentMac() {
+    const account = get().user?.id;
+    const hostId = get().pairedHost?.deviceId;
     get().disconnectPeer();
     const pairedHost = get().pairedHost;
     if (pairedHost) {
       localStorage.removeItem(`gt.webauthn.enrolled.${pairedHost.deviceId}`);
     }
+    await offlineCache.clear(account, hostId);
     await idbDel(PAIRED_HOST_KEY);
     get().peer?.close();
     get().signaling?.disconnect();
@@ -352,7 +366,21 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
+  async clearOfflineCopies() {
+    const pending = offlineCache.clear();
+    dropOfflineItems(set, ['hello', 'layout', 'apps', ...Object.keys(get().agents).map((id) => `agent:${id}`)], false);
+    await pending;
+  },
+
+  expireOfflineCopies() {
+    dropOfflineItems(set, offlineCache.prune());
+    scheduleCacheExpiry();
+  },
+
   disconnectPeer() {
+    offlineCache.reset();
+    clearTimeout(cacheExpiryTimer);
+    cacheExpiryTimer = undefined;
     peerStartGeneration += 1;
     videoPeerStartGeneration += 1;
     peerFlowAbortRegistry.cancelAll();
@@ -399,10 +427,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     clearReconnectTimer();
     get().relay?.disconnect();
-    const cached = await loadRelayCache(pairedHost.deviceId);
+    get().expireOfflineCopies();
+    const cached = await loadRelayCache(get().user?.id ?? '', pairedHost.deviceId);
     if (!isCurrent()) return;
     const current = get();
-    const canReuseCurrentWorkspace = current.workspaceHostDeviceId === pairedHost.deviceId;
+    const canReuseCurrentWorkspace = !!cached && current.workspaceHostDeviceId === pairedHost.deviceId;
+    const liveScreenApps = keepVideoPeer && current.workspaceHostDeviceId === pairedHost.deviceId
+      ? current.remoteApps.filter((app) => app.remoteAppId === 'screen') : [];
     set({
       ...(keepVideoPeer ? {} : { peer: null, signaling: null, videoStreams: {} }),
       relay: null,
@@ -413,10 +444,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       layout: cached?.layout ?? (canReuseCurrentWorkspace ? current.layout : null),
       // The persisted cache marks screen sharing off for a cold start; a
       // reconnect to the same Mac keeps the list it was just showing.
-      remoteApps: canReuseCurrentWorkspace ? current.remoteApps : (cached?.remoteApps ?? []),
+      remoteApps: canReuseCurrentWorkspace ? current.remoteApps : (cached?.remoteApps ?? liveScreenApps),
       agents: cached?.agents ?? (canReuseCurrentWorkspace ? current.agents : {}),
       messageDetails: canReuseCurrentWorkspace ? current.messageDetails : {},
-      workspaceHostDeviceId: cached || canReuseCurrentWorkspace ? pairedHost.deviceId : null,
+      workspaceHostDeviceId: cached || canReuseCurrentWorkspace || liveScreenApps.length ? pairedHost.deviceId : null,
       relayScreenFrames: {},
       error: cached
         ? connectionStatusCopy('cached-reconnecting')
@@ -464,9 +495,9 @@ export const useAppStore = create<AppState>((set, get) => ({
             }));
             void Promise.all([
               idbDel(PAIRED_HOST_KEY),
-              idbDel(`${RELAY_CACHE_PREFIX}${pairedHost.deviceId}`),
+              offlineCache.clear(get().user?.id, pairedHost.deviceId),
             ]).catch(() => {
-              // Access stays denied even when browser storage is unavailable.
+              set({ accessRevocationNotice: 'Access was revoked. Browser offline copies could not be cleared; retry in Profile.' });
             });
             return;
           }
@@ -479,8 +510,9 @@ export const useAppStore = create<AppState>((set, get) => ({
           });
           scheduleReconnect(set, get, error);
         },
-        onHello: (hello, cached) => {
+        onHello: (hello, cached, timing) => {
           if (!isCurrent()) return;
+          if (!rememberHello(hello, cached, timing)) return;
           if (hello.hostReadOnly !== undefined) {
             get().relay?.sendReadOnlyUpdate(get().readOnlyMode);
           }
@@ -501,10 +533,10 @@ export const useAppStore = create<AppState>((set, get) => ({
               : null,
           }));
           flushPendingScreenStop(set, get);
-          void persistRelayCache(get());
         },
-        onAgent: (snap, cached) => {
+        onAgent: (snap, cached, timing) => {
           if (!isCurrent()) return;
+          if (!rememberOfflineItem(`agent:${snap.agentId}`, snap, cached, timing)) return;
           set((prev) => ({
             relayHostOnline: cached ? prev.relayHostOnline : true,
             error: cached ? prev.error : null,
@@ -514,10 +546,10 @@ export const useAppStore = create<AppState>((set, get) => ({
               [snap.agentId]: mergeLocalOptimisticMessages(prev.agents[snap.agentId], snap),
             },
           }));
-          void persistRelayCache(get());
         },
-        onRemoteApps: (remoteApps, cached) => {
+        onRemoteApps: (remoteApps, cached, timing) => {
           if (!isCurrent()) return;
+          if (!rememberOfflineItem('apps', remoteAppsForCachedWorkspace(remoteApps), cached, timing)) return;
           const nextRemoteApps = remoteAppsForScreenStopState(remoteApps);
           set((prev) => ({
             remoteApps: nextRemoteApps,
@@ -532,7 +564,17 @@ export const useAppStore = create<AppState>((set, get) => ({
             get().stopVideoPeer('screen');
           }
           flushPendingScreenStop(set, get);
-          void persistRelayCache(get());
+        },
+        onCacheManifest: (manifest) => {
+          if (!isCurrent() || get().relayHostOnline === true) return;
+          const removed = Object.keys(offlineCache.items).filter((key) =>
+            (key === 'hello' || key === 'layout') ? !manifest.hello :
+              key === 'apps' ? !manifest.remoteApps && !manifest.hello :
+                key.startsWith('agent:') && !manifest.agentIds.includes(key.slice(6)));
+          offlineCache.remove(removed);
+          dropOfflineItems(set, removed);
+          if (!Object.keys(offlineCache.items).length) set({ error: CACHE_EXPIRED_COPY });
+          scheduleCacheExpiry();
         },
         onMessageDetail: (detail) => {
           if (!isCurrent()) return;
@@ -656,6 +698,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   recoverConnection(options) {
+    get().expireOfflineCopies();
     if (recoverConnectionInFlight) return recoverConnectionInFlight;
     const recovery = (async () => {
       const state = get();
@@ -779,11 +822,16 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   async signOut() {
+    if (get().signingOut) return;
+    const account = get().user?.id ?? pendingSignOutAccount;
+    pendingSignOutAccount = account;
     sessionSyncVersion += 1;
     // Local content and transports must disappear even if remote logout fails.
     get().disconnectPeer();
     set({
       user: null,
+      signOutError: null,
+      signingOut: true,
       accessRevocationNotice: null,
       availableHosts: [],
       pairedHost: null,
@@ -801,11 +849,22 @@ export const useAppStore = create<AppState>((set, get) => ({
       locked: true,
       route: fallbackEntryRoute(),
     });
-    await idbDel(PAIRED_HOST_KEY);
-    if (supabase) {
-      const { error } = await supabase.auth.signOut();
-      if (error) throw error;
+    const results = await Promise.allSettled([
+      account ? offlineCache.clear(account) : offlineCache.clearLegacy(),
+      idbDel(PAIRED_HOST_KEY),
+      (async () => {
+        if (!supabase) return;
+        const { error } = await supabase.auth.signOut();
+        if (error) throw error;
+      })(),
+    ]);
+    set({ signingOut: false });
+    const failed = results.find((result) => result.status === 'rejected');
+    if (failed?.status === 'rejected') {
+      set({ signOutError: SIGN_OUT_FAILURE_COPY });
+      throw failed.reason;
     }
+    pendingSignOutAccount = undefined;
   },
 
   async refreshHosts(options) {
@@ -896,7 +955,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const pairedHost = mapAccountHostToPairedHost(host);
     get().disconnectPeer();
     await savePairedHost(pairedHost);
-    const cached = await loadRelayCache(pairedHost.deviceId);
+    const cached = await loadRelayCache(get().user?.id ?? '', pairedHost.deviceId);
     clearPendingScreenStop();
     set({
       pairedHost,
@@ -1270,6 +1329,7 @@ async function synchronizeSession(
   session: Session | null,
   options: { preserveRoute?: boolean } = {},
 ) {
+  if (get().signingOut && session?.user) return;
   const syncVersion = ++sessionSyncVersion;
   const isCurrentSync = () => syncVersion === sessionSyncVersion;
   const previousUser = get().user;
@@ -1283,6 +1343,16 @@ async function synchronizeSession(
       locked: true,
       route: session?.user ? 'hosts' : fallbackEntryRoute(),
     });
+    try {
+      if (previousUser) await offlineCache.clear(previousUser.id);
+      else await offlineCache.clearLegacy();
+    } catch {
+      if (!isCurrentSync()) return;
+      pendingSignOutAccount = previousUser?.id ?? pendingSignOutAccount;
+      set({ signOutError: SIGN_OUT_FAILURE_COPY, route: fallbackEntryRoute() });
+      return;
+    }
+    if (!isCurrentSync()) return;
   }
   const state = get();
   const storedHost = accountChanged || !session?.user
@@ -1306,6 +1376,7 @@ async function synchronizeSession(
   }
 
   const user = mapUser(session.user);
+  set({ signOutError: null });
   const keypair = state.phoneKeypair;
   if (!keypair) {
     set({
@@ -1460,44 +1531,55 @@ interface RelayCachedWorkspace {
   layout: GridLayout | null;
   remoteApps: RemoteApp[];
   agents: Record<string, AgentStateSnapshot>;
-  savedAtUnixMs: number;
 }
 
-async function loadRelayCache(hostDeviceId: string): Promise<RelayCachedWorkspace | null> {
+async function loadRelayCache(account: string, hostDeviceId: string): Promise<RelayCachedWorkspace | null> {
   try {
-    const cached =
-      ((await idbGet(`${RELAY_CACHE_PREFIX}${hostDeviceId}`)) as
-        | RelayCachedWorkspace
-        | undefined) ?? null;
-    return cached ? sanitizeRelayCache(cached) : null;
+    await offlineCache.open(account, hostDeviceId);
+    scheduleCacheExpiry();
+    const items = offlineCache.items;
+    if (!Object.keys(items).length) return null;
+    return sanitizeRelayCache({
+      hostHello: items.hello?.data as Hello ?? null,
+      layout: items.layout?.data as GridLayout ?? null,
+      remoteApps: items.apps?.data as RemoteApp[] ?? [],
+      agents: Object.fromEntries(Object.entries(items).filter(([key]) => key.startsWith('agent:')).map(([key, item]) => [key.slice(6), item.data as AgentStateSnapshot])),
+    });
   } catch {
     return null;
   }
 }
 
-async function persistRelayCache(state: AppState): Promise<void> {
-  if (!state.pairedHost) return;
-  if (state.workspaceHostDeviceId !== state.pairedHost.deviceId) return;
-  const remoteApps = remoteAppsForCachedWorkspace(state.remoteApps);
-  try {
-    await idbSet(`${RELAY_CACHE_PREFIX}${state.pairedHost.deviceId}`, {
-      hostHello: state.hostHello
-        ? {
-            ...state.hostHello,
-            remoteApps: state.hostHello.remoteApps
-              ? remoteAppsForCachedWorkspace(state.hostHello.remoteApps)
-              : remoteApps,
-          }
-        : null,
-      layout: state.layout,
-      remoteApps,
-      agents: state.agents,
-      savedAtUnixMs: Date.now(),
-    } satisfies RelayCachedWorkspace);
-  } catch {
-    // The cache only speeds up the next open; storage that is full, private,
-    // or missing must not surface as an unhandled rejection.
-  }
+function rememberOfflineItem(key: string, data: unknown, cached = false, timing?: CacheTiming): boolean {
+  const accepted = offlineCache.receive(key, data, cached, timing);
+  scheduleCacheExpiry();
+  return accepted;
+}
+
+function rememberHello(hello: Hello, cached = false, timing?: CacheTiming): boolean {
+  const apps = remoteAppsForCachedWorkspace(hello.remoteApps ?? fallbackRemoteAppsFromLayout(hello.currentLayout));
+  if (!rememberOfflineItem('hello', { ...hello, remoteApps: apps }, cached, timing)) return false;
+  rememberOfflineItem('layout', hello.currentLayout, cached, timing);
+  rememberOfflineItem('apps', apps, cached, timing);
+  return true;
+}
+
+function scheduleCacheExpiry(): void {
+  clearTimeout(cacheExpiryTimer);
+  const deadline = Math.min(...Object.values(offlineCache.items).map((item) => item.expiresAt));
+  cacheExpiryTimer = Number.isFinite(deadline) ? setTimeout(() => useAppStore.getState().expireOfflineCopies(), Math.max(0, deadline - Date.now())) : undefined;
+}
+
+function dropOfflineItems(set: SetState, keys: string[], expired = true): void {
+  if (!keys.length) return;
+  set((state) => ({
+    ...(keys.includes('hello') ? { hostHello: null } : {}),
+    ...(keys.includes('layout') ? { layout: null } : {}),
+    ...(keys.includes('apps') ? { remoteApps: [] } : {}),
+    agents: Object.fromEntries(Object.entries(state.agents).filter(([id]) => !keys.includes(`agent:${id}`))),
+    messageDetails: {}, relayScreenFrames: {},
+    error: state.relayHostOnline === true ? state.error : expired ? CACHE_EXPIRED_COPY : null,
+  }));
 }
 
 function sanitizeRelayCache(cached: RelayCachedWorkspace): RelayCachedWorkspace {
@@ -1788,6 +1870,7 @@ async function startWebRtcPeerFlow(
       },
       onHello: (hello) => {
         if (!isCurrent()) return;
+        rememberHello(hello);
         if (hello.hostReadOnly !== undefined) {
           get().peer?.sendReadOnlyUpdate(get().readOnlyMode);
         }
@@ -1803,10 +1886,10 @@ async function startWebRtcPeerFlow(
           error: null,
         });
         flushPendingScreenStop(set, get);
-        void persistRelayCache(get());
       },
       onAgent: (snap) => {
         if (!isCurrent()) return;
+        rememberOfflineItem(`agent:${snap.agentId}`, snap);
         set((prev) => ({
           relayHostOnline: true,
           error: null,
@@ -1816,7 +1899,6 @@ async function startWebRtcPeerFlow(
             [snap.agentId]: mergeLocalOptimisticMessages(prev.agents[snap.agentId], snap),
           },
         }));
-        void persistRelayCache(get());
       },
       onMessageDetail: (detail) => {
         if (!isCurrent()) return;
@@ -1828,10 +1910,14 @@ async function startWebRtcPeerFlow(
         replaceVideoStreamForAgent(set, get, agentId, stream);
       },
       onLayout: (layout) => {
-        if (isCurrent()) set({ layout, workspaceHostDeviceId: pairedHost.deviceId });
+        if (isCurrent()) {
+          rememberOfflineItem('layout', layout);
+          set({ layout, workspaceHostDeviceId: pairedHost.deviceId });
+        }
       },
       onRemoteApps: (remoteApps) => {
         if (!isCurrent()) return;
+        rememberOfflineItem('apps', remoteAppsForCachedWorkspace(remoteApps));
         const nextRemoteApps = remoteAppsForScreenStopState(remoteApps);
         set({
           remoteApps: nextRemoteApps,
@@ -1846,7 +1932,6 @@ async function startWebRtcPeerFlow(
           get().stopVideoPeer('screen');
         }
         flushPendingScreenStop(set, get);
-        void persistRelayCache(get());
       },
     });
   } catch (error) {

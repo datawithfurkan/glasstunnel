@@ -27,6 +27,7 @@ import type { MessageDetail, MessageDetailRequest } from '@glasstunnel/protocol'
 import { createClientId } from '../lib/id';
 import type { PairedHost } from '../lib/store';
 import { connectionStatusCopy } from '../lib/connectionCopy';
+import type { CacheTiming } from '../lib/offlineCache';
 
 export type RelayFileAttachmentInput = Omit<
   FileAttachmentChunk,
@@ -51,9 +52,10 @@ export interface RelayConnectionOptions {
   host: PairedHost;
   accessToken: string;
   onState?: (state: { connected?: boolean; online?: boolean; error?: string }) => void;
-  onHello?: (hello: Hello, cached: boolean) => void;
-  onRemoteApps?: (remoteApps: RemoteApp[], cached: boolean) => void;
-  onAgent?: (snapshot: AgentStateSnapshot, cached: boolean) => void;
+  onHello?: (hello: Hello, cached: boolean, timing?: CacheTiming) => void;
+  onRemoteApps?: (remoteApps: RemoteApp[], cached: boolean, timing?: CacheTiming) => void;
+  onAgent?: (snapshot: AgentStateSnapshot, cached: boolean, timing?: CacheTiming) => void;
+  onCacheManifest?: (manifest: { hello: boolean; remoteApps: boolean; agentIds: string[] }) => void;
   onMessageDetail?: (detail: MessageDetail) => void;
   onScreenFrame?: (frame: RelayScreenFrame) => void;
   onClose?: (event: CloseEvent, intentional: boolean) => void;
@@ -349,7 +351,7 @@ export class RelayConnection {
           this.hostOnline = true;
           this.opts.onState?.({ connected: true, online: true });
         }
-        this.opts.onHello?.(obj.hello as Hello, obj.cached === true);
+        this.opts.onHello?.(obj.hello as Hello, obj.cached === true, obj.cache as CacheTiming | undefined);
         return;
       }
       case 'relay_remote_apps':
@@ -357,14 +359,19 @@ export class RelayConnection {
           this.hostOnline = true;
           this.opts.onState?.({ connected: true, online: true });
         }
-        this.opts.onRemoteApps?.((obj.remoteApps as RemoteApp[]) ?? [], obj.cached === true);
+        this.opts.onRemoteApps?.((obj.remoteApps as RemoteApp[]) ?? [], obj.cached === true, obj.cache as CacheTiming | undefined);
         return;
       case 'relay_agent_state':
         if (obj.cached !== true) {
           this.hostOnline = true;
           this.opts.onState?.({ connected: true, online: true });
         }
-        this.opts.onAgent?.(obj.snapshot as AgentStateSnapshot, obj.cached === true);
+        this.opts.onAgent?.(obj.snapshot as AgentStateSnapshot, obj.cached === true, obj.cache as CacheTiming | undefined);
+        return;
+      case 'relay_cache_manifest':
+        if (Array.isArray(obj.agentIds) && obj.agentIds.every((id) => typeof id === 'string')) {
+          this.opts.onCacheManifest?.({ hello: obj.hello === true, remoteApps: obj.remoteApps === true, agentIds: obj.agentIds as string[] });
+        }
         return;
       case 'relay_message_detail':
         this.opts.onMessageDetail?.(obj.detail as MessageDetail);
@@ -404,6 +411,7 @@ export class RelayConnection {
         public_key: base64FromBytes(this.opts.keypair.publicKey),
         signature: base64FromBytes(signature),
         role: 'client',
+        cache_retention_version: 1,
         device_info: navigator.userAgent,
         access_token: this.opts.accessToken,
       }),

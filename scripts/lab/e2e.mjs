@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 import { ensureRuntimeDirectories, labConfig } from './config.mjs';
 import { resetLab, startCoreLab, stopLab } from './services.mjs';
-import { defaultRunCommand } from './supabase.mjs';
+import { defaultRunCommand, supabaseStatus, upsertLabUser } from './supabase.mjs';
 
 const CHROMIUM_PROJECTS = [
   'fixture-desktop-chromium',
@@ -201,6 +201,7 @@ export async function runE2E({
   let baselinePtyProcesses = [];
   let result;
   let failure = null;
+  let retentionIdentity;
 
   try {
     baselineSessions = await listTerminalSessions();
@@ -212,10 +213,18 @@ export async function runE2E({
       throw new Error('The local host did not publish link metadata.');
     }
     if (lab.host?.linkCode) sensitiveValues.push(lab.host.linkCode);
+    if (projects.includes('local-retention-mobile-chromium')) {
+      const local = await supabaseStatus({ root: config.root });
+      const email = 'retention-secondary@glasstunnel.test';
+      const user = await upsertLabUser({ ...local, email, password: config.identity.password });
+      retentionIdentity = { ...local, email, id: user.id };
+      sensitiveValues.push(email);
+    }
 
     const env = {
       ...process.env,
       GT_LAB_BASE_URL: config.urls.pwa,
+      ...(retentionIdentity ? { GT_LAB_SECOND_EMAIL: retentionIdentity.email } : {}),
       ...(requiresAccountHost
         ? {
             GT_LAB_EMAIL: config.identity.email,
@@ -253,6 +262,17 @@ export async function runE2E({
       .filter(Boolean)
       .join('\n');
     failure = normalized;
+  }
+
+  try {
+    if (retentionIdentity) {
+      const response = await fetch(new URL(`/auth/v1/admin/users/${retentionIdentity.id}`, retentionIdentity.apiUrl), {
+        method: 'DELETE', headers: { apikey: retentionIdentity.serviceRoleKey, authorization: `Bearer ${retentionIdentity.serviceRoleKey}` },
+      });
+      if (!response.ok) throw new Error('Could not remove the secondary local retention account');
+    }
+  } catch (error) {
+    failure = appendFailure(failure, error, 'Local retention account cleanup failed');
   }
 
   try {
@@ -307,6 +327,7 @@ export async function runE2E({
 }
 
 export function projectsForMode(mode) {
+  if (mode === 'retention') return ['local-retention-mobile-chromium'];
   if (mode === 'revocation') return ['local-revocation-mobile-chromium'];
   if (mode === 'codex-cli-chromium') return CODEX_CLI_CHROMIUM_PROJECTS;
   if (mode === 'cursor-agent-chromium') return CURSOR_AGENT_CHROMIUM_PROJECTS;

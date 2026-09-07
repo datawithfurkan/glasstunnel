@@ -774,6 +774,163 @@ describe('RelayHub message detail replies', () => {
   });
 });
 
+describe('RelayHub cache retention', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('keeps expired data unreadable during a deletion failure and retries with a visible counter', async () => {
+    const stub = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(crypto.randomUUID()));
+    await runInDurableObject(stub, async (_hub, state) => {
+      await state.storage.put('contentRetentionV1', true);
+      await state.storage.put('relayHello', { version: 1, receivedAt: Date.now() - 100, expiresAt: Date.now() - 1, data: {} });
+    });
+    await evictDurableObject(stub);
+    await runInDurableObject(stub, async (hub, state) => {
+      const failing = vi.spyOn(state.storage, 'delete').mockRejectedValueOnce(new Error('disposable storage failure'));
+      await hub.alarm();
+      failing.mockRestore();
+      expect(await state.storage.get('retentionCleanupFailures')).toBe(1);
+      expect(await state.storage.getAlarm()).toBeGreaterThan(Date.now());
+      expect((hub as unknown as { latestHello: unknown }).latestHello).toBeNull();
+      (hub as unknown as { cleanupAt: number }).cleanupAt = Date.now();
+      await hub.alarm();
+      expect(await state.storage.get('relayHello')).toBeUndefined();
+      expect(await state.storage.get('retentionCleanupFailures')).toBeUndefined();
+    });
+  });
+
+  it('publishes fixed deadlines which survive heartbeat and client replay', async () => {
+    const host = await createDeviceIdentity();
+    const phone = await createDeviceIdentity();
+    stubSupabase({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')] });
+    const stub = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
+    const hs = await openHubSocket(stub, relayPath(host.deviceId));
+    hs.client.send(await signedClientAuth(host, hs.nonce, 'host'));
+    await expect(hs.nextMessage()).resolves.toMatchObject({ type: 'auth_ok' });
+    hs.client.send(JSON.stringify({ type: 'relay_agent_state', snapshot: { agentId: 'fixture' } }));
+    let record: { receivedAt: number; expiresAt: number };
+    await waitFor(async () => runInDurableObject(stub, async (_hub, state) => {
+      record = await state.storage.get('relayAgentSnapshot:fixture') as typeof record;
+      return !!record;
+    }), 'snapshot persisted');
+    expect(record!.expiresAt - record!.receivedAt).toBe(24 * 60 * 60_000);
+    hs.client.send(JSON.stringify({ type: 'relay_ping' }));
+    await expect(hs.nextMessage()).resolves.toMatchObject({ type: 'relay_pong' });
+    const ps = await openHubSocket(stub, relayPath(host.deviceId));
+    ps.client.send(await signedClientAuth(phone, ps.nonce, 'client', { access_token: 'phone-access-token', cache_retention_version: 1 }));
+    await expect(ps.nextMessage()).resolves.toMatchObject({ type: 'auth_ok' });
+    await expect(ps.nextMessage()).resolves.toMatchObject({ type: 'relay_presence' });
+    await expect(ps.nextMessage()).resolves.toMatchObject({ type: 'relay_agent_state', cached: true, cache: { receivedAt: record!.receivedAt, expiresAt: record!.expiresAt } });
+    await expect(ps.nextMessage()).resolves.toMatchObject({ type: 'relay_cache_manifest', agentIds: ['fixture'] });
+    await runInDurableObject(stub, async (_hub, state) => {
+      expect(await state.storage.get('relayAgentSnapshot:fixture')).toMatchObject(record!);
+    });
+    hs.client.close(); ps.client.close();
+  });
+
+  it('paginates migration without deleting unrelated keys or fresh content', async () => {
+    const stub = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(crypto.randomUUID()));
+    await runInDurableObject(stub, async (hub, state) => {
+      for (let i = 0; i < 140; i++) await state.storage.put(`relayAgentSnapshot:${i}`, { legacy: true });
+      await state.storage.put('unrelated', { kept: true });
+      const first = await hub.cacheMaintenance({ dryRun: true });
+      expect(first.scanned).toBeLessThanOrEqual(128);
+      expect(first.cursor).not.toBeNull();
+      const page = await hub.cacheMaintenance({ dryRun: false });
+      const next = await hub.cacheMaintenance({ dryRun: false, cursor: page.cursor! });
+      expect(page.deleted + next.deleted).toBe(140);
+      expect(next.cursor).toBeNull();
+      expect(await state.storage.get('unrelated')).toEqual({ kept: true });
+    });
+  });
+
+  it('inventories legacy data before a scoped, idempotent migration and preserves denials', async () => {
+    const stub = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(crypto.randomUUID()));
+    await runInDurableObject(stub, async (_hub, state) => {
+      await state.storage.put('relayHello', { deviceName: 'legacy' });
+      await state.storage.put('relayAgentSnapshots', { fixture: { messages: [] } });
+      await state.storage.put('relayAgentSnapshot:%broken', { marker: 'legacy' });
+      await state.storage.put('revoked-device:fixture', true);
+      await state.storage.put('relayLastHostSeenAt', 42);
+    });
+    await evictDurableObject(stub);
+    await runInDurableObject(stub, async (hub, state) => {
+      const before = await hub.cacheMaintenance({ dryRun: true });
+      expect(before.invalid).toBe(3);
+      expect(before.deleted).toBe(0);
+      expect(await state.storage.get('relayHello')).toEqual({ deviceName: 'legacy' });
+      const applied = await hub.cacheMaintenance({ dryRun: false });
+      expect(applied.deleted).toBe(3);
+      expect((await hub.cacheMaintenance({ dryRun: false })).deleted).toBe(0);
+      expect(await state.storage.get('revoked-device:fixture')).toBe(true);
+      expect(await state.storage.get('relayLastHostSeenAt')).toBe(42);
+    });
+  });
+
+  it('arms cleanup on restore, removes expired copies without peers and keeps fresh copies', async () => {
+    const stub = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(crypto.randomUUID()));
+    const now = Date.now();
+    await runInDurableObject(stub, async (_hub, state) => {
+      await state.storage.put('contentRetentionV1', true);
+      await state.storage.put('relayHello', { version: 1, receivedAt: now - 100, expiresAt: now + 60_000, data: { deviceName: 'fresh' } });
+      await state.storage.put('relayAgentSnapshot:expired', { version: 1, receivedAt: now - 100, expiresAt: now - 1, data: { agentId: 'expired' } });
+      await state.storage.put('revoked-device:fixture', true);
+    });
+    await evictDurableObject(stub);
+    await runInDurableObject(stub, async (hub, state) => {
+      expect(await state.storage.getAlarm()).not.toBeNull();
+      await hub.alarm();
+      expect(await state.storage.get('relayAgentSnapshot:expired')).toBeUndefined();
+      expect(await state.storage.get('relayHello')).toMatchObject({ expiresAt: now + 60_000 });
+      expect(await state.storage.get('revoked-device:fixture')).toBe(true);
+      expect(await state.storage.getAlarm()).toBeLessThanOrEqual(now + 60_000);
+    });
+  });
+
+  it('never restores timestamp-free legacy transcripts after eviction', async () => {
+    const host = await createDeviceIdentity();
+    const phone = await createDeviceIdentity();
+    stubSupabase({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')] });
+    const stub = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
+    await runInDurableObject(stub, async (_hub, state) => {
+      await state.storage.put('relayAgentSnapshot:test', { agentId: 'test', marker: 'legacy' });
+      await state.storage.put('relayHello', { deviceName: 'Legacy' });
+    });
+    await evictDurableObject(stub);
+    const socket = await openHubSocket(stub, relayPath(host.deviceId));
+    socket.client.send(await signedClientAuth(phone, socket.nonce, 'client', { access_token: 'phone-access-token' }));
+    await expect(socket.nextMessage()).resolves.toMatchObject({ type: 'auth_ok' });
+    await expect(socket.nextMessage()).resolves.toMatchObject({ type: 'relay_presence' });
+    socket.client.send(JSON.stringify({ type: 'relay_ping' }));
+    await waitFor(() => socket.messages.some((m) => m.type === 'relay_pong'), 'replay completed');
+    expect(socket.messages.some((m) => m.type === 'relay_agent_state' || m.type === 'relay_hello')).toBe(false);
+    socket.client.close();
+  });
+});
+
+describe('offline signaling retention', () => {
+  it('deletes expired and invalid envelopes via a persistent alarm without deleting revocations', async () => {
+    const stub = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(crypto.randomUUID()));
+    await runInDurableObject(stub, async (hub, state) => {
+      const now = Date.now();
+      const queues = (hub as unknown as { offlineQueues: Map<string, unknown[]> }).offlineQueues;
+      queues.set('fixture', [
+        { raw: '{}', enqueuedAt: now - 60_001 },
+        { raw: '{}', enqueuedAt: Infinity },
+        { raw: '{}', enqueuedAt: now - 100 },
+      ]);
+      await state.storage.put('revoked-pair:fixture', true);
+      await hub.alarm();
+      expect(await state.storage.get('offlineQueues')).toEqual({ fixture: [{ raw: '{}', enqueuedAt: now - 100 }] });
+      expect(await state.storage.getAlarm()).toBeLessThanOrEqual(now + 59_900);
+      queues.set('fixture', [{ raw: '{}', enqueuedAt: now - 60_001 }]);
+      await hub.alarm();
+      expect(await state.storage.get('offlineQueues')).toBeUndefined();
+      expect(await state.storage.getAlarm()).toBeNull();
+      expect(await state.storage.get('revoked-pair:fixture')).toBe(true);
+    });
+  });
+});
+
 describe('RelayHub host liveness', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
