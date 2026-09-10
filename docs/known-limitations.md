@@ -57,6 +57,9 @@ disclosures, not hidden implementation details.
   removed phone can only be allowed again with a new link code generated on that
   Mac. Browser unlock is not mandatory biometric reauthentication. The read-only
   boundary is not a complete per-device administrator policy. See `docs/security.md`.
+- The picture-size readout next to "Screen ready" depends on the browser reporting
+  the video's dimensions; on iOS Safari it can stay hidden while the stream itself
+  is correct.
 - The phone renews its relay authorization every few minutes on the open socket.
   Browsers running a web app older than 0.1.10 do not answer the renewal request
   and are reconnected at the deadline instead; reload the web app to adopt the

@@ -1,10 +1,10 @@
 # Agent App Release Evidence
 
-- Date: 2026-09-03T19:02:23Z
+- Date: 2026-09-10T12:57:20Z
 - App: Claude Code
 - Result: pass
 - Environment: Local Test Lab host on the development Mac, phone-sized mobile Chromium (Pixel 7 emulation) and mobile WebKit (iPhone 15 emulation), real signed-in Claude Code CLI 2.1.258
-- Glasstunnel commit: f660996b
+- Glasstunnel commit: 8550bec4
 - Artifact: artifacts/claude-code-phone-driven.txt
 - Privacy review: pass
 
@@ -25,6 +25,9 @@ kept it in the composer, which a resumed session had done in the run before.
 The same lane also passed on mobile WebKit (`pnpm lab:e2e:claude-code:safari`),
 so the card behaves the same in an iPhone-class browser. Both browser passes were
 re-recorded at the 0.1.8 source commit after the transcript polish landed on the phone.
+Re-recorded at 8550bec4 for the 0.1.10 release after the September security
+stages and their follow-ups (pull requests #32-#36); both browsers passed with
+the installed Glasstunnel app left running and every host on its own hook socket.
 
 ## Limitations
 

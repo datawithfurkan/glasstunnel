@@ -1,10 +1,10 @@
 # Agent App Release Evidence
 
-- Date: 2026-09-03T19:01:07Z
+- Date: 2026-09-10T12:59:40Z
 - App: Cursor Agent
 - Result: pass
 - Environment: Local Test Lab host on the development Mac, phone-sized mobile Chromium (Pixel 7 emulation) and mobile WebKit (iPhone 15 emulation), real signed-in Cursor Agent CLI 2026.06.24 on gpt-5.4-nano
-- Glasstunnel commit: f660996b
+- Glasstunnel commit: 8550bec4
 - Artifact: artifacts/cursor-agent-phone-driven.txt
 - Privacy review: pass
 
@@ -26,6 +26,8 @@ its output was fully delivered (a race that CI and loaded local runs had exposed
 the Cursor Agent code is identical between the Chromium re-run's commit and this one.
 Re-recorded at the merged commit 7ffe2d45: both browsers passed the lane again on
 main.
+Re-recorded at 8550bec4 for the 0.1.10 release after the September security
+stages and their follow-ups (pull requests #32-#36); both browsers passed again.
 
 ## Limitations
 
