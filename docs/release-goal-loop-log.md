@@ -132,64 +132,66 @@ changes or a blocker is materially narrowed.
 - End commit: The final release documentation and cask commit is the result of record.
 - CI/deploy: CI is green on `f660996b`; Deploy run 33796452115 from `f660996b` succeeded for the web app, the marketing site (support table now lists the Claude cards as Preview), and the Signaling Worker; the release documentation and cask commit is checked by one CI run before `v0.1.9` is tagged.
 
-## 2026-09-06 17:15 UTC - Security reconciliation hosted rollout
+## 2026-09-06 17:15 - Security reconciliation hosted rollout
 
 - Start commit: da9a1bc3
-- Release gate: Deliver the reviewed dependency, PWA privacy-state and public-disclosure patch without a new Mac release.
+- Release gate: Deliver the reviewed dependency, PWA privacy-state and public-disclosure patch (PR #32) to the hosted surfaces without a new Mac release.
 - Why chosen: The verified patch was merged but production still served the earlier web baseline.
-- Files changed: No new runtime changes during rollout; deployed the exact PR #32 merge and updated stage/handoff documentation locally.
+- Files changed: No runtime changes during the rollout; the exact PR #32 merge was deployed and the stage/handoff documentation was updated locally.
 - Validation: All five PR and main CI checks passed; one Deploy dispatch succeeded. Public site, PWA, service worker and signaling health returned HTTP 200; app-shell and service-worker cache revalidation remained enabled.
-- Manual testing: No personal-account or native UI mutation. Automated isolated mobile-viewport Chromium and WebKit canaries verified the hosted relay disclosure, signed-out shell and reload with zero page errors.
-- Evidence recorded: Deploy run 34047515720; PWA e0bc7bd0-f769-42ae-a7f3-1beb0a602c80; site 6c592a78-39ff-4323-8202-4b9d31b2a4ca; Worker 46a2def2-dbb4-41f4-80b9-8d4bb6818adb. Exact rollback references are in the security-hardening plan.
+- Manual testing: No personal-account or native UI mutation. Automated isolated mobile-viewport Chromium and WebKit canaries verified the hosted relay disclosure, the signed-out shell and a reload with zero page errors.
+- Evidence recorded: Deploy run 34047515720; PWA deployment e0bc7bd0-f769-42ae-a7f3-1beb0a602c80; site 6c592a78-39ff-4323-8202-4b9d31b2a4ca; Worker 46a2def2-dbb4-41f4-80b9-8d4bb6818adb. Rollback references are in the security-hardening plan.
 - Outcome: passed
-- Uncertainty: Active-session revocation, host-owned permission enforcement, bounded content lifetime and E2E design remain separate security stages; these are not proved by the hosted canary.
+- Uncertainty: Active-session revocation, host-owned permission enforcement, bounded content lifetime and the E2E design remained separate stages; the hosted canary did not prove them.
 - Stale-loop risk: Low; one manual deployment, no rerun, no version bump, tag, signing or notarization.
-- Next action: Stage 2 authorization and revocation, using disposable local identities.
+- Next action: Stage 2, authorization and revocation, using disposable local identities.
 - End commit: da9a1bc3659b33e480219e53226976eaef38d9ff (deployed source).
 - CI/deploy: https://github.com/datawithfurkan/glasstunnel/actions/runs/34047515720 succeeded; main CI 34042927618 passed.
 
-## 2026-09-06 - Acknowledged device revocation hosted rollout
+## 2026-09-06 20:21 - Acknowledged device revocation hosted rollout
 
 - Start commit: da9a1bc3
-- Release gate: Cut off revoked browser identities across Mac dispatch, relay and signaling, with truthful acknowledgement and browser cleanup.
-- Files changed: Mac registry/Access/transports, Worker account and socket authorization, PWA access-loss handling, isolated lab regressions and security documentation.
-- Validation: 45 Worker tests, 452 Swift tests (eight environment skips), 242 PWA tests, 52 lab unit tests, two-browser revocation and ordinary local account/fixture journeys passed. Build, lint, protocol, security/privacy and public audits passed.
-- Manual testing: Inspected the ignored mobile revocation screenshot. No personal-account, installed-app, Keychain or TCC mutation. Isolated Chromium/WebKit hosted shell and reload checks passed without page errors.
-- Evidence: PR #33, CI 34057336269, Deploy 34057717088. PWA 0ee8454e-8b06-45ff-9376-53cd2a018d84 and site a95835e0-4d9a-42a4-bb54-deea91d8868c report c4acdc2; Worker traffic is 100% version 77737edb-4944-455d-8951-b4dd261e8e5b. Rollback is recorded in the security-hardening plan.
-- Outcome: passed in source and hosted services; no new Mac binary published.
-- Limitation: Public 0.1.9 lacks the new host operation. Revocation cannot undo commands already executing, retract received content or secure an account with compromised credentials.
-- Next action: Stage 3 host-owned permissions; retention and E2E design remain queued.
+- Release gate: Cut off revoked browser identities across Mac dispatch, relay and signaling (PR #33), with truthful acknowledgement on the Mac and browser cleanup.
+- Why chosen: Removing a device only edited the Mac's local registry; an open relay or signaling session kept working until it happened to reconnect.
+- Files changed: Mac registry, Access view and transports; Worker account and socket authorization; PWA access-loss handling; isolated lab regressions; security documentation.
+- Validation: 45 Worker tests, 452 Swift tests (eight environment skips), 242 PWA tests and 52 lab unit tests passed; the two-browser revocation journey and the ordinary local account and fixture journeys passed; build, lint, protocol, security/privacy and public-repository audits passed.
+- Manual testing: The ignored mobile revocation screenshot was inspected. No personal-account, installed-app, Keychain or TCC mutation. Isolated Chromium/WebKit hosted shell and reload checks passed without page errors.
+- Evidence recorded: PR #33; CI 34057336269; Deploy 34057717088; PWA 0ee8454e-8b06-45ff-9376-53cd2a018d84 and site a95835e0-4d9a-42a4-bb54-deea91d8868c report c4acdc2a; Worker traffic is 100% version 77737edb-4944-455d-8951-b4dd261e8e5b.
+- Outcome: passed
+- Uncertainty: The published 0.1.9 Mac lacked the new host operation until a later binary release. Revocation cannot undo commands already executing, retract received content or secure an account with compromised credentials.
+- Stale-loop risk: Low; one dispatch, no reruns, tags, signing or notarization.
+- Next action: Stage 3, host-owned permissions; retention and the E2E design remained queued.
 - End commit: c4acdc2a62c4e43a67d4d653a8d907340a1706ed.
-- CI/deploy: https://github.com/datawithfurkan/glasstunnel/actions/runs/34057717088 succeeded. One dispatch, no reruns, tags, signing or notarization.
+- CI/deploy: https://github.com/datawithfurkan/glasstunnel/actions/runs/34057717088 succeeded.
 
-## 2026-09-06 - Host-owned permissions hosted rollout
+## 2026-09-06 21:37 - Host-owned permissions hosted rollout
 
 - Start commit: c4acdc2a
-- Release gate: Mac-authoritative read-only control across relay and DataChannel, independent browser self-restrictions and truthful UI.
-- Files changed: Mac Settings/policy/transports, additive Hello capability, Worker targeted denial routing, PWA controls, local account E2E and reusable security audit.
-- Validation: 462 Swift tests (eight environment skips), 244 PWA tests, 46 Worker tests and 52 lab unit tests passed. Local two-browser forged-command/permission/revocation, ordinary account Terminal and Chromium/WebKit fixtures passed. Protocol, build, lint, security/privacy, public audit and whitespace checks passed.
-- Manual testing: Inspected the ignored phone capture showing host-policy banner, disabled controls and targeted rejection. Isolated Chromium/WebKit hosted shell/reload checks passed with zero page errors. No personal-account, installed-app, Keychain, TCC or native capture mutation.
-- Outcome: passed in source and hosted services. The public 0.1.9 binary has not been replaced and lacks the new host enforcement.
-- Evidence: PR #34 merged tested tree 73314330 as cc3377b1; all five checks passed in CI 34061166134. Deploy 34061593757 succeeded; PWA 78b3cc2f-80b9-42bb-b4d9-d4cc45673d39, site 54f220ed-b496-4dd7-b68e-45287c598b7f, Worker 100% e270b0d9-bae4-473f-a195-f1b5b05344a2. Prior stage 2 versions are the checked rollback baseline.
-- Limits: Read-only does not cancel already-executing work, replace account security or create a complete per-device administrator policy. Retention and E2E are not implemented by this slice.
-- Next action: Review the concrete stage 4 cache lifetime/deletion proposal, then continue its local implementation. No repeated routine approval is required.
+- Release gate: Mac-authoritative read-only control across relay and DataChannel (PR #34), independent browser self-restrictions and a truthful UI.
+- Why chosen: The read-only switch lived in the browser; a modified browser could ignore it, and one phone's toggle changed the Mac for every phone.
+- Files changed: Mac Settings, control policy and transports; additive Hello capability; Worker targeted denial routing; PWA controls; local account E2E; reusable security audit.
+- Validation: 462 Swift tests (eight environment skips), 244 PWA tests, 46 Worker tests and 52 lab unit tests passed; the local two-browser forged-command, permission and revocation journeys, the ordinary account Terminal check and the Chromium/WebKit fixtures passed; protocol, build, lint, security/privacy, public-repository and whitespace checks passed.
+- Manual testing: The ignored phone capture showing the host-policy banner, disabled controls and a targeted rejection was inspected. Isolated Chromium/WebKit hosted shell and reload checks passed with zero page errors. No personal-account, installed-app, Keychain, TCC or native capture mutation.
+- Evidence recorded: PR #34 merged tested tree 73314330 as cc3377b1; all five checks passed in CI 34061166134; Deploy 34061593757 succeeded; PWA 78b3cc2f-80b9-42bb-b4d9-d4cc45673d39, site 54f220ed-b496-4dd7-b68e-45287c598b7f, Worker 100% e270b0d9-bae4-473f-a195-f1b5b05344a2.
+- Outcome: passed
+- Uncertainty: Read-only does not cancel already-executing work, replace account security or create a complete per-device administrator policy; the published 0.1.9 Mac lacked the enforcement until a later binary release.
+- Stale-loop risk: Low; one dispatch, no reruns or Mac release; all lab-owned services were stopped.
+- Next action: Review the stage 4 cache lifetime and deletion proposal, then continue its local implementation.
 - End commit: cc3377b1c2cbb283aadde58ec1eeb351048ce22c.
-- CI/deploy: https://github.com/datawithfurkan/glasstunnel/actions/runs/34061593757 succeeded. One dispatch, no reruns or Mac release. All lab-owned services are stopped.
+- CI/deploy: https://github.com/datawithfurkan/glasstunnel/actions/runs/34061593757 succeeded.
 
-## 2026-09-07 09:02 UTC - Bounded cache retention deployed and verified
+## 2026-09-07 09:02 - Bounded cache retention deployed and verified
 
-- Start commit: cc3377b1.
-- Gate: fixed 24-hour relay/browser replicas, account isolation, browser clearing and background expiry without deleting source content or security records.
-- Files changed: Worker cache envelopes/alarms and count-only maintenance RPC; PWA scoped storage, expiry/Profile feedback and logout recovery; local lab regressions, bounded operator and security documentation.
-- Validation: 64 Worker, 261 PWA, 52 lab and three operator CLI tests passed. Real local two-account retention, ordinary account/Terminal, permission/revocation and 24 Chromium/WebKit fixtures passed. Build/type/lint, security/privacy, public-repository and diff checks passed.
-- Blocker resolved: Docker's read-only VM interrupted local Supabase. One Telegram escalation led to explicit restart approval; Docker Desktop restart restored health without deleting volumes or containers. Lab test resets were limited to its disposable database.
-- Protected integration: PR #35 merged tested tree f2bcafd6 at 0f98a93d. All five checks passed in PR CI 34102762574 and automatic main CI 34103071925. One consolidated push; no protection bypass or successful workflow rerun.
-- Hosted delivery: Deploy 34103107240 succeeded. PWA b9d8e353-2fb6-45be-8521-727faf1c7a9c and site 9eae421a-a5ac-4a9d-a7d2-2625e44e7089 report the exact merged SHA. Worker deployment 499ca15f-7449-4fab-bf4f-3d16c6ded9eb routes 100% to 17a86291-faa3-4692-aa8b-455e5d57455e.
-- Hosted verification: isolated Chromium/WebKit sign-in shell/reload, synthetic legacy-cache discard and unrelated-key preservation passed, with zero page errors. Screenshots inspected. Public surfaces/health returned 200; service worker remains revalidated.
-- Approved migration: inventory visited 183 objects and counted 509 cache records; apply removed exactly 503 expired/unverifiable records. A separate fresh-enumeration verify found six valid records, zero invalid records, active retention everywhere and zero cleanup failures. No content was returned. Original chats/files, Mac attachments, account/device identities, credentials and denial tombstones were excluded.
-- Cleanup: ignored private ledger retained at .cache/retention/ledger.json with mode 0600; temporary operator directories/processes removed; no lab-owned services running.
-- Outcome: stage 4 passed in source and hosted services. Installed/public Mac 0.1.9 unchanged; no signing, release or TCC changes.
-- Limits: provider backups are not erased by active-key deletion; closed browsers purge on resume; a live Mac can publish fresh copies of older source messages. Do not roll back to a pre-retention Worker or restore legacy cache keys.
-- Next action: stage 5 design decision in docs/architecture/relay-e2e-design.md. The proposal compares maintained libraries, exposes the PWA code-delivery trust limit and requests only a bounded local feasibility stage. It does not implement E2E. Coordinate the already-tested Mac security update separately.
-- End commit: 0f98a93d047f435ea41f2fc62c954c7516e6b980 (deployed runtime). Final evidence and design are a local-only follow-up to avoid another documentation CI cycle.
+- Start commit: cc3377b1
+- Release gate: Fixed 24-hour relay and browser replicas, account isolation, browser clearing and background expiry (PR #35) without deleting source content or security records.
+- Why chosen: The relay restored cached transcripts without any age, the browser cache was not scoped to an account, and sign-out left transcript copies behind.
+- Files changed: Worker cache envelopes, alarms and a count-only maintenance RPC; PWA scoped storage, expiry and Profile feedback, logout recovery; local lab regressions; the bounded operator sweep; security documentation.
+- Validation: 64 Worker, 261 PWA, 52 lab and three operator CLI tests passed; the real local two-account retention journey, the ordinary account/Terminal check, the permission/revocation journey and 24 Chromium/WebKit fixtures passed; build, typecheck, lint, security/privacy, public-repository and diff checks passed. Docker's read-only VM interrupted local Supabase once; a Docker Desktop restart approved over Telegram restored it without deleting volumes.
+- Manual testing: Isolated Chromium/WebKit sign-in shell and reload, synthetic legacy-cache discard and unrelated-key preservation passed with zero page errors; screenshots were inspected; public surfaces and health returned 200.
+- Evidence recorded: PR #35 merged tested tree f2bcafd6 as 0f98a93d; PR CI 34102762574 and main CI 34103071925 passed; Deploy 34103107240 succeeded; PWA b9d8e353-2fb6-45be-8521-727faf1c7a9c and site 9eae421a-a5ac-4a9d-a7d2-2625e44e7089 report the merged SHA; Worker deployment 499ca15f-7449-4fab-bf4f-3d16c6ded9eb routes 100% to 17a86291-faa3-4692-aa8b-455e5d57455e. The approved hosted sweep inventoried 183 objects and 509 cache records, removed 503 expired or unverifiable records, and a fresh verification found six valid records, zero invalid records and zero cleanup failures; the content-free ledger stays ignored at `.cache/retention/ledger.json`.
+- Outcome: passed
+- Uncertainty: Provider backups are not erased by active-key deletion; closed browsers purge on resume; a live Mac can publish fresh copies of older source messages. Do not roll the Worker back to a pre-retention source or restore legacy cache keys.
+- Stale-loop risk: Low; one consolidated push, one dispatch, no protection bypass or workflow rerun.
+- Next action: A maintainer decision on the E2E design proposal, and a coordinated Mac release for the already-tested host security changes.
+- End commit: 0f98a93d047f435ea41f2fc62c954c7516e6b980 (deployed runtime).
 - CI/deploy: https://github.com/datawithfurkan/glasstunnel/actions/runs/34102762574 and https://github.com/datawithfurkan/glasstunnel/actions/runs/34103107240 passed.

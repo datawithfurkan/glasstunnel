@@ -542,3 +542,28 @@ extra documentation-only CI runs while an approval is pending.
   Keep First-Run Activation paused. No active lab/operator service is left running.
   One deduplicated Telegram design-decision notification was delivered on
   2026-09-07; no additional retention or Docker approval is needed.
+
+## 2026-09-10 review follow-up
+
+A review of stages 1-4 against the merged source found four defects, fixed on the
+`security-followups` branch before the 0.1.10 Mac release:
+
+1. Relay clients were closed with code 4001 at most five minutes after
+   authenticating; the browser showed the Mac offline while it reconnected. The
+   relay now asks the browser to renew on the open socket a minute before the
+   deadline (`relay_reauth_required` / `relay_reauth` / `relay_reauth_ok`) and
+   closes only a browser that does not renew.
+2. Live and cached relay frames carried the relay clock's stamps and the browser
+   rejected any stamp later than its own clock; a phone whose clock ran behind
+   dropped every relay update. The relay now sends a countdown (`remainingMs`)
+   and the browser places deadlines on its own clock.
+3. Removing a phone left a permanent tombstone on the Mac, a revoked pairing on
+   the server and denial keys in both hubs, with no way back. A link code
+   generated on the Mac and claimed by that phone now lifts all of them and
+   reports `reauthorized_at`, which the Mac compares with its own removal.
+4. Mac-to-browser signaling envelopes were authorized with three uncached
+   database reads each; a positive decision is now cached for two minutes and
+   cleared on revocation.
+
+Stage 5 (E2E design) is deferred by the maintainer; see
+`docs/architecture/relay-e2e-design.md`.

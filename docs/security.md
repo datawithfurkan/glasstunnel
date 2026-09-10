@@ -142,7 +142,7 @@ Existing streams and message-detail reads remain available. A browser can restri
 its own control, but cannot relax the Mac setting or change another browser's
 restriction. Denials are visible only to the requesting browser.
 
-**The published 0.1.9 Mac binary does not contain this new permission boundary.**
+**Mac binaries before 0.1.10 do not contain this permission boundary.**
 Updated browsers expose the per-browser switch only when a matching host advertises
 the policy; they do not send permission updates to legacy hosts. This is not a
 complete per-device administrator policy, account reauthentication, or cancellation
@@ -155,8 +155,8 @@ every cold start or server-enforced reauthentication.
 ## Revocation And Replay Limitations
 
 The September 2026 source adds acknowledged device revocation across the Mac,
-hosted relay and signaling paths. **The published 0.1.9 Mac binary does not contain
-this new operation.** Source integration and a hosted deployment do not update an
+hosted relay and signaling paths. **Mac binaries before 0.1.10 do not contain
+this operation.** Source integration and a hosted deployment do not update an
 installed Mac; binary publication is a separate release step.
 
 With the matching Mac/Worker/PWA versions, Revoke Access stops that device's local
@@ -168,9 +168,20 @@ the denial. Restarts, cached authorization and re-registering the same identity
 must not restore it. A revoked browser clears its active workspace and stops
 automatic reconnects; another authorized browser can continue.
 
-Relay clients reauthenticate at token expiry or after five minutes, whichever is
-earlier. This bounds stale account decisions, not the network latency of an explicit
-revocation. There is no supported sub-second guarantee. Revocation cannot cancel
+Relay clients renew their authorization on the open socket at token expiry or
+after five minutes, whichever is earlier: the relay asks about a minute before
+the deadline, the browser answers with a current account token, and the relay
+repeats the account, device and pairing checks before extending the deadline. A
+browser that does not renew in time is closed at the deadline (close code 4001)
+and reconnects. This bounds stale account decisions, not the network latency of
+an explicit revocation. There is no supported sub-second guarantee.
+
+Removal is reversible only through the Mac's owner: a new link code generated on
+that Mac and entered on the phone lifts the account denial, clears the relay and
+signaling denials, and reports a re-authorization time that the Mac compares with
+its own removal before it lifts its tombstone. Nothing else restores a removed
+phone; it must otherwise use a new browser identity, which appears as a new
+device to approve. Revocation cannot cancel
 a command already executing in a coding app, retract received content, or invalidate
 every Supabase account session. Same-account onboarding can authorize a new browser
 identity, so a compromised account requires account-level recovery as well.

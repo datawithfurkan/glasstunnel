@@ -1,9 +1,12 @@
 # Relay E2E Design And Decision
 
 Date: 2026-09-07. Source reviewed: `0f98a93d`.
-Status: proposal for maintainer review, not an implemented or audited protocol.
-Stages 1-4 of the security plan have passed their hosted gates. The public 0.1.9
-Mac binary still lacks the newer host permission/revocation operations.
+Status: proposal, deferred by the maintainer on 2026-09-10. Not approved, not an
+implemented or audited protocol. The trusted-relay disclosure plus the 24-hour
+replica limit is the shipped position; revisit this design after the 0.1.10 Mac
+release and the product backlog in `docs/product-audit-backlog.md`.
+Stages 1-4 of the security plan have passed their hosted gates; the Mac side of
+the host permission/revocation operations ships with 0.1.10.
 
 ## Recommendation
 
