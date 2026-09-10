@@ -69,11 +69,11 @@ cask metadata validation passed. It adds the Claude desktop and Claude Code card
 with recorded real-app evidence, and fixes the relay authentication race and the Mac Screen
 reconnect bug.
 
-The `0.1.9` public beta release is the current public beta. Its signed and notarized DMG is tied
-to source commit `f660996b` and SHA-256
-`a8210efa726c2d31cc3abf3928cb214a96c2857c2f17a329cb7ac4e5bbc29ca2`.
+The `0.1.10` public beta release is the current public beta. Its signed and notarized DMG is tied
+to source commit `8550bec4` and SHA-256
+`f35d55ed4391642f56694e4f0f38d02c95e5ac1479c8159532033fdd78e2d839`.
 Developer ID signing/notarization, stapling, Gatekeeper verification, isolated
-install/reinstall and 0.1.8 → 0.1.9 upgrade, stable latest-download asset preparation, and
+install/reinstall and 0.1.9 → 0.1.10 upgrade, stable latest-download asset preparation, and
 cask metadata validation passed. It makes agent transcripts readable on the phone
 (structured tool rows with previews and on-demand full output, protocol 0.2.2) and fixes
 the stuck "working" state after an interrupt.

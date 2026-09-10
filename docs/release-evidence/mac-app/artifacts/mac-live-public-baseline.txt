@@ -1,6 +1,6 @@
 Privacy-reviewed summary artifact.
-Date: 2026-09-03.
-Commit: f660996b (notarized 0.1.9 build installed over the published 0.1.8 app).
-Scope: native permission state after an in-place upgrade, account persistence across quit and relaunch, and the version shown in the app's settings.
+Date: 2026-09-10.
+Commit: 8550bec4 (notarized 0.1.10 build installed over an unreleased 0.1.10 build from 1f980121, itself installed over the published 0.1.9 app).
+Scope: native permission state after an in-place upgrade, account persistence across quit and relaunch, the source commit stamped in the installed bundle, a seven-minute connected phone-sized session through the relay renewal window, and screen sharing in both qualities.
 Result: pass.
 Raw screenshots, account identifiers, and local machine names are intentionally not retained in Git.

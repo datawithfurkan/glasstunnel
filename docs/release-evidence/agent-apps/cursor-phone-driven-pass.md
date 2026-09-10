@@ -1,10 +1,10 @@
 # Agent App Release Evidence
 
-- Date: 2026-09-03T19:19:22Z
+- Date: 2026-09-10T13:50:18Z
 - App: Cursor
-- Result: pass
+- Result: partial (chat switch, prompt, and reply pass; the interrupt step fails on Cursor 3.19.13)
 - Environment: Local Test Lab host on the development Mac, phone-sized mobile Chromium (Pixel 7 emulation) and mobile WebKit (iPhone 15 emulation), real Cursor 3.18.25 signed in, the "Cursor Agents" window at its normal size, an existing local test chat on the model the app's picker shows (Composer 2.5 Fast)
-- Glasstunnel commit: f660996b
+- Glasstunnel commit: 8550bec4
 - Artifact: artifacts/cursor-phone-driven.txt
 - Privacy review: pass
 
@@ -29,9 +29,24 @@ browser. Prompts run in the foreground window; the lane does not cover a
 backgrounded window.
 Re-recorded at the merged commit 7ffe2d45: both browsers passed the lane again on
 main.
-Re-recorded at f660996b after the Codex desktop parity merge (pull request #21); the
-WebKit pass used the Grok 4.6 model chosen in the app's picker, after two runs on the
-previous model lost the interrupted prompt's echo before the 30 s check.
+Re-recorded at 8f7305fc for 0.1.10 with the installed Glasstunnel app left running:
+on both browsers every step passed (chat switch confirmed through the window,
+prompt typed and answered, tool rows, Stop pressed and the card reading Stopped)
+except the final check that the interrupted prompt's echo is still shown 30 s
+after Stop, which failed on both; that echo check is a nondeterminism in how
+Cursor persists a stopped prompt and is tracked as a follow-up. It last passed
+fully at 1f980121 on WebKit and at 44b8cb92 on Chromium earlier the same day,
+with the same adapter code paths.
+Re-recorded at 8550bec4 for the 0.1.10 release after the September security
+stages and their follow-ups (pull requests #32-#36), against Cursor 3.19.13
+(the earlier passes ran on Cursor 3.18): on both browsers the chat switch was
+confirmed through the window and the prompt was typed into the dedicated chat
+and answered with the marker, but the interrupt step failed on both: after the
+phone pressed Stop during the long reply, the card reported the turn as done
+instead of stopped, so the idle and Stopped checks never matched. The adapters
+are unchanged since 8f7305fc, where the same step passed, so the likely cause is
+the Cursor 3.19 update changing the app's Stop control; this is tracked as a
+follow-up and the card stays Preview.
 
 ## Limitations
 
