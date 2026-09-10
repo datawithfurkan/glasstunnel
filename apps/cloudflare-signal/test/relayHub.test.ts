@@ -133,6 +133,7 @@ function stubSupabase(options: {
   gateOn?: SupabaseGatePoint;
   devices?: Record<string, unknown>[];
   pairings?: Record<string, unknown>[];
+  linkCodes?: Record<string, unknown>[];
   failPairingWrites?: boolean;
   failAuth?: boolean;
 }) {
@@ -143,6 +144,7 @@ function stubSupabase(options: {
   const gate = { reached: false, release, released };
   const devices = options.devices ?? [];
   const pairings = options.pairings ?? [];
+  const linkCodes = options.linkCodes ?? [];
 
   vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
@@ -212,6 +214,24 @@ function stubSupabase(options: {
       const rows = pairings.filter((row) => row.host_device_uuid === host && row.phone_device_uuid === phone);
       for (const row of rows) Object.assign(row, JSON.parse(String(init?.body)));
       return Response.json(rows);
+    }
+    if (url.pathname === '/rest/v1/device_pairings' && method === 'DELETE') {
+      const host = url.searchParams.get('host_device_uuid')?.replace(/^eq\./, '');
+      const phone = url.searchParams.get('phone_device_uuid')?.replace(/^eq\./, '');
+      const onlyRevoked = url.searchParams.get('revoked_at') === 'not.is.null';
+      const remaining = pairings.filter((row) => !(row.host_device_uuid === host && row.phone_device_uuid === phone &&
+        (!onlyRevoked || row.revoked_at != null)));
+      pairings.splice(0, pairings.length, ...remaining);
+      return new Response(null, { status: 204 });
+    }
+    if (url.pathname === '/rest/v1/host_link_codes' && method === 'GET') {
+      const code = url.searchParams.get('code')?.replace(/^eq\./, '');
+      return Response.json(linkCodes.filter((row) => (!code || row.code === code) && row.consumed_at == null));
+    }
+    if (url.pathname === '/rest/v1/host_link_codes' && method === 'PATCH') {
+      const id = url.searchParams.get('id')?.replace(/^eq\./, '');
+      for (const row of linkCodes.filter((row) => row.id === id)) Object.assign(row, JSON.parse(String(init?.body)));
+      return new Response(null, { status: 204 });
     }
     throw new Error(`unexpected outbound fetch: ${method} ${url.href}`);
   });
@@ -1006,5 +1026,229 @@ describe('RelayHub host liveness', () => {
       expect(relayInternals(hub).hostSocket?.readyState).toBe(WebSocket.READY_STATE_OPEN);
     });
     hostSocket.client.close(1000, 'done');
+  });
+});
+
+describe('RelayHub in-place reauthentication', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  async function authenticate(stub: DurableObjectStub<RelayHub>, identity: DeviceIdentity, hostID: string, role: 'host' | 'client') {
+    const socket = await openHubSocket(stub, relayPath(hostID));
+    socket.client.send(await signedClientAuth(identity, socket.nonce, role, { access_token: 'test-token' }));
+    await expect(socket.nextMessage()).resolves.toMatchObject({ type: 'auth_ok' });
+    return socket;
+  }
+
+  // Moves the browser's deadline close and runs the alarm the way the runtime would.
+  async function shortenDeadline(stub: DurableObjectStub<RelayHub>, phone: DeviceIdentity, msFromNow: number) {
+    await runInDurableObject(stub, async (hub) => {
+      const ws = relayInternals(hub).clientSockets.get(phone.deviceId)!;
+      const session = relayInternals(hub).sessions.get(ws) as { authorizationExpiresAt: number };
+      session.authorizationExpiresAt = Date.now() + msFromNow;
+      ws.serializeAttachment({ ...ws.deserializeAttachment(), authorizationExpiresAt: session.authorizationExpiresAt });
+      await hub.alarm();
+    });
+  }
+
+  it('asks a browser to renew before its deadline and keeps the socket after a valid renewal', async () => {
+    const host = await createDeviceIdentity();
+    const phone = await createDeviceIdentity();
+    stubSupabase({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')] });
+    const stub = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
+    const hostSocket = await authenticate(stub, host, host.deviceId, 'host');
+    const client = await authenticate(stub, phone, host.deviceId, 'client');
+    await shortenDeadline(stub, phone, 30_000);
+    await waitFor(() => client.messages.some((m) => m.type === 'relay_reauth_required'), 'renewal request');
+    client.client.send(JSON.stringify({ type: 'relay_reauth', access_token: 'renewed-token' }));
+    await waitFor(() => client.messages.some((m) => m.type === 'relay_reauth_ok'), 'renewal acknowledgement');
+    await runInDurableObject(stub, (hub) => {
+      const ws = relayInternals(hub).clientSockets.get(phone.deviceId)!;
+      const session = relayInternals(hub).sessions.get(ws) as { authorizationExpiresAt: number; reauthRequestedAt?: number };
+      expect(session.authorizationExpiresAt).toBeGreaterThan(Date.now() + 4 * 60_000);
+      expect(session.reauthRequestedAt).toBeUndefined();
+    });
+    client.client.send(JSON.stringify({ type: 'relay_command', command: { messageId: 'after-renewal', body: { kind: 'userInput' } } }));
+    await waitFor(() => hostSocket.messages.some((m) => m.type === 'relay_command'), 'command after renewal');
+    await expect(hubHealth(stub)).resolves.toMatchObject({ clients: 1 });
+  });
+
+  it('closes a browser whose renewed token is rejected', async () => {
+    const host = await createDeviceIdentity();
+    const phone = await createDeviceIdentity();
+    const devices = [deviceRow(host, 'host'), deviceRow(phone, 'phone')];
+    stubSupabase({ devices });
+    const stub = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
+    await authenticate(stub, host, host.deviceId, 'host');
+    const client = await authenticate(stub, phone, host.deviceId, 'client');
+    stubSupabase({ devices, failAuth: true });
+    client.client.send(JSON.stringify({ type: 'relay_reauth', access_token: 'stale-token' }));
+    await expect(client.closed).resolves.toMatchObject({ code: 4001 });
+    await expect(hubHealth(stub)).resolves.toMatchObject({ clients: 0 });
+  });
+
+  it('keeps the current deadline and asks for a retry when the account service is unreachable', async () => {
+    const host = await createDeviceIdentity();
+    const phone = await createDeviceIdentity();
+    stubSupabase({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')] });
+    const stub = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
+    await authenticate(stub, host, host.deviceId, 'host');
+    const client = await authenticate(stub, phone, host.deviceId, 'client');
+    const stubbed = globalThis.fetch;
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+      if (url.pathname === '/auth/v1/user') throw new Error('account service unreachable');
+      return stubbed(input, init);
+    });
+    client.client.send(JSON.stringify({ type: 'relay_reauth', access_token: 'renewed-token' }));
+    await waitFor(() => client.messages.some((m) => m.type === 'relay_reauth_failed'), 'retry request');
+    expect(client.messages.find((m) => m.type === 'relay_reauth_failed')).toMatchObject({ retry: true });
+    await expect(hubHealth(stub)).resolves.toMatchObject({ clients: 1 });
+  });
+});
+
+describe('RelayHub restore after revocation', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  async function authenticate(stub: DurableObjectStub<RelayHub>, identity: DeviceIdentity, hostID: string, role: 'host' | 'client') {
+    const socket = await openHubSocket(stub, relayPath(hostID));
+    socket.client.send(await signedClientAuth(identity, socket.nonce, role, { access_token: 'test-token' }));
+    await expect(socket.nextMessage()).resolves.toMatchObject({ type: 'auth_ok' });
+    return socket;
+  }
+
+  it('lets a browser back in only after the internal restore call', async () => {
+    const host = await createDeviceIdentity();
+    const phone = await createDeviceIdentity();
+    const pairings: Record<string, unknown>[] = [];
+    stubSupabase({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')], pairings });
+    const stub = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
+    await authenticate(stub, host, host.deviceId, 'host');
+    const client = await authenticate(stub, phone, host.deviceId, 'client');
+    const revoke = await stub.fetch('https://hub.test/internal/revoke-device', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ hostDeviceId: host.deviceId, hostPublicKeyB64: host.publicKeyB64, deviceId: phone.deviceId }),
+    });
+    expect(revoke.status).toBe(200);
+    await revoke.json();
+    await expect(client.closed).resolves.toMatchObject({ code: 4003 });
+
+    const denied = await openHubSocket(stub, relayPath(host.deviceId));
+    denied.client.send(await signedClientAuth(phone, denied.nonce, 'client', { access_token: 'test-token' }));
+    await expect(denied.closed).resolves.toMatchObject({ code: 4003 });
+
+    // The signaling hub deletes the revoked pairing rows when a link code is claimed.
+    pairings.splice(0, pairings.length);
+    const restore = await stub.fetch('https://hub.test/internal/restore-device', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ hostDeviceId: host.deviceId, deviceId: phone.deviceId }),
+    });
+    expect(restore.status).toBe(200);
+    expect(await restore.json()).toMatchObject({ ok: true, device_id: phone.deviceId });
+    await runInDurableObject(stub, async (_hub, state) => {
+      expect(await state.storage.get(`revoked-device:${phone.deviceId}`)).toBeUndefined();
+    });
+    const back = await openHubSocket(stub, relayPath(host.deviceId));
+    back.client.send(await signedClientAuth(phone, back.nonce, 'client', { access_token: 'test-token' }));
+    await expect(back.nextMessage()).resolves.toMatchObject({ type: 'auth_ok' });
+  });
+
+  it('refuses to restore a browser that belongs to another account', async () => {
+    const host = await createDeviceIdentity();
+    const phone = await createDeviceIdentity();
+    stubSupabase({ devices: [deviceRow(host, 'host'), { ...deviceRow(phone, 'phone'), user_id: 'other-user' }] });
+    const stub = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
+    const restore = await stub.fetch('https://hub.test/internal/restore-device', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ hostDeviceId: host.deviceId, deviceId: phone.deviceId }),
+    });
+    expect(restore.status).toBe(403);
+    await restore.json();
+  });
+});
+
+describe('SignalingHub link-code re-authorization', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('lifts a revoked pairing, clears both hubs, and tells the Mac with reauthorized_at', async () => {
+    const host = await createDeviceIdentity();
+    const phone = await createDeviceIdentity();
+    const hostRow = deviceRow(host, 'host');
+    const phoneRow = deviceRow(phone, 'phone');
+    const pairings: Record<string, unknown>[] = [{
+      id: 'pair-old', owner_user_id: 'user-1', host_device_uuid: hostRow.id, phone_device_uuid: phoneRow.id,
+      paired_at: '2026-09-01T00:00:00.000Z', revoked_at: '2026-09-02T00:00:00.000Z', metadata: { revoked_via: 'host' },
+    }];
+    const linkCodes: Record<string, unknown>[] = [{
+      id: 'code-1', code: 'ABC234', host_device_id: host.deviceId, host_public_key_b64: host.publicKeyB64,
+      host_label: 'Test Mac', host_metadata: {}, created_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 600_000).toISOString(), consumed_at: null, claimed_user_id: null,
+    }];
+    stubSupabase({ devices: [hostRow, phoneRow], pairings, linkCodes });
+    const stub = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`relink-${host.deviceId}`));
+    const denial = `${phone.deviceId}->${host.deviceId}`;
+    await runInDurableObject(stub, async (_hub, state) => { await state.storage.put(`revoked-pair:${denial}`, true); });
+    await evictDurableObject(stub);
+    const relay = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
+    await runInDurableObject(relay, async (_hub, state) => { await state.storage.put(`revoked-device:${phone.deviceId}`, true); });
+    await evictDurableObject(relay);
+
+    const hostSocket = await openHubSocket(stub, '/signal');
+    hostSocket.client.send(await signedClientAuth(host, hostSocket.nonce, 'host'));
+    await expect(hostSocket.nextMessage()).resolves.toMatchObject({ type: 'auth_ok' });
+
+    const response = await stub.fetch('https://hub.test/account/claim-host-code', {
+      method: 'POST', headers: { authorization: 'Bearer test-token', 'content-type': 'application/json' },
+      body: JSON.stringify({ code: 'ABC234', requesterDeviceId: phone.deviceId }),
+    });
+    const body = await response.json() as { ok?: boolean; host?: { paired?: boolean } };
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(pairings.filter((row) => row.revoked_at != null)).toHaveLength(0);
+    const active = pairings.find((row) => row.revoked_at == null) as { metadata?: { reauthorized_at?: string } } | undefined;
+    expect(typeof active?.metadata?.reauthorized_at).toBe('string');
+    await waitFor(() => hostSocket.messages.some((m) => m.type === 'account_device_authorized'), 'host notice');
+    expect(hostSocket.messages.find((m) => m.type === 'account_device_authorized')).toMatchObject({
+      requester_device_id: phone.deviceId, reauthorized_at: active?.metadata?.reauthorized_at,
+    });
+    await runInDurableObject(stub, async (_hub, state) => {
+      expect(await state.storage.get(`revoked-pair:${denial}`)).toBeUndefined();
+    });
+    await runInDurableObject(relay, async (_hub, state) => {
+      expect(await state.storage.get(`revoked-device:${phone.deviceId}`)).toBeUndefined();
+    });
+  });
+});
+
+describe('SignalingHub Mac-to-browser envelope authorization', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('looks the pair up once and reuses the decision for following envelopes', async () => {
+    const host = await createDeviceIdentity();
+    const phone = await createDeviceIdentity();
+    stubSupabase({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')] });
+    let deviceLookups = 0;
+    const stubbed = globalThis.fetch;
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+      if (url.pathname === '/rest/v1/devices' && (init?.method ?? 'GET').toUpperCase() === 'GET') deviceLookups += 1;
+      return stubbed(input, init);
+    });
+    const stub = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`hostcache-${host.deviceId}`));
+    const phoneSocket = await openHubSocket(stub, '/signal');
+    phoneSocket.client.send(await signedClientAuth(phone, phoneSocket.nonce, 'client'));
+    await expect(phoneSocket.nextMessage()).resolves.toMatchObject({ type: 'auth_ok' });
+    const hostSocket = await openHubSocket(stub, '/signal');
+    hostSocket.client.send(await signedClientAuth(host, hostSocket.nonce, 'host'));
+    await expect(hostSocket.nextMessage()).resolves.toMatchObject({ type: 'auth_ok' });
+    const envelope = { fromDeviceId: host.deviceId, toDeviceId: phone.deviceId, payload: { kind: 'ping' } };
+
+    await runInDurableObject(stub, (hub) => hub.webSocketMessage(signalingInternals(hub).peers.get(host.deviceId)!, JSON.stringify({ ...envelope, envelopeId: 'first' })));
+    await waitFor(() => phoneSocket.messages.some((m) => m.envelopeId === 'first'), 'first envelope');
+    const lookupsAfterFirst = deviceLookups;
+    expect(lookupsAfterFirst).toBeGreaterThan(0);
+
+    await runInDurableObject(stub, (hub) => hub.webSocketMessage(signalingInternals(hub).peers.get(host.deviceId)!, JSON.stringify({ ...envelope, envelopeId: 'second' })));
+    await waitFor(() => phoneSocket.messages.some((m) => m.envelopeId === 'second'), 'second envelope');
+    expect(deviceLookups).toBe(lookupsAfterFirst);
   });
 });

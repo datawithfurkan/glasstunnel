@@ -110,6 +110,50 @@ final class DeviceRegistryTests: XCTestCase {
         return directory.appendingPathComponent("devices.json")
     }
 
+    func testRemovedDeviceIsRestoredOnlyByALaterReauthorization() throws {
+        let url = registryURL()
+        let registry = DeviceRegistry(fileURL: url)
+        let device = makeDevice(id: "gt-phone-relink")
+        try registry.add(device)
+
+        try registry.remove(device.deviceId)
+
+        XCTAssertTrue(registry.isRevoked(device.deviceId))
+        XCTAssertNil(registry.get(device.deviceId))
+        XCTAssertThrowsError(try registry.add(device))
+        XCTAssertFalse(registry.isReauthorized(device.deviceId, at: Date(timeIntervalSinceNow: -60)))
+        XCTAssertTrue(registry.isReauthorized(device.deviceId, at: Date(timeIntervalSinceNow: 60)))
+
+        try registry.restore(device.deviceId)
+
+        XCTAssertFalse(registry.isRevoked(device.deviceId))
+        XCTAssertTrue(registry.isKnown(device.deviceId))
+        XCTAssertNil(registry.get(device.deviceId)?.removedAt)
+        XCTAssertTrue(DeviceRegistry(fileURL: url).isKnown(device.deviceId))
+        XCTAssertThrowsError(try registry.restore("gt-never-paired"))
+    }
+
+    func testAddKeepsPairingDateAndLastSeenAndSkipsUnchangedWrites() throws {
+        let url = registryURL()
+        let registry = DeviceRegistry(fileURL: url)
+        let device = makeDevice(id: "gt-phone-refresh")
+        XCTAssertTrue(try registry.add(device))
+        let seen = Date(timeIntervalSince1970: 1_720_000_000)
+        registry.updateLastSeen(device.deviceId, at: seen)
+
+        var relayCopy = device
+        relayCopy.pairedAt = Date()
+        XCTAssertFalse(try registry.add(relayCopy))
+        XCTAssertEqual(registry.get(device.deviceId)?.pairedAt, device.pairedAt)
+        XCTAssertEqual(registry.get(device.deviceId)?.lastSeenAt, seen)
+
+        relayCopy.label = "Renamed phone"
+        XCTAssertTrue(try registry.add(relayCopy))
+        XCTAssertEqual(registry.get(device.deviceId)?.label, "Renamed phone")
+        XCTAssertEqual(registry.get(device.deviceId)?.lastSeenAt, seen)
+        XCTAssertEqual(DeviceRegistry(fileURL: url).get(device.deviceId)?.label, "Renamed phone")
+    }
+
     private func makeDevice(id: String) -> DeviceRegistry.PairedDevice {
         DeviceRegistry.PairedDevice(
             deviceId: id,

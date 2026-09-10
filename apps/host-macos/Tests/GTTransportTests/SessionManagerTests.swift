@@ -29,6 +29,38 @@ final class SessionManagerTests: XCTestCase {
     }
 
     @MainActor
+    func testLinkCodeReauthorizationRestoresARemovedDevice() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let registry = DeviceRegistry(fileURL: directory.appendingPathComponent("devices.json"))
+        let phone = DeviceKey()
+        let device = DeviceRegistry.PairedDevice(deviceId: phone.deviceId, publicKey: phone.publicKeyRaw, label: "Local test")
+        try registry.add(device)
+        try registry.remove(phone.deviceId)
+        let defaultsName = "ReauthorizationTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: defaultsName)!
+        defer { defaults.removePersistentDomain(forName: defaultsName) }
+        let manager = SessionManager(deviceKey: DeviceKey(),
+            signalingURL: URL(string: "ws://127.0.0.1:1/signal")!, turnURL: "",
+            hostDeviceLabel: "Local test", autoLock: AutoLock(), registry: registry,
+            remoteAppController: RemoteAppController(defaults: defaults, executableExists: { _ in false }))
+        let paired = expectation(description: "the restored device is reported as paired")
+        manager.onPaired = { _ in paired.fulfill() }
+
+        // A plain account notice and a re-authorization older than the removal keep the denial.
+        manager.acceptAuthorizedDevice(device, reauthorizedAt: nil)
+        XCTAssertTrue(registry.isRevoked(phone.deviceId))
+        manager.acceptAuthorizedDevice(device, reauthorizedAt: Date(timeIntervalSinceNow: -3600))
+        XCTAssertTrue(registry.isRevoked(phone.deviceId))
+
+        manager.acceptAuthorizedDevice(device, reauthorizedAt: Date(timeIntervalSinceNow: 60))
+
+        XCTAssertTrue(registry.isKnown(phone.deviceId))
+        XCTAssertFalse(registry.isRevoked(phone.deviceId))
+        wait(for: [paired], timeout: 1)
+    }
+
+    @MainActor
     func testRelayUploadChunksAreIsolatedByDeviceAndDiscardedOnRevocation() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

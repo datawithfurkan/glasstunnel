@@ -47,6 +47,10 @@ interface RelaySessionAttachment {
   deviceLabel?: string;
   pairedAt?: string;
   authorizationExpiresAt?: number;
+  /** Set once the relay asked this browser to renew its account token in place. */
+  reauthRequestedAt?: number;
+  /** When a link code lifted an earlier removal of this browser on the Mac. */
+  reauthorizedAt?: string;
   cacheRetentionVersion?: number;
   hostDeviceId: string;
   issuedAt: number;
@@ -84,6 +88,12 @@ interface AccountAuthorizationCacheEntry {
   pairedAt: string;
   expiresAt: number;
   notifiedHostSessionIssuedAt?: number;
+  reauthorizedAt?: string;
+}
+
+interface HostEnvelopeAuthorization {
+  expiresAt: number;
+  hostPublicKeyB64: string;
 }
 
 interface ControlMessage {
@@ -139,6 +149,12 @@ interface DevicePairingRow {
   phone_device_uuid: string;
   paired_at: string;
   revoked_at: string | null;
+  metadata?: Record<string, JsonValue> | null;
+}
+
+function pairingReauthorizedAt(pairing: DevicePairingRow | null | undefined): string | undefined {
+  const value = pairing?.metadata?.reauthorized_at;
+  return typeof value === "string" && value ? value : undefined;
 }
 
 class DeviceAuthorizationError extends Error {}
@@ -203,6 +219,8 @@ const STORAGE_RELAY_LAST_HOST_SEEN_KEY = "relayLastHostSeenAt";
 const STORAGE_RETENTION_ACTIVE_KEY = 'contentRetentionV1';
 // The first page also includes three fixed keys; storage.delete permits 128.
 const CACHE_CLEANUP_BATCH = 125;
+/** Browsers are asked to renew their account token this long before the relay deadline. */
+const RELAY_REAUTH_LEAD_MS = 60_000;
 const RELAY_LAST_SEEN_PERSIST_INTERVAL_MS = 60_000;
 const RELAY_PRESENCE_STALE_MS = 2 * 60_000;
 /**
@@ -884,6 +902,8 @@ export class SignalingHub extends DurableObject<Env> {
   /** Last message from each host socket; the Mac pings every 20 s. */
   private readonly hostLastSeenAt = new Map<string, number>();
   private accountAuthorizationCache = new Map<string, AccountAuthorizationCacheEntry>();
+  /** Positive Mac→browser envelope decisions; revocation clears the pair's entry. */
+  private readonly hostEnvelopeAuthorizations = new Map<string, HostEnvelopeAuthorization>();
   private readonly revokedPairs = new Set<string>();
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -1247,12 +1267,26 @@ export class SignalingHub extends DurableObject<Env> {
     if (requesterDeviceId) {
       const requester = await findDeviceByDeviceId(this.env, requesterDeviceId);
       if (requester && requester.user_id === user.id && requester.kind !== "host" && !requester.revoked_at) {
+        const reauthorizedAt = (await this.liftPairingDenial(hostDevice, requester)) ? isoNow() : undefined;
         pairing = await ensurePairing(this.env, {
           ownerUserId: user.id,
           hostDeviceUuid: hostDevice.id,
           requesterDeviceUuid: requester.id,
-          metadata: { approved_via: "link_code_claim" },
+          metadata: { approved_via: "link_code_claim", ...(reauthorizedAt ? { reauthorized_at: reauthorizedAt } : {}) },
         });
+        // Tell a connected Mac right away instead of waiting for this browser's
+        // first envelope, so a removed phone reappears in Access after the claim.
+        const hostPeer = this.peers.get(linkCode.host_device_id);
+        if (hostPeer) {
+          this.sendAccountDeviceAuthorized(hostPeer, {
+            requesterDeviceId: requester.device_id,
+            requesterPublicKeyB64: requester.public_key_b64,
+            requesterLabel: requester.label,
+            pairedAt: pairing.paired_at,
+            expiresAt: Date.now() + ACCOUNT_AUTH_CACHE_TTL_MS,
+            reauthorizedAt: pairingReauthorizedAt(pairing) ?? reauthorizedAt,
+          });
+        }
       }
     }
 
@@ -1475,6 +1509,7 @@ export class SignalingHub extends DurableObject<Env> {
       const key = accountAuthorizationCacheKey(deviceId, host.device_id);
       this.revokedPairs.add(key);
       this.accountAuthorizationCache.delete(key);
+      this.hostEnvelopeAuthorizations.delete(key);
       await this.ctx.storage.put(`revoked-pair:${key}`, true);
       for (const [destination, queue] of this.offlineQueues) {
         this.offlineQueues.set(destination, queue.filter((entry) => {
@@ -1692,13 +1727,27 @@ export class SignalingHub extends DurableObject<Env> {
   ): Promise<boolean> {
     if (!session.deviceId || !session.publicKeyB64 || !envelope.toDeviceId) return false;
     if (session.role === "host") {
+      // Agent updates and ICE candidates arrive many times a second; a positive
+      // decision is reused for the same window as browser authorizations.
+      const pairKey = accountAuthorizationCacheKey(envelope.toDeviceId, session.deviceId);
+      const remembered = this.hostEnvelopeAuthorizations.get(pairKey);
+      if (remembered && remembered.expiresAt > Date.now() && remembered.hostPublicKeyB64 === session.publicKeyB64) {
+        return true;
+      }
       const [host, requester] = await Promise.all([
         findDeviceByDeviceId(this.env, session.deviceId),
         findDeviceByDeviceId(this.env, envelope.toDeviceId),
       ]);
-      return !!host && !!requester && host.kind === "host" && requester.kind !== "host" &&
+      const authorized = !!host && !!requester && host.kind === "host" && requester.kind !== "host" &&
         !host.revoked_at && !requester.revoked_at && host.user_id === requester.user_id &&
         host.public_key_b64 === session.publicKeyB64 && !(await hasRevokedPairing(this.env, host, requester));
+      if (authorized && !this.revokedPairs.has(pairKey)) {
+        this.hostEnvelopeAuthorizations.set(pairKey, {
+          expiresAt: Date.now() + ACCOUNT_AUTH_CACHE_TTL_MS,
+          hostPublicKeyB64: session.publicKeyB64,
+        });
+      }
+      return authorized;
     }
 
     const destinationSession = destination ? this.getSession(destination) : null;
@@ -1746,6 +1795,7 @@ export class SignalingHub extends DurableObject<Env> {
       pairedAt: pairing.paired_at,
       expiresAt: Date.now() + ACCOUNT_AUTH_CACHE_TTL_MS,
       notifiedHostSessionIssuedAt: destinationSession?.issuedAt,
+      reauthorizedAt: pairingReauthorizedAt(pairing),
     };
     if (this.isRevokedEnvelope(envelope)) return false;
     this.accountAuthorizationCache.set(cacheKey, cacheEntry);
@@ -1763,7 +1813,38 @@ export class SignalingHub extends DurableObject<Env> {
       requester_public_key_b64: authorization.requesterPublicKeyB64,
       requester_label: authorization.requesterLabel,
       paired_at: authorization.pairedAt,
+      ...(authorization.reauthorizedAt ? { reauthorized_at: authorization.reauthorizedAt } : {}),
     });
+  }
+
+  /**
+   * A link code generated on the Mac is the explicit re-authorization gesture:
+   * it lifts an earlier removal of this browser in the account records, in this
+   * hub's denial list, and in the Mac's relay object. Returns true if a denial
+   * existed, so the pairing can carry a `reauthorized_at` that the Mac compares
+   * with its own tombstone.
+   */
+  private async liftPairingDenial(host: DeviceRow, requester: DeviceRow): Promise<boolean> {
+    const scope = `owner_user_id=eq.${encodeFilterValue(host.user_id)}&host_device_uuid=eq.${encodeFilterValue(host.id)}&phone_device_uuid=eq.${encodeFilterValue(requester.id)}&revoked_at=not.is.null`;
+    const revoked = await supabaseRest<DevicePairingRow[]>(this.env, `/device_pairings?${scope}&select=id`);
+    if (revoked.length === 0) return false;
+    await supabaseRest<DevicePairingRow[]>(this.env, `/device_pairings?${scope}`, {
+      method: "DELETE",
+      headers: { Prefer: "return=minimal" },
+    });
+    const key = accountAuthorizationCacheKey(requester.device_id, host.device_id);
+    this.revokedPairs.delete(key);
+    this.accountAuthorizationCache.delete(key);
+    this.hostEnvelopeAuthorizations.delete(key);
+    await this.ctx.storage.delete(`revoked-pair:${key}`);
+    const relay = this.env.RELAY_HUB.get(this.env.RELAY_HUB.idFromName(host.device_id));
+    const response = await relay.fetch("https://relay.glasstunnel.internal/internal/restore-device", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ hostDeviceId: host.device_id, deviceId: requester.device_id }),
+    });
+    const result = await response.json() as { ok?: boolean };
+    if (!response.ok || result.ok !== true) throw new Error("could not restore relay access for this device");
+    return true;
   }
 
   private unregisterPeer(ws: WebSocket): void {
@@ -2012,6 +2093,9 @@ export class RelayHub extends DurableObject<Env> {
     if (url.pathname === "/internal/revoke-device" && request.method === "POST") {
       return this.revokeDevice(request);
     }
+    if (url.pathname === "/internal/restore-device" && request.method === "POST") {
+      return this.restoreDevice(request);
+    }
     if (url.pathname === "/health") {
       return json({
         ok: true,
@@ -2090,6 +2174,11 @@ export class RelayHub extends DurableObject<Env> {
     if (!isSocketOpen(ws) || (session.role === "client" && this.revokedDevices.has(session.deviceId ?? ""))) {
       if (isSocketOpen(ws)) ws.close(4003, "access revoked");
       await this.unregisterRelaySocket(ws);
+      return;
+    }
+
+    if (session.role === "client" && parsed.type === "relay_reauth") {
+      await this.handleClientReauth(ws, session, parsed);
       return;
     }
 
@@ -2179,6 +2268,7 @@ export class RelayHub extends DurableObject<Env> {
     let deviceLabel: string | undefined;
     let pairedAt: string | undefined;
     let authorizationExpiresAt: number | undefined;
+    let reauthorizedAt: string | undefined;
     if (role === "host") {
       if (deviceId !== session.hostDeviceId) {
         ws.close(1008, "host device mismatch");
@@ -2228,6 +2318,7 @@ export class RelayHub extends DurableObject<Env> {
       userId = user.id;
       deviceLabel = requester.label;
       pairedAt = requester.created_at;
+      reauthorizedAt = pairingReauthorizedAt(await findActivePairing(this.env, host.user_id, host.id, requester.id));
     }
 
     // Authentication yielded to database I/O; revocation may have completed
@@ -2256,6 +2347,8 @@ export class RelayHub extends DurableObject<Env> {
       deviceLabel,
       pairedAt,
       authorizationExpiresAt,
+      reauthRequestedAt: undefined,
+      reauthorizedAt,
       cacheRetentionVersion: parsed.cache_retention_version === 1 ? 1 : undefined,
     };
     this.sessions.set(ws, updated);
@@ -2314,7 +2407,89 @@ export class RelayHub extends DurableObject<Env> {
       type: "account_device_authorized", requester_device_id: session.deviceId,
       requester_public_key_b64: session.publicKeyB64,
       requester_label: session.deviceLabel ?? "Signed-in device", paired_at: session.pairedAt,
+      ...(session.reauthorizedAt ? { reauthorized_at: session.reauthorizedAt } : {}),
     });
+  }
+
+  /**
+   * Renews a browser's relay authorization on the open socket. The deadline is
+   * the same one the initial auth applied (token expiry, at most five minutes),
+   * so the account and device checks run again without the socket dropping.
+   */
+  private async handleClientReauth(
+    ws: WebSocket,
+    session: RelaySessionAttachment,
+    parsed: Record<string, unknown>,
+  ): Promise<void> {
+    const accessToken = stringField(parsed.access_token);
+    const deviceId = session.deviceId;
+    if (!accessToken || !deviceId || !session.publicKeyB64) {
+      if (isSocketOpen(ws)) ws.close(1008, "access token is required");
+      await this.unregisterRelaySocket(ws);
+      return;
+    }
+    let expiresAt: number;
+    let reauthorizedAt: string | undefined;
+    try {
+      const user = await resolveUserFromAccessToken(this.env, accessToken);
+      expiresAt = relayAuthorizationDeadline(accessToken);
+      const [host, requester] = await Promise.all([
+        findDeviceByDeviceId(this.env, session.hostDeviceId),
+        findDeviceByDeviceId(this.env, deviceId),
+      ]);
+      const authorized = expiresAt > Date.now() && user.id === session.userId && !!host && !!requester &&
+        host.kind === "host" && requester.kind !== "host" && !host.revoked_at && !requester.revoked_at &&
+        host.user_id === user.id && requester.user_id === user.id && requester.public_key_b64 === session.publicKeyB64;
+      if (!authorized || !host || !requester) {
+        if (isSocketOpen(ws)) ws.close(4001, "authentication expired");
+        await this.unregisterRelaySocket(ws);
+        return;
+      }
+      if (this.revokedDevices.has(deviceId) || (await hasRevokedPairing(this.env, host, requester))) {
+        if (isSocketOpen(ws)) ws.close(4003, "access revoked");
+        await this.unregisterRelaySocket(ws);
+        return;
+      }
+      reauthorizedAt = pairingReauthorizedAt(await findActivePairing(this.env, host.user_id, host.id, requester.id));
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("auth ")) {
+        if (isSocketOpen(ws)) ws.close(4001, "authentication expired");
+        await this.unregisterRelaySocket(ws);
+        return;
+      }
+      // The account service was unreachable: keep the current deadline and let
+      // the browser retry before it passes.
+      if (!sendJsonToOpenSocket(ws, { type: "relay_reauth_failed", retry: true, at: Date.now() })) {
+        await this.unregisterRelaySocket(ws);
+      }
+      return;
+    }
+    if (!isSocketOpen(ws)) {
+      await this.unregisterRelaySocket(ws);
+      return;
+    }
+    const current = this.sessions.get(ws) ?? session;
+    const updated: RelaySessionAttachment = {
+      ...current, authorizationExpiresAt: expiresAt, reauthRequestedAt: undefined, reauthorizedAt,
+    };
+    this.sessions.set(ws, updated);
+    asAttachmentSocket(ws).serializeAttachment(updated);
+    if (!sendJsonToOpenSocket(ws, { type: "relay_reauth_ok", expires_at: expiresAt, at: Date.now() })) {
+      await this.unregisterRelaySocket(ws);
+      return;
+    }
+    await this.scheduleAlarm(expiresAt - RELAY_REAUTH_LEAD_MS, true);
+  }
+
+  /** Asks a browser to renew before its deadline; expired sockets still close on time. */
+  private requestClientReauth(ws: WebSocket, session: RelaySessionAttachment, now: number): void {
+    if (session.role !== "client" || !session.authenticated || session.reauthRequestedAt) return;
+    const expiresAt = session.authorizationExpiresAt ?? 0;
+    if (expiresAt <= now || expiresAt - now > RELAY_REAUTH_LEAD_MS) return;
+    const updated: RelaySessionAttachment = { ...session, reauthRequestedAt: now };
+    this.sessions.set(ws, updated);
+    asAttachmentSocket(ws).serializeAttachment(updated);
+    sendJsonToOpenSocket(ws, { type: "relay_reauth_required", expires_at: expiresAt, at: now });
   }
 
   private closeExpiredClient(ws: WebSocket, session: RelaySessionAttachment): boolean {
@@ -2455,7 +2630,12 @@ export class RelayHub extends DurableObject<Env> {
   }
 
   private cacheTiming(record: CacheRecord) {
-    return { version: record.version, receivedAt: record.receivedAt, expiresAt: record.expiresAt };
+    // remainingMs lets a browser place the deadline on its own clock; the
+    // absolute stamps are the relay's clock and may run ahead of the phone's.
+    return {
+      version: record.version, receivedAt: record.receivedAt, expiresAt: record.expiresAt,
+      remainingMs: Math.max(0, record.expiresAt - Date.now()),
+    };
   }
 
   private cacheManifest(): Record<string, unknown> {
@@ -2527,6 +2707,31 @@ export class RelayHub extends DurableObject<Env> {
       return json({ ok: true, device_id: deviceId });
     } catch {
       return json({ ok: false, error: "Could not confirm revocation. Retry on the Mac." }, { status: 503 });
+    }
+  }
+
+  /** Internal binding only: a link-code claim lifts this browser's relay denial. */
+  private async restoreDevice(request: Request): Promise<Response> {
+    try {
+      const body = await readJsonBody<Record<string, unknown>>(request);
+      const hostDeviceId = stringField(body.hostDeviceId);
+      const deviceId = stringField(body.deviceId);
+      if (!hostDeviceId || !deviceId || !this.ctx.id.equals(this.env.RELAY_HUB.idFromName(hostDeviceId))) {
+        return json({ ok: false, error: "restore is not authorized" }, { status: 403 });
+      }
+      const [host, requester] = await Promise.all([
+        findDeviceByDeviceId(this.env, hostDeviceId),
+        findDeviceByDeviceId(this.env, deviceId),
+      ]);
+      if (!host || host.kind !== "host" || host.revoked_at || !requester || requester.kind === "host" ||
+          requester.revoked_at || requester.user_id !== host.user_id) {
+        return json({ ok: false, error: "restore is not authorized" }, { status: 403 });
+      }
+      this.revokedDevices.delete(deviceId);
+      await this.ctx.storage.delete(`revoked-device:${deviceId}`);
+      return json({ ok: true, device_id: deviceId });
+    } catch {
+      return json({ ok: false, error: "Could not restore relay access." }, { status: 503 });
     }
   }
 
@@ -2654,6 +2859,7 @@ export class RelayHub extends DurableObject<Env> {
       const session = this.getRelaySession(ws);
       if (session?.cacheRetentionVersion === 1 && !this.closeExpiredClient(ws, session)) sendJsonToOpenSocket(ws, this.cacheManifest());
     }
+    for (const [ws, session] of this.sessions) this.requestClientReauth(ws, session, now);
     for (const [ws, session] of this.sessions) this.closeExpiredClient(ws, session);
     const host = this.hostSocket;
     if (host) {
@@ -2696,7 +2902,9 @@ export class RelayHub extends DurableObject<Env> {
     at = Math.min(at, this.cleanupAt);
     if (this.hostSocket) at = Math.min(at, this.lastHostSeenAt + HOST_SILENCE_CLOSE_MS);
     for (const session of this.sessions.values()) {
-      if (session.role === "client" && session.authenticated) at = Math.min(at, session.authorizationExpiresAt ?? Date.now());
+      if (session.role !== "client" || !session.authenticated) continue;
+      const expiresAt = session.authorizationExpiresAt ?? Date.now();
+      at = Math.min(at, session.reauthRequestedAt ? expiresAt : expiresAt - RELAY_REAUTH_LEAD_MS);
     }
     if (
       !force &&

@@ -3,7 +3,7 @@ export const CACHE_TTL_MS = 24 * 60 * 60_000;
 const VERSION_PREFIX = `${CACHE_PREFIX}v2.`;
 const REVISION_KEY = 'gt.relay.cacheRevision';
 
-export interface CacheTiming { version: 1; receivedAt: number; expiresAt: number }
+export interface CacheTiming { version: 1; receivedAt: number; expiresAt: number; remainingMs?: number }
 export interface OfflineItem extends CacheTiming { data: unknown }
 interface Copy { version: 2; accountId: string; hostId: string; items: Record<string, OfflineItem> }
 interface Storage {
@@ -23,6 +23,27 @@ export function validCacheTiming(value: unknown, now = Date.now()): value is Cac
   return item.version === 1 && Number.isSafeInteger(item.receivedAt) && item.receivedAt > 0 &&
     item.receivedAt <= now && Number.isSafeInteger(item.expiresAt) && item.expiresAt > now &&
     item.expiresAt > item.receivedAt && item.expiresAt - item.receivedAt <= CACHE_TTL_MS;
+}
+
+/**
+ * Places a deadline stamped by another clock (the relay's, or an earlier copy of
+ * this browser's) onto this browser's clock. Only the lifetime is trusted: a
+ * relay clock that runs ahead of the phone's must not make fresh content look
+ * like it arrived in the future, and one that runs behind must not extend it.
+ * Returns null for a malformed or already expired deadline.
+ */
+export function localizeCacheTiming(value: unknown, now = Date.now()): CacheTiming | null {
+  if (!value || typeof value !== 'object') return null;
+  const item = value as CacheTiming;
+  if (item.version !== 1 || !Number.isSafeInteger(item.receivedAt) || item.receivedAt <= 0 ||
+    !Number.isSafeInteger(item.expiresAt) || item.expiresAt <= item.receivedAt) return null;
+  const lifetime = Math.min(item.expiresAt - item.receivedAt, CACHE_TTL_MS);
+  const remaining = typeof item.remainingMs === 'number' && Number.isFinite(item.remainingMs)
+    ? Math.min(Math.floor(item.remainingMs), lifetime)
+    // Without the relay's own countdown, a stamp ahead of this clock counts as age zero.
+    : lifetime - Math.min(Math.max(0, now - item.receivedAt), lifetime);
+  if (remaining <= 0) return null;
+  return { version: 1, receivedAt: now - (lifetime - remaining), expiresAt: now + remaining };
 }
 
 // One serialized lane plus Web Locks across tabs. A durable revision prevents a
@@ -97,10 +118,18 @@ export class OfflineCache {
 
   receive(key: string, data: unknown, cached: boolean, timing?: CacheTiming): boolean {
     const now = Date.now();
-    if (!this.allowedItem(key) || (cached && !validCacheTiming(timing, now))) return false;
-    // A supplied but invalid deadline must not silently become a fresh copy.
-    if (timing !== undefined && !validCacheTiming(timing, now)) return false;
-    const receipt = timing ?? { version: 1 as const, receivedAt: now, expiresAt: now + CACHE_TTL_MS };
+    if (!this.allowedItem(key)) return false;
+    let receipt: CacheTiming;
+    if (timing !== undefined) {
+      // A supplied but invalid or expired deadline must not silently become a fresh copy.
+      const local = localizeCacheTiming(timing, now);
+      if (!local) return false;
+      receipt = local;
+    } else if (cached) {
+      return false;
+    } else {
+      receipt = { version: 1, receivedAt: now, expiresAt: now + CACHE_TTL_MS };
+    }
     this.items = { ...this.items, [key]: { ...receipt, data } };
     this.save();
     return true;

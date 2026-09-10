@@ -19,6 +19,8 @@ public final class DeviceRegistry: @unchecked Sendable {
         public var lastSeenAt: Date?
         public var revoked: Bool
         public var removedAt: Date?
+        /// When this Mac denied the device; a later server re-authorization lifts it.
+        public var revokedAt: Date?
         public var revocationConfirmedAt: Date?
 
         public init(deviceId: DeviceID, publicKey: Data, label: String, pairedAt: Date = Date(), lastSeenAt: Date? = nil, revoked: Bool = false) {
@@ -29,6 +31,7 @@ public final class DeviceRegistry: @unchecked Sendable {
             self.lastSeenAt = lastSeenAt
             self.revoked = revoked
             self.removedAt = nil
+            self.revokedAt = nil
             self.revocationConfirmedAt = nil
         }
     }
@@ -59,12 +62,25 @@ public final class DeviceRegistry: @unchecked Sendable {
         return device
     }
 
-    public func add(_ device: PairedDevice) throws {
+    /// Adds a device, or refreshes a known one while keeping its pairing date and
+    /// last-seen time. Returns false when nothing changed (no write happens then:
+    /// relays repeat the authorization notice on every browser renewal).
+    @discardableResult
+    public func add(_ device: PairedDevice) throws -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        if devices[device.deviceId]?.revoked == true { throw RegistryError.revoked }
-        devices[device.deviceId] = device
+        if let existing = devices[device.deviceId] {
+            if existing.revoked { throw RegistryError.revoked }
+            var merged = device
+            merged.pairedAt = existing.pairedAt
+            merged.lastSeenAt = existing.lastSeenAt ?? device.lastSeenAt
+            if merged == existing { return false }
+            devices[device.deviceId] = merged
+        } else {
+            devices[device.deviceId] = device
+        }
         try persistLocked()
+        return true
     }
 
     public func revoke(_ id: DeviceID) throws {
@@ -72,6 +88,7 @@ public final class DeviceRegistry: @unchecked Sendable {
         defer { lock.unlock() }
         if var d = devices[id] {
             d.revoked = true
+            if d.revokedAt == nil { d.revokedAt = Date() }
             devices[id] = d
         }
         try persistLocked()
@@ -83,9 +100,30 @@ public final class DeviceRegistry: @unchecked Sendable {
         if var device = devices[id] {
             device.revoked = true
             device.removedAt = Date()
+            if device.revokedAt == nil { device.revokedAt = device.removedAt }
             devices[id] = device
         }
         try persistLocked()
+    }
+
+    /// Lifts this Mac's denial after the server reported a link-code re-authorization.
+    public func restore(_ id: DeviceID) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard var device = devices[id] else { throw RegistryError.unknown }
+        device.revoked = false
+        device.removedAt = nil
+        device.revokedAt = nil
+        device.revocationConfirmedAt = nil
+        devices[id] = device
+        try persistLocked()
+    }
+
+    /// True when a server-side re-authorization happened after this Mac denied the device.
+    public func isReauthorized(_ id: DeviceID, at date: Date) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard let device = devices[id], device.revoked else { return false }
+        return date > (device.revokedAt ?? device.removedAt ?? .distantPast)
     }
 
     public func confirmRevocation(_ id: DeviceID) throws {
@@ -99,11 +137,12 @@ public final class DeviceRegistry: @unchecked Sendable {
     }
 
     public enum RegistryError: LocalizedError {
-        case revoked, notRevoked
+        case revoked, notRevoked, unknown
         public var errorDescription: String? {
             switch self {
             case .revoked: return "Access for this device was revoked."
             case .notRevoked: return "Device revocation has not been recorded."
+            case .unknown: return "This device is not in the registry."
             }
         }
     }

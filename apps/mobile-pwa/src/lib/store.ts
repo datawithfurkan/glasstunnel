@@ -462,6 +462,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         keypair: phoneKeypair,
         host: pairedHost,
         accessToken: session.access_token,
+        getAccessToken: async () => (await currentSession()).access_token,
         onState: (state) => {
           if (!isCurrent()) return;
           if (state.online === true) {
@@ -499,6 +500,15 @@ export const useAppStore = create<AppState>((set, get) => ({
             ]).catch(() => {
               set({ accessRevocationNotice: 'Access was revoked. Browser offline copies could not be cleared; retry in Profile.' });
             });
+            return;
+          }
+          if (event.code === 4001) {
+            // The relay's authorization window ended without an in-place renewal
+            // (an older relay, or a token refresh that failed): reconnect at once
+            // instead of showing the Mac as offline while the socket returns.
+            reconnectAttempt = 0;
+            set({ signaling: null, relay: null });
+            scheduleReconnect(set, get, connectionStatusCopy('reconnecting'), 0);
             return;
           }
           const error = connectionStatusCopy('reconnecting');
@@ -2047,13 +2057,13 @@ function shouldDeferToPendingReconnect(reason?: string): boolean {
   return reconnectTimer !== null && !USER_INITIATED_RECOVERY_REASONS.has(reason ?? '');
 }
 
-function scheduleReconnect(set: SetState, get: () => AppState, reason: string) {
+function scheduleReconnect(set: SetState, get: () => AppState, reason: string, delayOverrideMs?: number) {
   if (typeof window === 'undefined') return;
   if (reconnectTimer !== null || isDocumentHidden()) return;
   const state = get();
   if (!isWorkspaceRoute(state.route) || !state.pairedHost || !state.phoneKeypair) return;
 
-  const delay = RECONNECT_BACKOFF_MS[Math.min(reconnectAttempt, RECONNECT_BACKOFF_MS.length - 1)];
+  const delay = delayOverrideMs ?? RECONNECT_BACKOFF_MS[Math.min(reconnectAttempt, RECONNECT_BACKOFF_MS.length - 1)];
   reconnectAttempt += 1;
   reconnectTimer = window.setTimeout(() => {
     reconnectTimer = null;

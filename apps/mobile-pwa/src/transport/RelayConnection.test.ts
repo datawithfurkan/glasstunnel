@@ -58,6 +58,36 @@ describe('RelayConnection host presence gating', () => {
     });
   });
 
+  it('renews its authorization in place with a fresh account token when the relay asks', async () => {
+    const getAccessToken = vi.fn(async () => 'fresh-token');
+    const { relay, send } = await connectedRelay({ hostOnline: true, getAccessToken });
+
+    await handleRelayMessage(relay, { type: 'relay_reauth_required', expires_at: Date.now() + 60_000 });
+
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    expect(getAccessToken).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(send.mock.calls[0]?.[0] as string)).toMatchObject({
+      type: 'relay_reauth',
+      access_token: 'fresh-token',
+    });
+  });
+
+  it('retries a renewal the relay could not complete', async () => {
+    vi.useFakeTimers();
+    try {
+      const { relay, send } = await connectedRelay({ hostOnline: true, getAccessToken: async () => 'fresh-token' });
+
+      await handleRelayMessage(relay, { type: 'relay_reauth_failed', retry: true });
+      expect(send).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(send.mock.calls[0]?.[0] as string)).toMatchObject({ type: 'relay_reauth' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('blocks commands again after host_offline relay errors', async () => {
     const { relay, send } = await connectedRelay({ hostOnline: true });
 
@@ -160,6 +190,7 @@ async function connectedRelay(options: {
   hostOnline: boolean | null;
   onScreenFrame?: ConstructorParameters<typeof RelayConnection>[0]['onScreenFrame'];
   onState?: ConstructorParameters<typeof RelayConnection>[0]['onState'];
+  getAccessToken?: ConstructorParameters<typeof RelayConnection>[0]['getAccessToken'];
 }) {
   const keypair = await generateDeviceKeypair();
   const host: PairedHost = {
@@ -173,6 +204,7 @@ async function connectedRelay(options: {
     keypair,
     host,
     accessToken: 'test-token',
+    getAccessToken: options.getAccessToken,
     onScreenFrame: options.onScreenFrame,
     onState: options.onState,
   });
