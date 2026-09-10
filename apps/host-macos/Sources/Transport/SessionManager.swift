@@ -228,16 +228,11 @@ public final class SessionManager {
                 manager.handleRelayCommand(message, from: clientDeviceID)
             }
         }
-        relay.onAuthorizedDevice = { [weak self, weak relay] device in
+        relay.onAuthorizedDevice = { [weak self, weak relay] device, reauthorizedAt in
             guard let manager = self, let relay else { return }
             Task { @MainActor [manager, relay] in
-                guard manager.relay === relay, !manager.registry.isRevoked(device.deviceId) else { return }
-                do {
-                    try manager.registry.add(device)
-                    manager.onPaired?(device)
-                } catch {
-                    manager.onState?(.error("Could not save account device: \(error.localizedDescription)"))
-                }
+                guard manager.relay === relay else { return }
+                manager.acceptAuthorizedDevice(device, reauthorizedAt: reauthorizedAt)
             }
         }
 
@@ -1945,20 +1940,34 @@ public final class SessionManager {
             return
         }
 
-        if registry.isRevoked(requesterDeviceID) {
-            return
-        }
-
         let paired = DeviceRegistry.PairedDevice(
             deviceId: requesterDeviceID,
             publicKey: publicKey,
             label: Self.nonEmpty(msg["requester_label"] as? String) ?? "Signed-in device",
             pairedAt: parseISODate(msg["paired_at"] as? String) ?? Date()
         )
+        acceptAuthorizedDevice(paired, reauthorizedAt: parseISODate(msg["reauthorized_at"] as? String))
+    }
 
+    /// Records an account-authorized browser. A device this Mac removed stays
+    /// denied unless the server reports a link-code re-authorization that is
+    /// newer than the denial: entering a code generated on this Mac is the
+    /// owner's explicit "allow again".
+    func acceptAuthorizedDevice(_ device: DeviceRegistry.PairedDevice, reauthorizedAt: Date?) {
+        var restored = false
+        if registry.isRevoked(device.deviceId) {
+            guard let reauthorizedAt, registry.isReauthorized(device.deviceId, at: reauthorizedAt) else { return }
+            do {
+                try registry.restore(device.deviceId)
+                restored = true
+            } catch {
+                onState?(.error("Could not restore device access: \(error.localizedDescription)"))
+                return
+            }
+        }
         do {
-            try registry.add(paired)
-            onPaired?(paired)
+            let changed = try registry.add(device)
+            if changed || restored { onPaired?(device) }
         } catch {
             onState?(.error("Could not save account device: \(error.localizedDescription)"))
         }

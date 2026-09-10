@@ -60,8 +60,8 @@ and [UI parity](../agent-ui-contract.md).
 | 1. Existing patch | Complete; deployed and verified 2026-09-06 | Protected PR/checks, approved deployment and bounded verification |
 | 2. Revocation | Complete in source and hosted services; Mac binary publication remains separate | Active/new sessions denied across relay and WebRTC; UI confirmation is truthful |
 | 3. Permissions | Complete in source and hosted services; Mac binary publication remains separate | Host policy rejects unauthorized actions regardless of browser behavior |
-| 4. Retention | Local gates passed 2026-09-07; protected rollout and hosted sweep pending | Tested expiry/deletion and account-scoped cache behavior |
-| 5. E2E design | Queued, design only | Maintainer approves the threat model and migration design |
+| 4. Retention | Complete; deployed and migration verified 2026-09-07 | Tested expiry/deletion and account-scoped cache behavior |
+| 5. E2E design | Proposal ready; maintainer decision pending, no implementation | Maintainer approves the threat model and migration design |
 
 Advance only when the current stage's gate passes. A human-gated stage stays open;
 record the exact next action and send one Telegram message. While waiting, read
@@ -341,8 +341,8 @@ The concrete decision and migration proposal is
 24-hour offline replica lifetime, account-scoped browser caches, clearing on
 sign-out/removal, and discarding legacy copies with unverifiable age/ownership.
 This does not delete original chats or files. Policy approval was received on
-2026-09-07. Runtime implementation and local validation are active; hosted
-deletion has not yet occurred.
+2026-09-07. Runtime implementation, local validation, protected integration,
+deployment and the hosted cache-only migration passed that day.
 One deduplicated Telegram policy-decision notification was delivered on
 2026-09-06. There is no repeated authentication or routine approval gate.
 
@@ -368,6 +368,8 @@ account/offline-recovery journey.
   is erased and which provider logs/backups are outside that guarantee.
 - [x] Run Worker runtime tests, PWA tests/build/lint and local offline E2E; review
   migration behavior before the approved deployment.
+- [x] Merge the tested tree through protected checks, deploy its exact SHA, then
+  inventory/apply/verify every enumerated hosted object without returning content.
 
 **Acceptance:** expired or wrong-account content is not returned; deletion is
 bounded and verifiable, including after restart, without erasing unrelated users.
@@ -404,25 +406,60 @@ bounded and verifiable, including after restart, without erasing unrelated users
 - Ordinary account/Terminal and two-browser permission/revocation compatibility
   checks passed. The security/privacy audit (including targeted Swift policy and
   redaction checks), 617-file public-repository audit and whitespace check passed.
-  Final protected integration, exact-SHA deploy and inventory/apply/verify remain
-  the exit gate. Hosted cache deletion has not occurred. Stage 5 remains queued.
+  Protected integration, exact-SHA deployment and the hosted sweep also passed,
+  as recorded below. Stage 5 is now a design proposal, not crypto implementation.
+
+### Stage 4 Hosted Evidence (2026-09-07)
+
+- [PR #35](https://github.com/datawithfurkan/glasstunnel/pull/35) merged at
+  `0f98a93d047f435ea41f2fc62c954c7516e6b980`; its tree equals tested `f2bcafd6`.
+  All five checks passed in [PR CI](https://github.com/datawithfurkan/glasstunnel/actions/runs/34102762574)
+  and the automatic [main confirmation](https://github.com/datawithfurkan/glasstunnel/actions/runs/34103071925).
+  Protected checks, linear history and force-push/deletion blocks remain enabled.
+- One exact-SHA [Deploy](https://github.com/datawithfurkan/glasstunnel/actions/runs/34103107240)
+  succeeded. PWA `b9d8e353-2fb6-45be-8521-727faf1c7a9c` and site
+  `9eae421a-a5ac-4a9d-a7d2-2625e44e7089` both report source `0f98a93d`.
+  Worker deployment `499ca15f-7449-4fab-bf4f-3d16c6ded9eb` routes 100% to
+  version `17a86291-faa3-4692-aa8b-455e5d57455e`.
+- Fresh isolated Chromium/WebKit phone-view canaries passed: signed-out shell and
+  reload, synthetic legacy IndexedDB cache removal, unrelated-key preservation,
+  zero page errors. Screenshots were inspected; no personal account was used.
+  Public site, PWA, service worker and signaling health returned 200. Service
+  worker remains `public, no-cache, must-revalidate`.
+- Count-only inventory covered all 183 enumerated relay/signaling objects,
+  including dormant objects: 509 cache records, 503 invalid/legacy and six fresh.
+  Apply removed exactly 503; independent fresh enumeration/verification at
+  09:02 UTC found six valid records, zero invalid records, active retention on
+  every object and zero cleanup failures. No payload content was returned.
+- Scope excludes original chats/project files, Mac attachments, account/device
+  identities, credentials and revocation tombstones. Signaling constructor cleanup
+  can precede inventory, so envelope counts are not a historical deletion total.
+- The resumable ledger is ignored at `.cache/retention/ledger.json`, mode 0600.
+  Temporary operator directories/processes were removed. Lab status reports no
+  owned services. No Mac release, signing, Keychain or TCC mutation occurred.
+- Recovery must retain expiry-aware `0f98a93d` or a forward fix. Do not revert the
+  Worker to stage 3 or restore deleted plaintext cache keys. Provider backups and
+  closed-browser physical deletion remain the documented limits.
 
 ## Stage 5: E2E Architecture Decision, Not Implementation
 
-**Create:** `docs/architecture/relay-e2e-design.md` after stages 2-4 pass.
+**Proposal:** [`relay-e2e-design.md`](relay-e2e-design.md), prepared after stages
+2-4 passed. Recommends an endpoint-trusted, Mac-approved enrollment model and a
+bounded local MLS interoperability spike, not an immediate production dependency.
 
-- [ ] Define the threat model: what a compromised relay/operator may read, replace,
+- [x] Define the threat model: what a compromised relay/operator may read, replace,
   replay or suppress; endpoint compromise and availability remain separate risks.
-- [ ] Compare keeping the disclosed trusted relay with application-layer E2E using
+- [x] Compare keeping the disclosed trusted relay with application-layer E2E using
   maintained protocols/libraries. Research current primary documentation, license,
   maintenance and Swift/browser interoperability; do not select home-grown crypto.
-- [ ] Specify identity verification, key distribution/rotation, multi-device
+- [x] Specify identity verification, key distribution/rotation, multi-device
   enrollment, revocation, recovery, encrypted offline state and metadata leakage.
-- [ ] Specify capability negotiation and rollout across old/new PWA, Worker and
+- [x] Specify capability negotiation and rollout across old/new PWA, Worker and
   Mac versions. Never silently downgrade a promised encrypted session to plaintext.
-- [ ] Provide a migration/rollback plan, concrete test vectors and an independent
+- [x] Provide a migration/rollback plan, concrete test vectors and an independent
   security-review requirement. Estimate implementation scope from the chosen design.
-- [ ] Present the decision and tradeoffs to the maintainer, then stop for approval.
+- [ ] Obtain the maintainer's decision on the presented threat model and bounded
+  feasibility stage. Do not implement crypto or change public claims meanwhile.
 
 **Acceptance:** an approved, testable design and migration plan. No encryption
 rollout or claims change merely because a design document exists.
@@ -433,11 +470,12 @@ Update this section and `docs/current-loop-state.md` when a gate changes, not on
 every check. Use the PR/check/deploy URLs as external evidence without creating
 extra documentation-only CI runs while an approval is pending.
 
-- Active stage: 4 approved implementation/validation. Stages 1-3 passed in source and hosted services. The public
-  Mac binary still needs a separately coordinated release for the new host code.
-- Working branch: `codex/security-retention`, from the tested stage 3 merge.
-  Retention runtime changes, regression tests and the bounded migration operator
-  are local; production deletion remains pending the inventory gate.
+- Active stage: 5 design decision. Stages 1-4 passed in source and hosted services.
+  The public Mac binary still needs a separately coordinated release for the new
+  host code. No E2E runtime change or encryption claim has been made.
+- Working branch: `codex/security-e2e-design`, from stage 4 merge `0f98a93d`.
+  Only final evidence and the design proposal remain local, avoiding a second
+  documentation-only push/CI cycle. Runtime main is synchronized and deployed.
 - Stage 2 merged source: `c4acdc2a62c4e43a67d4d653a8d907340a1706ed` via
   [PR #33](https://github.com/datawithfurkan/glasstunnel/pull/33). The merged tree
   exactly matches tested candidate `db998a2c`. All five protected checks passed
@@ -446,8 +484,8 @@ extra documentation-only CI runs while an approval is pending.
   and routine continuation of this plan on 2026-09-06. Do not repeat that approval.
 - Review authority: sole maintainer authorized zero contributor approvals;
   protected PRs and the five strict checks remain required.
-- Local validation: passed for the security patch and this plan on 2026-09-06.
-- Main CI: all five checks passed in the automatic post-merge confirmation,
+- Stage 1 local validation: passed for the security patch and plan on 2026-09-06.
+- Stage 1 main CI: all five checks passed in the automatic post-merge confirmation,
   not a manually dispatched rerun:
   https://github.com/datawithfurkan/glasstunnel/actions/runs/34042927618
 - Authentication: restored on 2026-09-06 using normal `wrangler login` with
@@ -456,10 +494,10 @@ extra documentation-only CI runs while an approval is pending.
   no credential values belong in this document. Read-only queries succeeded
   in separate CLI invocations. Earlier manually opened requests exceeded
   Wrangler's two-minute callback window; do not reuse their expired links.
-- Deployment rollback baseline: before the rollout, production Pages records were PWA
+- Stage 1 historical rollback baseline: before that rollout, Pages records were PWA
   `4b447db0-75ea-4114-9a5b-284c1d4604f0` and site
   `2a0532e8-e4cc-4cbe-9292-2e2590a37fe0`, both source `44b8cb9`.
-  The latest Worker deployment is `f2a0cda9-09c5-4089-a298-032b8f51fc81`,
+  The then-latest Worker deployment was `f2a0cda9-09c5-4089-a298-032b8f51fc81`,
   with 100% on version `c9deee67-e744-426a-a1c8-6dadaa567061`.
   These records match the timing of successful GitHub Deploy run `33844017476`.
   Recheck the active deployment immediately before any later rollback or release.
@@ -497,7 +535,35 @@ extra documentation-only CI runs while an approval is pending.
   is 100% `e270b0d9-bae4-473f-a195-f1b5b05344a2`. The immediately preceding
   stage 2 deployment IDs above were freshly checked as rollback references.
   No storage migration, retention purge, Mac release or installed-app change.
-- Next action: finish the approved stage 4 local
-  deterministic-clock, cache-isolation and offline tests before one reviewed
-  rollout. The lab is stopped. No routine approval or Cloudflare login is needed.
-  Stage 5 remains queued and design-only. Do not bypass either substantive gate.
+- Stage 4 deployment and verified cache-only migration: see its hosted evidence
+  section above. No retention blocker or Cloudflare login remains.
+- Next action: obtain the stage 5 threat-model/feasibility decision. Recommend a
+  coordinated release of existing Mac security changes before broader E2E work.
+  Keep First-Run Activation paused. No active lab/operator service is left running.
+  One deduplicated Telegram design-decision notification was delivered on
+  2026-09-07; no additional retention or Docker approval is needed.
+
+## 2026-09-10 review follow-up
+
+A review of stages 1-4 against the merged source found four defects, fixed on the
+`security-followups` branch before the 0.1.10 Mac release:
+
+1. Relay clients were closed with code 4001 at most five minutes after
+   authenticating; the browser showed the Mac offline while it reconnected. The
+   relay now asks the browser to renew on the open socket a minute before the
+   deadline (`relay_reauth_required` / `relay_reauth` / `relay_reauth_ok`) and
+   closes only a browser that does not renew.
+2. Live and cached relay frames carried the relay clock's stamps and the browser
+   rejected any stamp later than its own clock; a phone whose clock ran behind
+   dropped every relay update. The relay now sends a countdown (`remainingMs`)
+   and the browser places deadlines on its own clock.
+3. Removing a phone left a permanent tombstone on the Mac, a revoked pairing on
+   the server and denial keys in both hubs, with no way back. A link code
+   generated on the Mac and claimed by that phone now lifts all of them and
+   reports `reauthorized_at`, which the Mac compares with its own removal.
+4. Mac-to-browser signaling envelopes were authorized with three uncached
+   database reads each; a positive decision is now cached for two minutes and
+   cleared on revocation.
+
+Stage 5 (E2E design) is deferred by the maintainer; see
+`docs/architecture/relay-e2e-design.md`.

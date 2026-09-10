@@ -46,17 +46,21 @@ disclosures, not hidden implementation details.
 
 - Hosted relay content is not end-to-end encrypted. The relay can read prompts,
   chat, tool output, commands, attachments and JPEG fallback frames, and stores
-  recent transcript snapshots. The September retention source bounds offline
+  recent transcript snapshots. The September 7 hosted deployment bounds offline
   replicas to 24 hours; reads do not extend their lifetime. This does not delete
   source conversations or provider backups, and a live Mac can publish new copies
   of older messages. Old browser versions must reload to adopt the browser policy.
-- The published 0.1.9 Mac does not include the new acknowledged cross-transport
-  revocation in the September source. The new operation needs a matching Mac,
-  Worker and PWA; local failure is not proof of server cutoff. Revocation affects
-  one browser identity on one Mac, not an account whose credentials are compromised.
-  Browser unlock is not mandatory biometric reauthentication. The host-owned
-  read-only boundary in September source also needs a new Mac binary; it is not
-  a complete per-device administrator policy. See `docs/security.md`.
+- Acknowledged cross-transport revocation and the Mac-owned read-only boundary
+  need a Mac running 0.1.10 or later together with the current Worker and PWA;
+  local failure is not proof of server cutoff. Revocation affects one browser
+  identity on one Mac, not an account whose credentials are compromised, and a
+  removed phone can only be allowed again with a new link code generated on that
+  Mac. Browser unlock is not mandatory biometric reauthentication. The read-only
+  boundary is not a complete per-device administrator policy. See `docs/security.md`.
+- The phone renews its relay authorization every few minutes on the open socket.
+  Browsers running a web app older than 0.1.10 do not answer the renewal request
+  and are reconnected at the deadline instead; reload the web app to adopt the
+  in-place renewal.
 - Screen Recording and Accessibility are powerful macOS permissions. Grant them only
   to a Glasstunnel build you trust and revoke them in System Settings when unused.
 - Secret redaction is best-effort. Do not intentionally display or send credentials,

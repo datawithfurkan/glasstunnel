@@ -1,10 +1,12 @@
 # Content Retention Proposal
 
-Status: approved by the maintainer on 2026-09-07; stage 4 implementation active.
+Status: approved and deployed; stage 4 passed on 2026-09-07 at `0f98a93d`.
 Approval includes the 24-hour lifetime and bounded, inventory-verified removal
-of legacy cache copies. No hosted deletion has occurred yet.
-Source inspected: `cc3377b1` on 2026-09-06. Single-driver security plan;
-no personal content was inspected and no production data was deleted.
+of legacy cache copies. The hosted sweep inspected 183 objects, removed 503
+expired/unverifiable records and preserved six fresh records. Verification found
+zero remaining invalid records and zero cleanup failures, with retention active.
+Pre-implementation source inspected: `cc3377b1` on 2026-09-06. No personal content
+was returned by the operator; original chats/files and security records were excluded.
 
 ## Approved Decision
 

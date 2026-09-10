@@ -1,6 +1,6 @@
 # Glasstunnel Security Model
 
-Reviewed against source on 2026-09-06. This describes the current public beta;
+Reviewed against source on 2026-09-07. This describes the current public beta;
 it is not an independent security certification.
 
 ## Trust Boundary
@@ -79,7 +79,7 @@ per-message abuse protection or a guarantee about every deployment's quotas.
   persists its session through its browser client. Offline workspace snapshots,
   including recent chat content, are also cached in IndexedDB. Expanded tool detail
   is held in memory, scoped by agent/message and cleared with connection/session
-  teardown. The September retention source scopes each offline copy by account
+  teardown. The September 7 hosted PWA scopes each offline copy by account
   and Mac, checks a per-item deadline of at most 24 hours, and clears the relevant
   copies on sign-out, account switch, revocation and forgetting a Mac. Profile's
   **Clear offline copies** erases this browser's copies, not server copies;
@@ -89,7 +89,7 @@ per-message abuse protection or a guarantee about every deployment's quotas.
 - **Hosted Cloudflare/Supabase control plane:** Supabase holds account and device
   records, linking/pairing data and approval requests. Cloudflare Durable Object
   storage persists host hello/app state and recent-message snapshots for offline
-  replay. The September retention source gives each accepted host publication a
+  replay. The September 7 hosted Worker gives each accepted host publication a
   24-hour maximum replica lifetime. Viewer reads, replays and heartbeats do not
   renew that deadline. Expired or unverifiable legacy copies cannot be replayed.
   Persistent alarms remove active storage keys in bounded batches even when no
@@ -102,8 +102,8 @@ per-message abuse protection or a guarantee about every deployment's quotas.
 - **Go signaling:** offline envelopes are queued temporarily in memory; Web Push
   subscriptions may be stored when enabled. Hosted signaling also uses Durable
   Object storage for queued envelopes. Its 60-second logical deadline is checked
-  before forwarding and maintained by a persistent cleanup alarm in the September
-  retention source. The legacy Go implementation is unchanged by this policy.
+  before forwarding and maintained by a persistent cleanup alarm in the September 7
+  hosted Worker. The legacy Go implementation is unchanged by this policy.
 - **TURN:** handles encrypted WebRTC packets and operational connection metadata.
   Its logging and credential retention depend on the deployment configuration.
 
@@ -114,6 +114,12 @@ not part of cache cleanup. Old PWA versions must reload to adopt browser expiry.
 Cloudflare SQLite Durable Object point-in-time recovery can retain earlier storage
 for 30 days. Active-key deletion does not promise immediate provider-backup erasure;
 provider logs and Supabase backups need separate operational verification.
+
+The approved hosted inventory/apply/verify sweep passed on 2026-09-07: 183
+objects inspected, 503 expired/unverifiable cache records removed and six fresh
+records preserved. All objects reported active retention with zero invalid records
+or cleanup failures at verification. Exact source/deployment evidence is in the
+[security hardening plan](architecture/security-hardening-plan.md).
 
 ## Redaction And Remote Controls
 
@@ -136,7 +142,7 @@ Existing streams and message-detail reads remain available. A browser can restri
 its own control, but cannot relax the Mac setting or change another browser's
 restriction. Denials are visible only to the requesting browser.
 
-**The published 0.1.9 Mac binary does not contain this new permission boundary.**
+**Mac binaries before 0.1.10 do not contain this permission boundary.**
 Updated browsers expose the per-browser switch only when a matching host advertises
 the policy; they do not send permission updates to legacy hosts. This is not a
 complete per-device administrator policy, account reauthentication, or cancellation
@@ -149,8 +155,8 @@ every cold start or server-enforced reauthentication.
 ## Revocation And Replay Limitations
 
 The September 2026 source adds acknowledged device revocation across the Mac,
-hosted relay and signaling paths. **The published 0.1.9 Mac binary does not contain
-this new operation.** Source integration and a hosted deployment do not update an
+hosted relay and signaling paths. **Mac binaries before 0.1.10 do not contain
+this operation.** Source integration and a hosted deployment do not update an
 installed Mac; binary publication is a separate release step.
 
 With the matching Mac/Worker/PWA versions, Revoke Access stops that device's local
@@ -162,9 +168,20 @@ the denial. Restarts, cached authorization and re-registering the same identity
 must not restore it. A revoked browser clears its active workspace and stops
 automatic reconnects; another authorized browser can continue.
 
-Relay clients reauthenticate at token expiry or after five minutes, whichever is
-earlier. This bounds stale account decisions, not the network latency of an explicit
-revocation. There is no supported sub-second guarantee. Revocation cannot cancel
+Relay clients renew their authorization on the open socket at token expiry or
+after five minutes, whichever is earlier: the relay asks about a minute before
+the deadline, the browser answers with a current account token, and the relay
+repeats the account, device and pairing checks before extending the deadline. A
+browser that does not renew in time is closed at the deadline (close code 4001)
+and reconnects. This bounds stale account decisions, not the network latency of
+an explicit revocation. There is no supported sub-second guarantee.
+
+Removal is reversible only through the Mac's owner: a new link code generated on
+that Mac and entered on the phone lifts the account denial, clears the relay and
+signaling denials, and reports a re-authorization time that the Mac compares with
+its own removal before it lifts its tombstone. Nothing else restores a removed
+phone; it must otherwise use a new browser identity, which appears as a new
+device to approve. Revocation cannot cancel
 a command already executing in a coding app, retract received content, or invalidate
 every Supabase account session. Same-account onboarding can authorize a new browser
 identity, so a compromised account requires account-level recovery as well.

@@ -51,6 +51,8 @@ export interface RelayConnectionOptions {
   keypair: DeviceKeypair;
   host: PairedHost;
   accessToken: string;
+  /** Supplies a current account token when the relay asks this socket to renew in place. */
+  getAccessToken?: () => Promise<string>;
   onState?: (state: { connected?: boolean; online?: boolean; error?: string }) => void;
   onHello?: (hello: Hello, cached: boolean, timing?: CacheTiming) => void;
   onRemoteApps?: (remoteApps: RemoteApp[], cached: boolean, timing?: CacheTiming) => void;
@@ -67,8 +69,10 @@ export class RelayConnection {
   private intentionalClose = false;
   private authenticated = false;
   private hostOnline: boolean | null = null;
+  private reauthRetryTimer: ReturnType<typeof setTimeout> | null = null;
   private static readonly attachmentChunkBytes = 32 * 1024;
   private static readonly maxBufferedBytes = 2 * 1024 * 1024;
+  private static readonly reauthRetryDelayMs = 5_000;
 
   constructor(opts: RelayConnectionOptions) {
     this.opts = opts;
@@ -93,6 +97,7 @@ export class RelayConnection {
       };
       ws.onclose = (event) => {
         this.authenticated = false;
+        this.clearReauthRetry();
         if (!settled) {
           settled = true;
           reject(new Error('relay WebSocket closed before authentication'));
@@ -115,8 +120,42 @@ export class RelayConnection {
     this.intentionalClose = true;
     this.authenticated = false;
     this.hostOnline = null;
+    this.clearReauthRetry();
     this.ws?.close();
     this.ws = null;
+  }
+
+  /**
+   * Renews the account authorization on the open socket. The relay asks about a
+   * minute before its deadline; answering keeps the workspace connected instead
+   * of the socket closing and the Mac flashing offline while it reconnects.
+   */
+  async reauthenticate(): Promise<boolean> {
+    this.clearReauthRetry();
+    if (!this.isConnected) return false;
+    let accessToken = this.opts.accessToken;
+    try {
+      accessToken = this.opts.getAccessToken ? await this.opts.getAccessToken() : accessToken;
+    } catch {
+      // A token refresh failure leaves the previous token; the relay decides.
+    }
+    if (!this.isConnected) return false;
+    return this.send({ type: 'relay_reauth', access_token: accessToken, at: Date.now() });
+  }
+
+  private scheduleReauthRetry() {
+    this.clearReauthRetry();
+    this.reauthRetryTimer = setTimeout(() => {
+      this.reauthRetryTimer = null;
+      void this.reauthenticate();
+    }, RelayConnection.reauthRetryDelayMs);
+  }
+
+  private clearReauthRetry() {
+    if (this.reauthRetryTimer !== null) {
+      clearTimeout(this.reauthRetryTimer);
+      this.reauthRetryTimer = null;
+    }
   }
 
   get isConnected() {
@@ -372,6 +411,15 @@ export class RelayConnection {
         if (Array.isArray(obj.agentIds) && obj.agentIds.every((id) => typeof id === 'string')) {
           this.opts.onCacheManifest?.({ hello: obj.hello === true, remoteApps: obj.remoteApps === true, agentIds: obj.agentIds as string[] });
         }
+        return;
+      case 'relay_reauth_required':
+        void this.reauthenticate();
+        return;
+      case 'relay_reauth_failed':
+        if (obj.retry === true) this.scheduleReauthRetry();
+        return;
+      case 'relay_reauth_ok':
+        this.clearReauthRetry();
         return;
       case 'relay_message_detail':
         this.opts.onMessageDetail?.(obj.detail as MessageDetail);

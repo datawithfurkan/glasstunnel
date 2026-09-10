@@ -57,13 +57,36 @@ describe('account scoped offline copies', () => {
   });
 
   it('rejects cached replays without a valid deadline and caps live retention', async () => {
-    const { cache } = fixture();
-    await cache.open('a', 'host');
-    expect(cache.receive('hello', {}, true)).toBe(false);
-    expect(cache.receive('hello', {}, true, { version: 1, receivedAt: 0, expiresAt: Infinity })).toBe(false);
-    const now = Date.now();
-    expect(cache.receive('hello', {}, false, { version: 1, receivedAt: now - 100, expiresAt: now + 100 })).toBe(true);
-    expect(cache.items.hello.expiresAt).toBe(now + 100);
+    vi.useFakeTimers();
+    try {
+      const { cache } = fixture();
+      await cache.open('a', 'host');
+      expect(cache.receive('hello', {}, true)).toBe(false);
+      expect(cache.receive('hello', {}, true, { version: 1, receivedAt: 0, expiresAt: Infinity })).toBe(false);
+      const now = Date.now();
+      expect(cache.receive('hello', {}, false, { version: 1, receivedAt: now - 100, expiresAt: now + 100 })).toBe(true);
+      expect(cache.items.hello.expiresAt).toBe(now + 100);
+      expect(cache.receive('hello', {}, false, { version: 1, receivedAt: now - 200, expiresAt: now - 1 })).toBe(false);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('places relay deadlines on this clock instead of trusting the relay clock', async () => {
+    vi.useFakeTimers();
+    try {
+      const { cache } = fixture();
+      await cache.open('a', 'host');
+      const now = Date.now();
+      // A relay clock two seconds ahead of the phone: the copy is fresh, not from the future.
+      expect(cache.receive('agent:a', {}, false, { version: 1, receivedAt: now + 2000, expiresAt: now + 2000 + CACHE_TTL_MS })).toBe(true);
+      expect(cache.items['agent:a']).toMatchObject({ receivedAt: now, expiresAt: now + CACHE_TTL_MS });
+      // The relay's own countdown wins over its absolute stamps.
+      expect(cache.receive('agent:b', {}, true, { version: 1, receivedAt: now - 3_600_000, expiresAt: now + 3_600_000, remainingMs: 60_000 })).toBe(true);
+      expect(cache.items['agent:b']).toMatchObject({ expiresAt: now + 60_000 });
+      expect(cache.receive('agent:c', {}, true, { version: 1, receivedAt: now - 10, expiresAt: now + 10, remainingMs: 0 })).toBe(false);
+      // A stamp behind this clock ages the copy and never extends it.
+      expect(cache.receive('agent:d', {}, true, { version: 1, receivedAt: now - CACHE_TTL_MS + 5000, expiresAt: now + 5000 })).toBe(true);
+      expect(cache.items['agent:d']).toMatchObject({ receivedAt: now - CACHE_TTL_MS + 5000, expiresAt: now + 5000 });
+    } finally { vi.useRealTimers(); }
   });
 
   it.each(['clear', 'reset'] as const)('does not resurrect a delayed write after %s', async (operation) => {

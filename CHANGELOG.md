@@ -3,7 +3,31 @@
 Notable user-facing changes are recorded here. Glasstunnel follows semantic
 versioning after the first public beta; pre-release compatibility may still change.
 
-## 0.1.10 - Unreleased
+## 0.1.10 - Sharper screen, shared hooks, tighter access
+
+### Security
+
+- Hosted relay content is described truthfully: WebRTC media and DataChannel
+  traffic are end-to-end encrypted between the Mac and the phone, the hosted
+  relay path is not. The README, the site, and the security model now say what
+  the relay can read and what it caches.
+- Removing or revoking a phone on the Mac cuts it off everywhere: the Mac stops
+  its session and refuses its commands at once, the relay closes its socket and
+  rejects its reconnects, the signaling hub drops its queued envelopes, and the
+  Access list shows whether the server has confirmed. A removed phone can be
+  allowed again only by entering a new link code generated on that Mac.
+- The Mac's read-only switch is authoritative: it blocks prompts, attachments,
+  pointer input, answers, interrupts, target and model changes, and app actions
+  from every phone over relay and WebRTC, persists across restarts, and only the
+  Mac can turn it off. A phone can still restrict itself.
+- Cached transcripts expire. The relay keeps a Mac's hello, app list, and recent
+  messages for at most 24 hours after the Mac last published them; the phone
+  keeps offline copies for the same window, scoped to the signed-in account and
+  Mac; sign-out and "Forget this Mac" delete them; Profile gains a "Clear offline
+  copies" button. 503 stale records left by earlier versions were removed from
+  the hosted relay on 2026-09-07.
+- Seven Dependabot alerts closed (browserslist 4.28.7, fast-uri 3.1.6,
+  postcss-selector-parser 6.1.3).
 
 ### Fixed
 
@@ -25,6 +49,19 @@ versioning after the first public beta; pre-release compatibility may still chan
   and the installed hook commands send every event to all running hosts, plus
   the single path that hosts before 0.1.10 bind; sockets left behind by a dead
   host are cleaned up on the next start.
+- The phone renews its relay authorization on the open socket every few minutes
+  instead of the relay closing the socket at each deadline, so the workspace no
+  longer flashes "Mac offline" while it reconnects. If a relay does close the
+  socket for authorization, the phone reconnects at once without marking the
+  Mac offline.
+- Relay frames stamped by a relay clock that runs ahead of the phone's are no
+  longer dropped: the phone places cache deadlines on its own clock, so a phone
+  whose clock is a little behind keeps receiving live updates and offline copies.
+- The relay checks a Mac-to-phone signaling pair against the account database
+  once every two minutes instead of on every message; agent updates and ICE
+  candidates no longer wait on three database reads each.
+- The Mac keeps a phone's pairing date and last-seen time when the relay repeats
+  an authorization notice, and no longer rewrites its device list on every renewal.
 
 ### Changed
 
@@ -36,7 +73,6 @@ versioning after the first public beta; pre-release compatibility may still chan
   stream every earlier release sent. Switching quality mid-stream restarts the
   capture on the track the phone already has, so nothing renegotiates.
 - The Mac Screen panel shows the received picture size next to "Screen ready".
-
 
 ## 0.1.9 - Cursor cards, Codex parity, and steady screen sharing
 

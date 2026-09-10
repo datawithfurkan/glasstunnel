@@ -18,7 +18,9 @@ public final class RelayClient: NSObject, URLSessionWebSocketDelegate, @unchecke
 
     public var onCommand: (@Sendable (DataChannelMessage, DeviceID?) -> Void)?
     public var onState: (@Sendable (State) -> Void)?
-    public var onAuthorizedDevice: (@Sendable (DeviceRegistry.PairedDevice) -> Void)?
+    /// A browser the account authorized for this Mac, with the time a link code
+    /// re-authorized it after a removal (nil when it was never removed).
+    public var onAuthorizedDevice: (@Sendable (DeviceRegistry.PairedDevice, Date?) -> Void)?
 
     private let url: URL
     private let deviceKey: DeviceKey
@@ -187,8 +189,8 @@ public final class RelayClient: NSObject, URLSessionWebSocketDelegate, @unchecke
             onAuthorizedDevice?(DeviceRegistry.PairedDevice(
                 deviceId: id, publicKey: key,
                 label: obj["requester_label"] as? String ?? "Signed-in device",
-                pairedAt: (obj["paired_at"] as? String).flatMap { ISO8601DateFormatter().date(from: $0) } ?? Date()
-            ))
+                pairedAt: Self.parseISODate(obj["paired_at"] as? String) ?? Date()
+            ), Self.parseISODate(obj["reauthorized_at"] as? String))
         case "relay_command":
             guard let command = obj["command"] else { return }
             do {
@@ -284,6 +286,26 @@ public enum RelayError: Error, Sendable {
 private struct RelayHelloMessage: Encodable {
     let type = "relay_hello"
     let hello: Hello
+}
+
+extension RelayClient {
+    /// Supabase stamps carry fractional seconds; plain internet dates parse too.
+    static func parseISODate(_ value: String?) -> Date? {
+        guard let value else { return nil }
+        return fractionalISO8601Formatter.date(from: value) ?? plainISO8601Formatter.date(from: value)
+    }
+
+    private static let fractionalISO8601Formatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static let plainISO8601Formatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
 }
 
 private struct RelayRemoteAppsMessage: Encodable {
