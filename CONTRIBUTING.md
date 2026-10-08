@@ -23,7 +23,6 @@ Prereqs:
 - Node 22+ and pnpm 9+
 - Go 1.22+
 - protoc
-- Docker Desktop and the Supabase CLI for account-first integration tests
 
 ```bash
 git clone https://github.com/datawithfurkan/glasstunnel

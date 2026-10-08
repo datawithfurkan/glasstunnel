@@ -38,7 +38,7 @@ describe('account API errors', () => {
     );
   });
 
-  it('classifies rejected Supabase bearer tokens as auth failures', async () => {
+  it('classifies rejected session bearer tokens as auth failures', async () => {
     fetchMock.mockResolvedValue(
       new Response(JSON.stringify({ ok: false, error: 'auth 403' }), {
         status: 401,

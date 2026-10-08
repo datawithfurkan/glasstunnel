@@ -6,8 +6,9 @@
   "vars": {
     "PUBLIC_APP_URL": "http://127.0.0.1:5173",
     "ALLOWED_ORIGINS": "http://127.0.0.1:5173",
-    "SUPABASE_URL": "http://127.0.0.1:1",
-    "SUPABASE_SERVICE_ROLE_KEY": "test-service-role-key",
+    // A fake account-plane gateway; tests answer it by stubbing fetch.
+    "CONVEX_SITE_URL": "https://gateway-test.convex.site",
+    "CONVEX_WORKER_SECRET": "worker-gateway-secret-for-tests-0123456789",
   },
   "ratelimits": [
     {

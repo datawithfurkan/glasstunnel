@@ -1,5 +1,5 @@
 // Worker unit tests must never reach the network. The test Wrangler config points
-// Supabase at an unreachable loopback address, and tests that exercise Supabase-backed
+// the account-plane gateway at a fake origin, and tests that exercise account-backed
 // paths stub `fetch` themselves (see relayHub.test.ts). Any other outbound fetch fails
 // fast here with a descriptive error instead of attempting a real connection.
 globalThis.fetch = async (input: RequestInfo | URL): Promise<Response> => {

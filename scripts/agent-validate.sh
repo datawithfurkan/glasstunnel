@@ -184,8 +184,15 @@ if has_file "playwright.config.ts" || has_file "tests/e2e/*" || has_file "tests/
   add_note "Playwright owns and cleans its local lab run; failure artifacts stay under .cache/glasstunnel-lab/playwright/."
 fi
 
-if has_file "supabase/*" || has_file "supabase/**"; then
-  add_note "Supabase migration/config changes need a local Supabase validation or a clear note if not run."
+if has_file "convex/*" || has_file "convex/**"; then
+  add_cmd "Convex functions typecheck" "pnpm exec tsc -p convex --noEmit"
+  add_cmd "Cloudflare Worker runtime tests" "pnpm worker:test"
+  add_cmd "Local browser integration" "pnpm lab:e2e"
+  add_note "Convex changes reach production only through the Deploy workflow; the lab runs the same functions on a local backend."
+fi
+
+if has_file "scripts/*.test.mjs"; then
+  add_cmd "Script unit tests" "node --test scripts/*.test.mjs"
 fi
 
 echo "Changed files considered:"

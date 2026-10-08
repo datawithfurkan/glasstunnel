@@ -26,13 +26,16 @@ export function labConfig(rootHint = MODULE_ROOT) {
     ports: {
       pwa: 5173,
       worker: 8787,
-      supabase: 54321,
+      convex: 3210,
+      convexSite: 3211,
     },
     urls: {
       pwa: 'http://127.0.0.1:5173',
       worker: 'http://127.0.0.1:8787',
       signaling: 'ws://127.0.0.1:8787/signal',
-      supabase: 'http://127.0.0.1:54321',
+      // Local Convex backend (accounts and sign-in), the same code as production.
+      convex: 'http://127.0.0.1:3210',
+      convexSite: 'http://127.0.0.1:3211',
     },
     identity: {
       email: 'lab@glasstunnel.test',
@@ -50,6 +53,8 @@ export function labConfig(rootHint = MODULE_ROOT) {
     files: {
       manifest: join(runtime, 'manifest.json'),
       workerEnv: join(runtime, 'worker.env'),
+      convexEnv: join(runtime, 'convex.env'),
+      convexSecrets: join(runtime, 'state', 'convex-secrets.json'),
       deviceKey: join(macRuntime, 'device-key.json'),
       deviceRegistry: join(macRuntime, 'devices.json'),
       macApp: join(macRuntime, 'Glasstunnel-Lab.app'),
@@ -73,30 +78,6 @@ export function ensureRuntimeDirectories(config = labConfig()) {
   }
 
   return config;
-}
-
-export function parseEnvOutput(text) {
-  const values = {};
-
-  for (const rawLine of String(text).split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith('#')) continue;
-
-    const match = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
-    if (!match) continue;
-
-    let value = match[2].trim();
-    if (
-      value.length >= 2 &&
-      ((value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'")))
-    ) {
-      value = value.slice(1, -1);
-    }
-    values[match[1]] = value;
-  }
-
-  return values;
 }
 
 export function redact(value) {

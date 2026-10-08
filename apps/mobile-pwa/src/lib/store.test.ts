@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const supabaseAuthMock = vi.hoisted(() => ({
+const authMock = vi.hoisted(() => ({
   getSession: vi.fn(),
   refreshSession: vi.fn(),
 }));
@@ -48,10 +48,10 @@ const relayConnectionMock = vi.hoisted(() => {
   };
 });
 
-vi.mock('./supabase', () => ({
-  hasSupabaseAuth: () => true,
-  supabase: {
-    auth: supabaseAuthMock,
+vi.mock('./authClient', () => ({
+  hasAccountAuth: () => true,
+  authClient: {
+    auth: authMock,
   },
 }));
 
@@ -117,8 +117,8 @@ describe('app store connection recovery', () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
     relayConnectionMock.instances.length = 0;
-    supabaseAuthMock.getSession.mockReset();
-    supabaseAuthMock.refreshSession.mockReset();
+    authMock.getSession.mockReset();
+    authMock.refreshSession.mockReset();
     useAppStore.getState().disconnectPeer();
     useAppStore.setState({
       route: 'loading',
@@ -1229,7 +1229,7 @@ function setupRecoverableWorkspace() {
       search: '',
     },
   });
-  supabaseAuthMock.getSession.mockResolvedValue({
+  authMock.getSession.mockResolvedValue({
     data: {
       session: {
         access_token: 'test-access-token',

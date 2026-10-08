@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -28,15 +28,14 @@ function fixtureConfig(t) {
   return ensureRuntimeDirectories(labConfig(root));
 }
 
-const localSupabase = {
-  apiUrl: 'http://127.0.0.1:54321',
-  anonKey: 'anon-value',
-  serviceRoleKey: 'service-value',
+const labSecrets = {
+  betterAuthSecret: 'auth-secret-value',
+  workerSecret: 'worker-secret-value',
 };
 
 test('Worker definition uses strict local ports and an ignored generated env file', (t) => {
   const config = fixtureConfig(t);
-  writeWorkerEnvironment(config, localSupabase);
+  writeWorkerEnvironment(config, labSecrets);
   const definition = workerServiceDefinition(config);
   const workerEnvironment = readFileSync(config.files.workerEnv, 'utf8');
 
@@ -61,13 +60,25 @@ test('Worker definition uses strict local ports and an ignored generated env fil
     '--local',
     '--show-interactive-dev-session=false',
   ]);
-  assert.equal(JSON.stringify(definition).includes('service-value'), false);
+  assert.equal(JSON.stringify(definition).includes('worker-secret-value'), false);
   assert.match(workerEnvironment, /ALLOWED_ORIGINS="http:\/\/127\.0\.0\.1:5173"/);
+  // The lab Worker must never reach production Convex (wrangler.jsonc's default).
+  assert.match(workerEnvironment, /CONVEX_URL="http:\/\/127\.0\.0\.1:3210"/);
+  assert.match(workerEnvironment, /CONVEX_SITE_URL="http:\/\/127\.0\.0\.1:3211"/);
+  assert.match(workerEnvironment, /CONVEX_WORKER_SECRET="worker-secret-value"/);
+  assert.equal(workerEnvironment.includes('convex.cloud'), false);
+  assert.equal(workerEnvironment.includes('convex.site'), false);
+});
+
+test('Worker environment refuses a non-local Convex backend', (t) => {
+  const config = fixtureConfig(t);
+  config.urls.convexSite = 'https://adorable-perch-596.convex.site';
+  assert.throws(() => writeWorkerEnvironment(config, labSecrets), /non-local/);
 });
 
 test('PWA definition supplies only explicit local account-first environment', (t) => {
   const config = fixtureConfig(t);
-  const definition = pwaServiceDefinition(config, localSupabase);
+  const definition = pwaServiceDefinition(config);
 
   assert.equal(definition.command, 'pnpm');
   assert.deepEqual(definition.args, [
@@ -84,8 +95,8 @@ test('PWA definition supplies only explicit local account-first environment', (t
   assert.deepEqual(definition.env, {
     VITE_PUBLIC_APP_URL: 'http://127.0.0.1:5173',
     VITE_SIGNALING_URL: 'ws://127.0.0.1:8787/signal',
-    VITE_SUPABASE_URL: 'http://127.0.0.1:54321',
-    VITE_SUPABASE_ANON_KEY: 'anon-value',
+    VITE_CONVEX_URL: 'http://127.0.0.1:3210',
+    VITE_CONVEX_SITE_URL: 'http://127.0.0.1:3211',
   });
 });
 
@@ -96,6 +107,12 @@ test('assertPortsAvailable refuses an unknown listener', async (t) => {
       findOwners: async (port) => (port === 8787 ? [99123] : []),
     }),
     /8787.*99123.*refusing/i,
+  );
+  await assert.rejects(
+    assertPortsAvailable(config, {
+      findOwners: async (port) => (port === 3210 ? [99124] : []),
+    }),
+    /3210.*99124.*refusing/i,
   );
 });
 
@@ -125,7 +142,7 @@ test('startCoreLab removes its manifest when service health fails', async (t) =>
   await assert.rejects(
     startCoreLab({
       config,
-      bootstrap: async () => ({ ...localSupabase, startedByLab: false }),
+      bootstrap: async () => labSecrets,
       findOwners: async () => [],
       spawnService: async (_config, definition) => ({
         name: definition.name,
@@ -219,13 +236,12 @@ test('stop closes the isolated signed Mac app even without a service manifest', 
   assert.deepEqual(result.services, []);
 });
 
-test('doctor reports tool versions, Docker, browsers, signing, ports, and stale ownership', async (t) => {
+test('doctor reports tool versions, the Convex CLI, browsers, signing, ports, and stale ownership', async (t) => {
   const config = fixtureConfig(t);
   writeManifest(config, {
-    version: 1,
+    version: 2,
     runId: 'stale-run',
     createdAt: '2026-07-22T00:00:00.000Z',
-    startedSupabaseByLab: false,
     services: [
       {
         name: 'worker',
@@ -240,7 +256,6 @@ test('doctor reports tool versions, Docker, browsers, signing, ports, and stale 
     config,
     runCommand: async (command, args) => {
       if (command === '/usr/bin/which') return { stdout: `/usr/local/bin/${args[0]}\n` };
-      if (command === 'docker' && args[0] === 'info') return { stdout: '27.0.0\n' };
       if (command === '/usr/bin/security') {
         return { stdout: '1) ABC123 "Apple Development: Local Test"\n' };
       }
@@ -251,15 +266,24 @@ test('doctor reports tool versions, Docker, browsers, signing, ports, and stale 
       webkit: '/test/browsers/webkit',
     }),
     pathExists: (path) =>
-      path.startsWith('/test/browsers/') || path.endsWith('node_modules/.bin/wrangler'),
-    findOwners: async () => [],
+      path.startsWith('/test/browsers/') ||
+      path.endsWith('node_modules/.bin/wrangler') ||
+      path.endsWith('node_modules/.bin/convex'),
+    findOwners: async (port) => (port === 3211 ? [4242] : []),
     processStatus: async () => ({ alive: false, owned: false }),
   });
 
   assert.equal(result.ok, false);
   assert.equal(result.tools.node.available, true);
   assert.match(result.tools.node.version, /1\.0\.0/);
-  assert.equal(result.docker.ready, true);
+  assert.equal(result.tools.convex.available, true);
+  assert.equal(result.tools.convex.path, join(config.root, 'node_modules/.bin/convex'));
+  assert.equal('docker' in result, false);
+  assert.equal('docker' in result.tools, false);
+  assert.equal('supabase' in result.tools, false);
+  assert.equal(result.ports.convex.available, true);
+  assert.equal(result.ports.convexSite.available, false);
+  assert.match(result.actions.join(' '), /Free the Convex site port 3211/);
   assert.equal(result.browsers.chromium.available, true);
   assert.equal(result.browsers.webkit.available, true);
   assert.equal(result.signing.stable, true);
@@ -275,7 +299,6 @@ test('doctor rejects an installed tool that cannot execute', async (t) => {
     runCommand: async (command, args) => {
       if (command === '/usr/bin/which') return { stdout: `/usr/local/bin/${args[0]}\n` };
       if (command.endsWith('/node')) throw new Error('broken executable');
-      if (command === 'docker' && args[0] === 'info') return { stdout: '27.0.0\n' };
       if (command === '/usr/bin/security') return { stdout: '0 valid identities found\n' };
       return { stdout: `${command} 1.0.0\n` };
     },
@@ -293,29 +316,25 @@ test('doctor rejects an installed tool that cannot execute', async (t) => {
   assert.match(result.actions.join(' '), /repair node/);
 });
 
-test('reset stops Supabase only when the reset had to start it', async (t) => {
+test('reset wipes the local Convex database and Worker state without running cloud commands', async (t) => {
   const config = fixtureConfig(t);
   const commands = [];
-  const common = {
+  const wiped = [];
+  mkdirSync(join(config.paths.workerState, 'v3'), { recursive: true });
+
+  const result = await resetLab({
     config,
     stopMacApp: async () => false,
     runCommand: async (command, args) => {
       commands.push([command, ...args]);
       return { stdout: '', stderr: '', exitCode: 0 };
     },
-    bootstrap: async () => ({ email: config.identity.email }),
-  };
-
-  await resetLab({
-    ...common,
-    resetDatabase: async () => ({ startedByLab: true }),
+    resetDatabase: (resetConfig) => wiped.push(resetConfig.root),
   });
-  assert.deepEqual(commands, [['supabase', 'stop']]);
 
-  commands.length = 0;
-  await resetLab({
-    ...common,
-    resetDatabase: async () => ({ startedByLab: false }),
-  });
+  assert.deepEqual(result, { reset: true, email: config.identity.email });
+  assert.deepEqual(wiped, [config.root]);
   assert.deepEqual(commands, []);
+  assert.equal(existsSync(join(config.paths.workerState, 'v3')), false);
+  assert.equal(existsSync(config.paths.workerState), true);
 });

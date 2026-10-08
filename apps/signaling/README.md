@@ -13,7 +13,7 @@ A tiny stateless WebSocket service that brokers WebRTC handshakes between a Mac 
 
 - It does not decrypt content and does not need envelope payloads to route signaling. For Web Push only, it reads the `agentStateEvent` status metadata reported by the Mac.
 - It stores nothing durable except (optionally) the browser's Web Push subscription, keyed by its public key.
-- It has no Supabase-backed account API. Identity is device-scoped via ed25519 keys. The hosted account-first path lives in `apps/cloudflare-signal`.
+- It has no account API. Identity is device-scoped via ed25519 keys. The hosted account-first path lives in `apps/cloudflare-signal`.
 
 ## Run locally
 

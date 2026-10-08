@@ -11,19 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { ensureRuntimeDirectories, labConfig, parseEnvOutput, redact } from './config.mjs';
-
-test('parseEnvOutput parses quoted and unquoted Supabase values', () => {
-  assert.deepEqual(
-    parseEnvOutput(
-      ['API_URL="http://127.0.0.1:54321"', 'ANON_KEY=abc', 'IGNORED LINE', ''].join('\n'),
-    ),
-    {
-      API_URL: 'http://127.0.0.1:54321',
-      ANON_KEY: 'abc',
-    },
-  );
-});
+import { ensureRuntimeDirectories, labConfig, redact } from './config.mjs';
 
 test('redact recursively hides credential-shaped fields', () => {
   assert.deepEqual(
@@ -57,7 +45,9 @@ test('labConfig resolves a symlinked root to its physical path', () => {
     assert.equal(config.urls.pwa, 'http://127.0.0.1:5173');
     assert.equal(config.urls.worker, 'http://127.0.0.1:8787');
     assert.equal(config.urls.signaling, 'ws://127.0.0.1:8787/signal');
-    assert.equal(config.urls.supabase, 'http://127.0.0.1:54321');
+    assert.equal(config.urls.convex, 'http://127.0.0.1:3210');
+    assert.equal(config.urls.convexSite, 'http://127.0.0.1:3211');
+    assert.equal(config.files.convexSecrets, join(config.paths.state, 'convex-secrets.json'));
     assert.equal(config.files.deviceRegistry, join(config.paths.macRuntime, 'devices.json'));
   } finally {
     rmSync(temp, { recursive: true, force: true });

@@ -289,7 +289,7 @@ private struct RelayHelloMessage: Encodable {
 }
 
 extension RelayClient {
-    /// Supabase stamps carry fractional seconds; plain internet dates parse too.
+    /// Account timestamps carry fractional seconds; plain internet dates parse too.
     static func parseISODate(_ value: String?) -> Date? {
         guard let value else { return nil }
         return fractionalISO8601Formatter.date(from: value) ?? plainISO8601Formatter.date(from: value)

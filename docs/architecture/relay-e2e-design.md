@@ -51,7 +51,7 @@ cipher. [WebCrypto security considerations](https://www.w3.org/TR/webcrypto/#sec
 
 | Adversary or event | Proposed guarantee and limit |
 | --- | --- |
-| Relay or Supabase operator reads stored/forwarded data | Only encrypted application payloads; account/routing metadata remains visible. |
+| Relay or account-service operator reads stored/forwarded data | Only encrypted application payloads; account/routing metadata remains visible. |
 | Relay substitutes keys, injects messages or invents same-account devices | No enrollment or command authority without independently verified endpoint credentials and host approval. |
 | Relay reorders, duplicates, delays or replays traffic | Authenticated state processing plus application freshness/deduplication; no repeated command execution. |
 | Relay suppresses traffic or partitions clients | Detect stale/unavailable state; no availability guarantee and no plaintext fallback. |

@@ -66,7 +66,7 @@ check_docs() {
   require_text SECURITY.md "security@glasstunnel.io"
   require_text SECURITY.md "Please do not open a public issue"
 
-  require_text docs/security.md "Hosted Cloudflare/Supabase control plane"
+  require_text docs/security.md "Hosted Cloudflare/Convex control plane"
   require_text docs/security.md "Hosted relay content is not"
   require_text docs/security.md "storage persists host hello/app state and recent-message snapshots"
   require_text docs/security.md "binary publication is a separate release step"

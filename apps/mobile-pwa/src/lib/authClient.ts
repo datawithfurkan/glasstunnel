@@ -2,8 +2,8 @@ import { convexClient } from '@convex-dev/better-auth/client/plugins';
 import { createAuthClient } from 'better-auth/react';
 import { platformConfig } from './platform';
 
-// Better Auth (on the Convex deployment) behind the small Supabase-shaped
-// surface the store was written against. The auth server lives on another
+// Better Auth (on the Convex deployment) behind the small session surface the
+// store uses: getSession, sign-in and sign-up, signOut, and auth change events. The auth server lives on another
 // site (*.convex.site), so this client never relies on cookies: the session
 // token is a bearer token kept in localStorage, delivered either in the
 // `set-auth-token` header (email sign-in) or as a one-time token in the URL
@@ -97,7 +97,7 @@ const OAUTH_FLOW_MAX_AGE_MS = 15 * 60_000;
 const SESSION_READ_TIMEOUT_MS = 10_000;
 const listeners = new Set<AuthCallback>();
 
-let authClient: AuthClient | null = null;
+let betterAuthClient: AuthClient | null = null;
 let redirectHandled: Promise<void> | null = null;
 let pendingRedirectError: string | null = null;
 let sessionRead: Promise<Session | null> | null = null;
@@ -157,8 +157,8 @@ function persistBearerTokenFromHeaders(headers?: Headers) {
 }
 
 function authClientInstance(): AuthActions {
-  if (!authClient) {
-    authClient = createAuthClient({
+  if (!betterAuthClient) {
+    betterAuthClient = createAuthClient({
       baseURL: getAuthBaseUrl(),
       plugins: [convexClient()],
       fetchOptions: {
@@ -169,7 +169,7 @@ function authClientInstance(): AuthActions {
       },
     });
   }
-  return authClient as unknown as AuthActions;
+  return betterAuthClient as unknown as AuthActions;
 }
 
 function assertAuthSuccess<T>(result: BetterAuthResponse<T>, fallbackMessage: string): T | null {
@@ -444,7 +444,7 @@ function attachCrossTabSync() {
   });
 }
 
-function providerFromSupabaseName(provider: string) {
+function providerFromName(provider: string) {
   const normalized = provider.trim().toLowerCase();
   if (normalized !== 'google' && normalized !== 'github') {
     throw new Error(`Unsupported hosted auth provider: ${provider}`);
@@ -459,7 +459,7 @@ function flowUrl(redirectTo: string | undefined, nonce: string, extra?: Record<s
   return url.toString();
 }
 
-export const supabase = platformConfig.convexSiteUrl
+export const authClient = platformConfig.convexSiteUrl
   ? {
       auth: {
         onAuthStateChange(callback: AuthCallback) {
@@ -488,7 +488,7 @@ export const supabase = platformConfig.convexSiteUrl
             return { data: { session: null }, error };
           }
         },
-        // The argument mirrors supabase-js; Better Auth refreshes from the bearer token.
+        // The argument is accepted for the store's call shape; Better Auth refreshes from the bearer token.
         async refreshSession(input?: { refresh_token?: string }) {
           void input;
           try {
@@ -505,7 +505,7 @@ export const supabase = platformConfig.convexSiteUrl
             const linkCode = redirectTo ? new URL(redirectTo).searchParams.get('linkCode') : null;
             storage()?.setItem(OAUTH_FLOW_KEY, JSON.stringify({ nonce, startedAt: Date.now(), linkCode } satisfies PendingOAuthFlow));
             const result = (await authClientInstance().signIn.social({
-              provider: providerFromSupabaseName(input.provider),
+              provider: providerFromName(input.provider),
               callbackURL: flowUrl(redirectTo, nonce),
               errorCallbackURL: flowUrl(redirectTo, nonce, { authError: '1' }),
             })) as BetterAuthResponse;
@@ -575,6 +575,6 @@ export const supabase = platformConfig.convexSiteUrl
     }
   : null;
 
-export function hasSupabaseAuth(): boolean {
-  return !!supabase;
+export function hasAccountAuth(): boolean {
+  return !!authClient;
 }

@@ -30,7 +30,7 @@ interface HubSocket {
   messages: Record<string, unknown>[];
 }
 
-type SupabaseGatePoint = 'device-lookup' | 'last-seen-touch' | 'auth-user' | 'device-update';
+type AccountGatePoint = 'device-lookup' | 'last-seen-touch' | 'auth-user' | 'device-update';
 
 const relayInternals = (hub: RelayHub) => hub as unknown as RelayHubInternals;
 const signalingInternals = (hub: SignalingHub) => hub as unknown as SignalingHubInternals;
@@ -112,6 +112,7 @@ async function openHubSocket(stub: DurableObjectStub, path: string): Promise<Hub
 }
 
 function deviceRow(identity: DeviceIdentity, kind: 'host' | 'phone'): Record<string, unknown> {
+  const at = new Date().toISOString();
   return {
     id: `${kind}-${identity.deviceId}`,
     user_id: 'user-1',
@@ -119,21 +120,47 @@ function deviceRow(identity: DeviceIdentity, kind: 'host' | 'phone'): Record<str
     public_key_b64: identity.publicKeyB64,
     kind,
     label: 'Disposable browser',
-    created_at: new Date().toISOString(),
+    platform: null,
+    app_version: null,
+    last_seen_at: null,
     revoked_at: null,
+    metadata: {},
+    created_at: at,
+    updated_at: at,
   };
 }
 
+/** The test Worker's gateway (test/wrangler.jsonc). */
+const GATEWAY_URL = 'https://gateway-test.convex.site/worker/account-plane';
+const GATEWAY_SECRET = 'worker-gateway-secret-for-tests-0123456789';
+
+class GatewayRejection extends Error {
+  constructor(readonly code: string) {
+    super(code);
+  }
+}
+
+class GatewayFailure extends Error {}
+
+/** The account-plane function a fetch call made, or null for any other request. */
+function gatewayFunction(input: RequestInfo | URL, init?: RequestInit): string | null {
+  const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+  if (url !== GATEWAY_URL || typeof init?.body !== 'string') return null;
+  return (JSON.parse(init.body) as { fn?: string }).fn ?? null;
+}
+
 /**
- * Replaces the Worker's outbound fetch with a fake Supabase that can pause exactly one
- * call. Pausing gives the test a deterministic window in which the socket under test
- * closes while the hub's auth handler is still awaiting.
+ * Replaces the Worker's outbound fetch with a fake Convex account-plane gateway.
+ * Each function mirrors convex/accountPlane.ts over in-memory rows in the shape
+ * the gateway returns. One call can be paused, which gives a test a deterministic
+ * window in which a socket closes, or a row changes, while the hub is awaiting.
  */
-function stubSupabase(options: {
-  gateOn?: SupabaseGatePoint;
+function stubAccountPlane(options: {
+  gateOn?: AccountGatePoint;
   devices?: Record<string, unknown>[];
   pairings?: Record<string, unknown>[];
   linkCodes?: Record<string, unknown>[];
+  approvals?: Record<string, unknown>[];
   failPairingWrites?: boolean;
   failAuth?: boolean;
 }) {
@@ -145,95 +172,191 @@ function stubSupabase(options: {
   const devices = options.devices ?? [];
   const pairings = options.pairings ?? [];
   const linkCodes = options.linkCodes ?? [];
+  const approvals = options.approvals ?? [];
+  let generated = 0;
+  const nextId = (prefix: string) => `${prefix}-${++generated}`;
+  const pauseIf = async (point: AccountGatePoint) => {
+    if (options.gateOn !== point || gate.reached) return;
+    gate.reached = true;
+    await gate.released;
+  };
+  const failPairingWrite = () => {
+    if (options.failPairingWrites) throw new GatewayFailure('pairing writes unavailable');
+  };
+  const samePair = (row: Record<string, unknown>, args: Record<string, unknown>) =>
+    row.owner_user_id === args.ownerUserId && row.host_device_uuid === args.hostDeviceUuid &&
+    row.phone_device_uuid === args.requesterDeviceUuid;
+  const remove = <Row,>(rows: Row[], drop: (row: Row) => boolean) => {
+    const kept = rows.filter((row) => !drop(row));
+    const removed = rows.length - kept.length;
+    rows.splice(0, rows.length, ...kept);
+    return removed;
+  };
+
+  const functions: Record<string, (args: Record<string, unknown>) => unknown | Promise<unknown>> = {
+    async verifyBearerToken() {
+      await pauseIf('auth-user');
+      return options.failAuth ? null : { id: 'user-1', email: 'user@example.test' };
+    },
+    async findDeviceByDeviceId(args) {
+      await pauseIf('device-lookup');
+      return devices.find((row) => row.device_id === args.deviceId) ?? null;
+    },
+    findDeviceByUuid: (args) => devices.find((row) => row.id === args.id) ?? null,
+    findProfileByUserId: () => null,
+    listHostDevicesForUser: (args) =>
+      devices.filter((row) => row.user_id === args.userId && row.kind === 'host' && row.revoked_at == null),
+    listPairingsForRequester: (args) =>
+      pairings.filter((row) => row.phone_device_uuid === args.requesterDeviceUuid && row.owner_user_id === args.ownerUserId),
+    findActivePairing: (args) => pairings.find((row) => samePair(row, args) && row.revoked_at == null) ?? null,
+    hasRevokedPairing: (args) => pairings.some((row) => samePair(row, args) && row.revoked_at != null),
+    findPendingApproval: (args) => approvals.find((row) => row.host_device_uuid === args.hostDeviceUuid &&
+      row.requester_device_uuid === args.requesterDeviceUuid && row.status === 'pending') ?? null,
+    findApprovalById: (args) => approvals.find((row) => row.id === args.requestId) ?? null,
+    listPendingApprovalsByHost: (args) =>
+      approvals.filter((row) => row.host_device_uuid === args.hostDeviceUuid && row.status === 'pending'),
+    getUnconsumedHostLinkCode: (args) => {
+      const usable = linkCodes.filter((row) => row.code === args.code && row.consumed_at == null &&
+        Date.parse(String(row.expires_at)) > Date.now());
+      return usable.length === 1 ? usable[0] : null;
+    },
+    async upsertUserDevice(args) {
+      const existing = devices.find((row) => row.device_id === args.deviceId);
+      const at = new Date().toISOString();
+      if (!existing) {
+        const row = {
+          id: nextId('convex-device'), user_id: args.userId, device_id: args.deviceId,
+          public_key_b64: args.publicKeyB64, label: args.label, kind: args.kind,
+          platform: args.platform ?? null, app_version: args.appVersion ?? null, last_seen_at: at,
+          revoked_at: null, metadata: args.metadata ?? {}, created_at: at, updated_at: at,
+        };
+        devices.push(row);
+        return row;
+      }
+      await pauseIf('device-update');
+      // Checked after the pause, as the real mutation checks inside its transaction.
+      if (existing.user_id !== args.userId) throw new GatewayRejection('device_belongs_to_another_account');
+      if (existing.revoked_at != null || existing.public_key_b64 !== args.publicKeyB64 ||
+          (existing.kind === 'host') !== (args.kind === 'host')) {
+        throw new GatewayRejection('device_registration_not_authorized');
+      }
+      Object.assign(existing, {
+        label: args.label, platform: args.platform ?? null, app_version: args.appVersion ?? null,
+        metadata: args.metadata ?? {}, last_seen_at: at, updated_at: at,
+      });
+      return existing;
+    },
+    async touchDeviceLastSeen(args) {
+      await pauseIf('last-seen-touch');
+      const row = devices.find((device) => device.device_id === args.deviceId);
+      if (row) row.last_seen_at = new Date().toISOString();
+      return null;
+    },
+    insertApprovalRequest: (args) => {
+      const pending = approvals.find((row) => row.host_device_uuid === args.hostDeviceUuid &&
+        row.requester_device_uuid === args.requesterDeviceUuid && row.status === 'pending');
+      if (pending) return pending;
+      const at = new Date().toISOString();
+      const row = {
+        id: nextId('convex-approval'), owner_user_id: args.ownerUserId, host_device_uuid: args.hostDeviceUuid,
+        requester_device_uuid: args.requesterDeviceUuid, requester_device_id: args.requesterDeviceId,
+        requester_public_key_b64: args.requesterPublicKeyB64, requester_label: args.requesterLabel,
+        status: 'pending', metadata: {}, created_at: at, updated_at: at, responded_at: null,
+      };
+      approvals.push(row);
+      return row;
+    },
+    markApprovalStatus: (args) => {
+      const row = approvals.find((approval) => approval.id === args.requestId);
+      if (row) Object.assign(row, { status: args.status, responded_at: new Date().toISOString() });
+      return null;
+    },
+    ensurePairing: (args) => {
+      failPairingWrite();
+      const host = devices.find((row) => row.id === args.hostDeviceUuid);
+      const requester = devices.find((row) => row.id === args.requesterDeviceUuid);
+      if (!host || !requester || host.kind !== 'host' || requester.kind === 'host' ||
+          host.user_id !== args.ownerUserId || requester.user_id !== args.ownerUserId ||
+          host.revoked_at != null || requester.revoked_at != null) {
+        throw new GatewayRejection('pairing_not_authorized');
+      }
+      const existing = pairings.filter((row) => samePair(row, args));
+      if (existing.some((row) => row.revoked_at != null)) throw new GatewayRejection('access_revoked');
+      const active = existing.find((row) => row.revoked_at == null);
+      if (active) return active;
+      const row = {
+        id: nextId('pair'), owner_user_id: args.ownerUserId, host_device_uuid: args.hostDeviceUuid,
+        phone_device_uuid: args.requesterDeviceUuid, paired_at: new Date().toISOString(), revoked_at: null,
+        metadata: args.metadata ?? { approved_via: 'native_prompt' },
+      };
+      pairings.push(row);
+      return row;
+    },
+    createHostLinkCode: (args) => {
+      if (linkCodes.some((row) => row.code === args.code && row.consumed_at == null &&
+          Date.parse(String(row.expires_at)) > Date.now())) {
+        throw new GatewayRejection('link_code_taken');
+      }
+      linkCodes.push({
+        id: nextId('code'), code: args.code, host_device_id: args.hostDeviceId,
+        host_public_key_b64: args.hostPublicKeyB64, host_label: args.hostLabel, host_metadata: args.hostMetadata,
+        created_at: new Date().toISOString(), expires_at: args.expiresAt, consumed_at: null, claimed_user_id: null,
+      });
+      return null;
+    },
+    consumeHostLinkCode: (args) => {
+      const row = linkCodes.find((code) => code.id === args.id);
+      if (row) Object.assign(row, { consumed_at: new Date().toISOString(), claimed_user_id: args.claimedUserId });
+      return null;
+    },
+    deleteHostLinkCodesByHostDeviceId: (args) => remove(linkCodes, (row) => row.host_device_id === args.hostDeviceId),
+    deleteDeviceByUuid: (args) => {
+      if (!devices.some((row) => row.id === args.id)) return false;
+      remove(pairings, (row) => row.host_device_uuid === args.id || row.phone_device_uuid === args.id);
+      remove(approvals, (row) => row.host_device_uuid === args.id);
+      remove(devices, (row) => row.id === args.id);
+      return true;
+    },
+    deleteRevokedPairings: (args) => {
+      failPairingWrite();
+      return remove(pairings, (row) => samePair(row, args) && row.revoked_at != null);
+    },
+    revokePairing: (args) => {
+      failPairingWrite();
+      const at = new Date().toISOString();
+      const scope = pairings.filter((row) =>
+        row.phone_device_uuid === args.requesterDeviceUuid && row.host_device_uuid === args.hostDeviceUuid);
+      if (!scope.some((row) => row.owner_user_id === args.ownerUserId && row.revoked_at != null)) {
+        pairings.push({
+          id: nextId('pair'), owner_user_id: args.ownerUserId, host_device_uuid: args.hostDeviceUuid,
+          phone_device_uuid: args.requesterDeviceUuid, paired_at: at, revoked_at: at,
+          metadata: args.metadata ?? { revoked_via: 'host' },
+        });
+      }
+      for (const row of scope) if (row.revoked_at == null) row.revoked_at = at;
+      return null;
+    },
+  };
 
   vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
-    const method = (init?.method ?? 'GET').toUpperCase();
-    const pauseIf = async (point: SupabaseGatePoint) => {
-      if (options.gateOn !== point || gate.reached) return;
-      gate.reached = true;
-      await gate.released;
-    };
-
-    if (url.pathname === '/auth/v1/user') {
-      await pauseIf('auth-user');
-      if (options.failAuth) return Response.json({ error: 'expired token' }, { status: 401 });
-      return Response.json({ id: 'user-1', email: 'user@example.test' });
+    const fn = gatewayFunction(input, init);
+    if (fn === null) {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      throw new Error(`unexpected outbound fetch: ${init?.method ?? 'GET'} ${url}`);
     }
-    if (url.pathname === '/rest/v1/profiles' || url.pathname === '/rest/v1/device_approval_requests') {
-      return Response.json([]);
+    expect(init?.method).toBe('POST');
+    expect(new Headers(init?.headers).get('authorization')).toBe(`Bearer ${GATEWAY_SECRET}`);
+    const handler = Object.hasOwn(functions, fn) ? functions[fn] : undefined;
+    if (!handler) return Response.json({ ok: false, code: 'unknown_function' }, { status: 404 });
+    const { args } = JSON.parse(String(init?.body)) as { args: Record<string, unknown> };
+    try {
+      // Rows are copied out, as they would be over the wire.
+      return Response.json({ ok: true, value: structuredClone((await handler(args)) ?? null) });
+    } catch (error) {
+      if (error instanceof GatewayRejection) return Response.json({ ok: false, code: error.code }, { status: 409 });
+      if (error instanceof GatewayFailure) return Response.json({ ok: false, code: 'internal' }, { status: 500 });
+      throw error;
     }
-    if (url.pathname === '/rest/v1/devices' && method === 'GET') {
-      await pauseIf('device-lookup');
-      const wanted = url.searchParams.get('device_id')?.replace(/^eq\./, '');
-      const kind = url.searchParams.get('kind')?.replace(/^eq\./, '');
-      return Response.json(devices.filter((row) =>
-        (!wanted || row.device_id === wanted) && (!kind || row.kind === kind) &&
-        (url.searchParams.get('revoked_at') !== 'is.null' || row.revoked_at == null),
-      ));
-    }
-    if (url.pathname === '/rest/v1/devices' && method === 'POST') {
-      const payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
-      const existing = devices.find((row) => row.device_id === payload.device_id);
-      if (existing) Object.assign(existing, payload);
-      else devices.push({ id: `new-${payload.device_id}`, revoked_at: null, ...payload });
-      return Response.json(devices.filter((row) => row.device_id === payload.device_id));
-    }
-    if (url.pathname === '/rest/v1/devices' && method === 'PATCH') {
-      const payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
-      if ('label' in payload) {
-        await pauseIf('device-update');
-        const id = url.searchParams.get('id')?.replace(/^eq\./, '');
-        const user = url.searchParams.get('user_id')?.replace(/^eq\./, '');
-        const rows = devices.filter((row) => row.id === id && row.user_id === user &&
-          (url.searchParams.get('revoked_at') !== 'is.null' || row.revoked_at == null));
-        for (const row of rows) Object.assign(row, payload);
-        return Response.json(rows);
-      }
-      await pauseIf('last-seen-touch');
-      return new Response(null, { status: 204 });
-    }
-    if (url.pathname === '/rest/v1/device_pairings' && method === 'GET') {
-      const host = url.searchParams.get('host_device_uuid')?.replace(/^eq\./, '');
-      const phone = url.searchParams.get('phone_device_uuid')?.replace(/^eq\./, '');
-      return Response.json(pairings.filter((row) =>
-        (!host || row.host_device_uuid === host) && (!phone || row.phone_device_uuid === phone) &&
-        (url.searchParams.get('revoked_at') !== 'not.is.null' || row.revoked_at != null) &&
-        (url.searchParams.get('revoked_at') !== 'is.null' || row.revoked_at == null),
-      ));
-    }
-    if (url.pathname === '/rest/v1/device_pairings' && method === 'POST') {
-      if (options.failPairingWrites) return Response.json({ error: 'unavailable' }, { status: 503 });
-      const row = { id: `pair-${pairings.length}`, paired_at: new Date().toISOString(), revoked_at: null, ...JSON.parse(String(init?.body)) };
-      pairings.push(row);
-      return Response.json([row]);
-    }
-    if (url.pathname === '/rest/v1/device_pairings' && method === 'PATCH') {
-      const host = url.searchParams.get('host_device_uuid')?.replace(/^eq\./, '');
-      const phone = url.searchParams.get('phone_device_uuid')?.replace(/^eq\./, '');
-      const rows = pairings.filter((row) => row.host_device_uuid === host && row.phone_device_uuid === phone);
-      for (const row of rows) Object.assign(row, JSON.parse(String(init?.body)));
-      return Response.json(rows);
-    }
-    if (url.pathname === '/rest/v1/device_pairings' && method === 'DELETE') {
-      const host = url.searchParams.get('host_device_uuid')?.replace(/^eq\./, '');
-      const phone = url.searchParams.get('phone_device_uuid')?.replace(/^eq\./, '');
-      const onlyRevoked = url.searchParams.get('revoked_at') === 'not.is.null';
-      const remaining = pairings.filter((row) => !(row.host_device_uuid === host && row.phone_device_uuid === phone &&
-        (!onlyRevoked || row.revoked_at != null)));
-      pairings.splice(0, pairings.length, ...remaining);
-      return new Response(null, { status: 204 });
-    }
-    if (url.pathname === '/rest/v1/host_link_codes' && method === 'GET') {
-      const code = url.searchParams.get('code')?.replace(/^eq\./, '');
-      return Response.json(linkCodes.filter((row) => (!code || row.code === code) && row.consumed_at == null));
-    }
-    if (url.pathname === '/rest/v1/host_link_codes' && method === 'PATCH') {
-      const id = url.searchParams.get('id')?.replace(/^eq\./, '');
-      for (const row of linkCodes.filter((row) => row.id === id)) Object.assign(row, JSON.parse(String(init?.body)));
-      return new Response(null, { status: 204 });
-    }
-    throw new Error(`unexpected outbound fetch: ${method} ${url.href}`);
   });
 
   return gate;
@@ -276,7 +399,7 @@ describe('RelayHub account authorization', () => {
       if (scenario === 'revoked') row.revoked_at = new Date().toISOString();
       if (scenario === 'wrong kind') row.kind = 'phone';
       if (scenario === 'wrong key') row.public_key_b64 = (await createDeviceIdentity()).publicKeyB64;
-      stubSupabase({ devices: scenario === 'missing' ? [] : [row] });
+      stubAccountPlane({ devices: scenario === 'missing' ? [] : [row] });
       const stub = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
       const socket = await openHubSocket(stub, relayPath(host.deviceId));
       await driveAuth(stub, await signedClientAuth(host, socket.nonce, 'host'));
@@ -291,7 +414,7 @@ describe('RelayHub account authorization', () => {
     const phone = await createDeviceIdentity();
     const hostRow = deviceRow(host, 'host');
     const phoneRow = deviceRow(phone, 'phone');
-    stubSupabase({ devices: [hostRow, phoneRow], pairings: [{
+    stubAccountPlane({ devices: [hostRow, phoneRow], pairings: [{
       id: 'revoked-pair', owner_user_id: 'user-1', host_device_uuid: hostRow.id,
       phone_device_uuid: phoneRow.id, revoked_at: new Date().toISOString(),
     }] });
@@ -314,7 +437,7 @@ describe('Account registration authorization', () => {
       if (scenario === 'revoked') row.revoked_at = new Date().toISOString();
       if (scenario === 'mismatched key') row.public_key_b64 = (await createDeviceIdentity()).publicKeyB64;
       const before = structuredClone(row);
-      stubSupabase({ devices: [row] });
+      stubAccountPlane({ devices: [row] });
       const stub = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`register-${phone.deviceId}`));
       const response = await stub.fetch('https://hub.test/account/device/register', {
         method: 'POST', headers: { authorization: 'Bearer test-token', 'content-type': 'application/json' },
@@ -329,7 +452,7 @@ describe('Account registration authorization', () => {
   it('refreshes a valid browser registration without changing its identity', async () => {
     const phone = await createDeviceIdentity();
     const row = deviceRow(phone, 'phone');
-    stubSupabase({ devices: [row] });
+    stubAccountPlane({ devices: [row] });
     const stub = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`refresh-${phone.deviceId}`));
     const response = await stub.fetch('https://hub.test/account/device/register', {
       method: 'POST', headers: { authorization: 'Bearer test-token', 'content-type': 'application/json' },
@@ -344,29 +467,22 @@ describe('Account registration authorization', () => {
     run: (calls: string[]) => Promise<T>,
   ): Promise<T> {
     const workerEnv = env as unknown as Record<string, string | undefined>;
-    const keys = ['ACCOUNT_PLANE_PROVIDER', 'ACCOUNT_AUTH_PROVIDER', 'CONVEX_URL', 'CONVEX_SITE_URL', 'CONVEX_WORKER_SECRET'];
-    const previous = Object.fromEntries(keys.map((key) => [key, workerEnv[key]]));
+    const previousSecret = workerEnv.CONVEX_WORKER_SECRET;
     const calls: string[] = [];
     try {
-      workerEnv.ACCOUNT_PLANE_PROVIDER = 'convex';
-      workerEnv.ACCOUNT_AUTH_PROVIDER = 'convex';
-      workerEnv.CONVEX_URL = 'https://gateway-test.convex.cloud';
-      workerEnv.CONVEX_SITE_URL = undefined;
-      workerEnv.CONVEX_WORKER_SECRET = 'worker-gateway-secret-for-tests-0123456789';
       vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-        const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
-        if (url.origin === 'https://gateway-test.convex.site' && url.pathname === '/worker/account-plane') {
+        const fn = gatewayFunction(input, init);
+        if (fn !== null) {
           expect(init?.method).toBe('POST');
-          const body = JSON.parse(String(init?.body)) as { fn: string; args: Record<string, unknown> };
-          calls.push(body.fn);
-          const headers = new Headers(init?.headers);
-          return handler(body.fn, body.args, { authorization: headers.get('authorization') });
+          calls.push(fn);
+          const { args } = JSON.parse(String(init?.body)) as { args: Record<string, unknown> };
+          return handler(fn, args, { authorization: new Headers(init?.headers).get('authorization') });
         }
-        throw new Error(`unexpected outbound fetch: ${init?.method ?? 'GET'} ${url.href}`);
+        throw new Error(`unexpected outbound fetch: ${init?.method ?? 'GET'} ${String(input)}`);
       });
       return await run(calls);
     } finally {
-      for (const key of keys) workerEnv[key] = previous[key];
+      workerEnv.CONVEX_WORKER_SECRET = previousSecret;
     }
   }
 
@@ -482,7 +598,7 @@ describe('Account registration authorization', () => {
   it('cannot clear a revocation that arrives between lookup and registration write', async () => {
     const phone = await createDeviceIdentity();
     const row = deviceRow(phone, 'phone');
-    const gate = stubSupabase({ devices: [row], gateOn: 'device-update' });
+    const gate = stubAccountPlane({ devices: [row], gateOn: 'device-update' });
     const stub = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`race-${phone.deviceId}`));
     const registering = stub.fetch('https://hub.test/account/device/register', {
       method: 'POST', headers: { authorization: 'Bearer test-token', 'content-type': 'application/json' },
@@ -523,7 +639,7 @@ describe('RelayHub active revocation', () => {
     const host = await createDeviceIdentity();
     const phone = await createDeviceIdentity();
     const options = { devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')], failPairingWrites: true };
-    stubSupabase(options);
+    stubAccountPlane(options);
     const stub = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
     await authenticate(stub, host, host.deviceId, 'host');
     const client = await authenticate(stub, phone, host.deviceId, 'client');
@@ -538,7 +654,7 @@ describe('RelayHub active revocation', () => {
     const otherHost = await createDeviceIdentity();
     const phone = await createDeviceIdentity();
     const foreign = await createDeviceIdentity();
-    stubSupabase({ devices: [deviceRow(host, 'host'), deviceRow(otherHost, 'host'), deviceRow(phone, 'phone'), { ...deviceRow(foreign, 'phone'), user_id: 'another-user' }] });
+    stubAccountPlane({ devices: [deviceRow(host, 'host'), deviceRow(otherHost, 'host'), deviceRow(phone, 'phone'), { ...deviceRow(foreign, 'phone'), user_id: 'another-user' }] });
     const first = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
     const second = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(otherHost.deviceId));
     expect((await revoke(first, host, foreign)).status).toBe(403);
@@ -551,7 +667,7 @@ describe('RelayHub active revocation', () => {
   it('rejects an expired account token without authenticating or replaying content', async () => {
     const host = await createDeviceIdentity();
     const phone = await createDeviceIdentity();
-    stubSupabase({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')], failAuth: true });
+    stubAccountPlane({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')], failAuth: true });
     const stub = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
     const client = await openHubSocket(stub, relayPath(host.deviceId));
     client.client.send(await signedClientAuth(phone, client.nonce, 'client', { access_token: 'expired' }));
@@ -562,7 +678,7 @@ describe('RelayHub active revocation', () => {
   it('tells the Mac about relay-only browsers and restores that list after host reconnect', async () => {
     const host = await createDeviceIdentity();
     const phone = await createDeviceIdentity();
-    stubSupabase({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')] });
+    stubAccountPlane({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')] });
     const stub = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
     const first = await authenticate(stub, host, host.deviceId, 'host');
     await authenticate(stub, phone, host.deviceId, 'client');
@@ -578,7 +694,7 @@ describe('RelayHub active revocation', () => {
     const host = await createDeviceIdentity();
     const phone = await createDeviceIdentity();
     const pairings: Record<string, unknown>[] = [];
-    stubSupabase({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')], pairings });
+    stubAccountPlane({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')], pairings });
     const stub = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
     await authenticate(stub, host, host.deviceId, 'host');
     const client = await authenticate(stub, phone, host.deviceId, 'client');
@@ -601,7 +717,7 @@ describe('RelayHub active revocation', () => {
   it('expires an authenticated client before accepting its next command', async () => {
     const host = await createDeviceIdentity();
     const phone = await createDeviceIdentity();
-    stubSupabase({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')] });
+    stubAccountPlane({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')] });
     const stub = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
     const hostSocket = await authenticate(stub, host, host.deviceId, 'host');
     const client = await authenticate(stub, phone, host.deviceId, 'client');
@@ -617,7 +733,7 @@ describe('RelayHub active revocation', () => {
   it.each(['revoked', 'expired'] as const)('rejects a restored %s client attachment before replay', async (reason) => {
     const host = await createDeviceIdentity();
     const phone = await createDeviceIdentity();
-    stubSupabase({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')] });
+    stubAccountPlane({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')] });
     const stub = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
     await authenticate(stub, host, host.deviceId, 'host');
     const client = await authenticate(stub, phone, host.deviceId, 'client');
@@ -638,7 +754,7 @@ describe('RelayHub active revocation', () => {
     const host = await createDeviceIdentity();
     const phone = await createDeviceIdentity();
     const other = await createDeviceIdentity();
-    stubSupabase({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone'), deviceRow(other, 'phone')] });
+    stubAccountPlane({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone'), deviceRow(other, 'phone')] });
     const stub = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
     const hostSocket = await authenticate(stub, host, host.deviceId, 'host');
     const phoneSocket = await authenticate(stub, phone, host.deviceId, 'client');
@@ -668,7 +784,7 @@ describe('RelayHub active revocation', () => {
   it('does not admit a client whose authentication was in flight when revocation completed', async () => {
     const host = await createDeviceIdentity();
     const phone = await createDeviceIdentity();
-    const gate = stubSupabase({ gateOn: 'device-lookup', devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')] });
+    const gate = stubAccountPlane({ gateOn: 'device-lookup', devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')] });
     const stub = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
     const socket = await openHubSocket(stub, relayPath(host.deviceId));
     const authenticating = driveAuth(stub, await signedClientAuth(phone, socket.nonce, 'client', { access_token: 'test-token' }));
@@ -689,7 +805,7 @@ describe('SignalingHub revocation', () => {
     const host = await createDeviceIdentity();
     const phone = await createDeviceIdentity();
     const foreign = await createDeviceIdentity();
-    stubSupabase({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone'), { ...deviceRow(foreign, 'phone'), user_id: 'other-user' }] });
+    stubAccountPlane({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone'), { ...deviceRow(foreign, 'phone'), user_id: 'other-user' }] });
     const stub = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`offline-${host.deviceId}`));
     const phoneSocket = await openHubSocket(stub, '/signal');
     phoneSocket.client.send(await signedClientAuth(phone, phoneSocket.nonce, 'client'));
@@ -720,7 +836,7 @@ describe('SignalingHub revocation', () => {
   it('acknowledges host revocation and refuses cached signaling authorization in both directions', async () => {
     const host = await createDeviceIdentity();
     const phone = await createDeviceIdentity();
-    stubSupabase({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')] });
+    stubAccountPlane({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')] });
     const stub = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`revoke-${host.deviceId}`));
     const hostSocket = await openHubSocket(stub, '/signal');
     hostSocket.client.send(await signedClientAuth(host, hostSocket.nonce, 'host'));
@@ -752,14 +868,14 @@ describe('RelayHub auth when the socket closes mid-auth', () => {
   // This is the Local Test Lab failure: the hub closes the stale socket itself when the
   // reconnecting host replaces it, and in workerd a send() after that close() throws.
   // (A close initiated by the peer only moves the socket to CLOSING; send() still returns.)
-  it('survives a quick host reconnect that replaces a socket whose auth is still awaiting Supabase', async () => {
+  it('survives a quick host reconnect that replaces a socket whose auth is still awaiting the account service', async () => {
     const host = await createDeviceIdentity();
     const stub = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
-    const supabase = stubSupabase({ gateOn: 'last-seen-touch', devices: [deviceRow(host, 'host')] });
+    const accountPlane = stubAccountPlane({ gateOn: 'last-seen-touch', devices: [deviceRow(host, 'host')] });
 
     const stale = await openHubSocket(stub, relayPath(host.deviceId));
     const staleAuth = driveAuth(stub, await signedClientAuth(host, stale.nonce, 'host'));
-    await waitFor(() => supabase.reached, 'the stale auth to reach the last-seen touch');
+    await waitFor(() => accountPlane.reached, 'the stale auth to reach the last-seen touch');
 
     // The host reconnects before the first auth finishes; the hub closes the stale socket.
     const fresh = await openHubSocket(stub, relayPath(host.deviceId));
@@ -767,7 +883,7 @@ describe('RelayHub auth when the socket closes mid-auth', () => {
     await expect(fresh.nextMessage()).resolves.toMatchObject({ type: 'auth_ok', device_id: host.deviceId });
     await expect(stale.closed).resolves.toEqual({ code: 1000, reason: 'replaced by newer host relay' });
 
-    await runInDurableObject(stub, () => supabase.release());
+    await runInDurableObject(stub, () => accountPlane.release());
     await expect(staleAuth).resolves.toBeUndefined();
 
     await runInDurableObject(stub, (hub, state) => {
@@ -781,24 +897,24 @@ describe('RelayHub auth when the socket closes mid-auth', () => {
     await expect(hubHealth(stub)).resolves.toMatchObject({ hostOnline: true, clients: 0 });
   });
 
-  it.each<[string, SupabaseGatePoint]>([
+  it.each<[string, AccountGatePoint]>([
     ['device lookup', 'device-lookup'],
     ['last-seen touch', 'last-seen-touch'],
   ])('forgets a host socket the peer closed during the %s', async (label, gateOn) => {
     const host = await createDeviceIdentity();
     const stub = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
-    const supabase = stubSupabase({ gateOn, devices: [deviceRow(host, 'host')] });
+    const accountPlane = stubAccountPlane({ gateOn, devices: [deviceRow(host, 'host')] });
 
     const socket = await openHubSocket(stub, relayPath(host.deviceId));
     const auth = driveAuth(stub, await signedClientAuth(host, socket.nonce, 'host'));
-    await waitFor(() => supabase.reached, `the auth to reach the ${label}`);
+    await waitFor(() => accountPlane.reached, `the auth to reach the ${label}`);
 
     socket.client.close(1000, 'relay reconnect');
     await waitFor(
       () => runInDurableObject(stub, (hub, state) => state.getWebSockets().length === 0 && relayInternals(hub).sessions.size === 0),
       'the hub to process the close',
     );
-    await runInDurableObject(stub, () => supabase.release());
+    await runInDurableObject(stub, () => accountPlane.release());
     await expect(auth).resolves.toBeUndefined();
 
     await runInDurableObject(stub, (hub, state) => {
@@ -820,7 +936,7 @@ describe('RelayHub auth when the socket closes mid-auth', () => {
     const host = await createDeviceIdentity();
     const phone = await createDeviceIdentity();
     const stub = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
-    const supabase = stubSupabase({
+    const accountPlane = stubAccountPlane({
       gateOn: 'auth-user',
       devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')],
     });
@@ -830,14 +946,14 @@ describe('RelayHub auth when the socket closes mid-auth', () => {
       stub,
       await signedClientAuth(phone, socket.nonce, 'client', { access_token: 'phone-access-token' }),
     );
-    await waitFor(() => supabase.reached, 'the auth to reach the account lookup');
+    await waitFor(() => accountPlane.reached, 'the auth to reach the account lookup');
 
     socket.client.close(1000, 'app backgrounded');
     await waitFor(
       () => runInDurableObject(stub, (hub, state) => state.getWebSockets().length === 0 && relayInternals(hub).sessions.size === 0),
       'the hub to process the close',
     );
-    await runInDurableObject(stub, () => supabase.release());
+    await runInDurableObject(stub, () => accountPlane.release());
     await expect(auth).resolves.toBeUndefined();
 
     await runInDurableObject(stub, (hub, state) => {
@@ -863,19 +979,19 @@ describe('SignalingHub auth when the socket closes mid-auth', () => {
   it('survives a quick host reconnect on /signal while the replaced socket is still touching last-seen', async () => {
     const host = await createDeviceIdentity();
     const stub = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`test-${host.deviceId}`));
-    const supabase = stubSupabase({ gateOn: 'last-seen-touch' });
+    const accountPlane = stubAccountPlane({ gateOn: 'last-seen-touch' });
 
     const stale = await openHubSocket(stub, '/signal');
     const staleAuth = driveAuth(stub, await signedClientAuth(host, stale.nonce, 'host'));
     await expect(stale.nextMessage()).resolves.toMatchObject({ type: 'auth_ok', device_id: host.deviceId });
-    await waitFor(() => supabase.reached, 'the stale auth to reach the last-seen touch');
+    await waitFor(() => accountPlane.reached, 'the stale auth to reach the last-seen touch');
 
     const fresh = await openHubSocket(stub, '/signal');
     fresh.client.send(await signedClientAuth(host, fresh.nonce, 'host'));
     await expect(fresh.nextMessage()).resolves.toMatchObject({ type: 'auth_ok', device_id: host.deviceId });
     await expect(stale.closed).resolves.toEqual({ code: 1000, reason: 'replaced by newer connection' });
 
-    await runInDurableObject(stub, () => supabase.release());
+    await runInDurableObject(stub, () => accountPlane.release());
     await expect(staleAuth).resolves.toBeUndefined();
 
     await runInDurableObject(stub, (hub, state) => {
@@ -898,11 +1014,11 @@ describe('RelayHub message detail replies', () => {
     const phoneA = await createDeviceIdentity();
     const phoneB = await createDeviceIdentity();
     const stub = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
-    const supabase = stubSupabase({
+    const accountPlane = stubAccountPlane({
       gateOn: 'last-seen-touch',
       devices: [deviceRow(host, 'host'), deviceRow(phoneA, 'phone'), deviceRow(phoneB, 'phone')],
     });
-    supabase.release();
+    accountPlane.release();
 
     const hostSocket = await openHubSocket(stub, relayPath(host.deviceId));
     hostSocket.client.send(await signedClientAuth(host, hostSocket.nonce, 'host'));
@@ -961,7 +1077,7 @@ describe('RelayHub cache retention', () => {
   it('publishes fixed deadlines which survive heartbeat and client replay', async () => {
     const host = await createDeviceIdentity();
     const phone = await createDeviceIdentity();
-    stubSupabase({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')] });
+    stubAccountPlane({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')] });
     const stub = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
     const hs = await openHubSocket(stub, relayPath(host.deviceId));
     hs.client.send(await signedClientAuth(host, hs.nonce, 'host'));
@@ -1049,7 +1165,7 @@ describe('RelayHub cache retention', () => {
   it('never restores timestamp-free legacy transcripts after eviction', async () => {
     const host = await createDeviceIdentity();
     const phone = await createDeviceIdentity();
-    stubSupabase({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')] });
+    stubAccountPlane({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')] });
     const stub = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
     await runInDurableObject(stub, async (_hub, state) => {
       await state.storage.put('relayAgentSnapshot:test', { agentId: 'test', marker: 'legacy' });
@@ -1100,7 +1216,7 @@ describe('RelayHub host liveness', () => {
     const host = await createDeviceIdentity();
     const phone = await createDeviceIdentity();
     const stub = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
-    stubSupabase({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')] });
+    stubAccountPlane({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')] });
 
     const hostSocket = await openHubSocket(stub, relayPath(host.deviceId));
     hostSocket.client.send(await signedClientAuth(host, hostSocket.nonce, 'host'));
@@ -1193,7 +1309,7 @@ describe('RelayHub in-place reauthentication', () => {
   it('asks a browser to renew before its deadline and keeps the socket after a valid renewal', async () => {
     const host = await createDeviceIdentity();
     const phone = await createDeviceIdentity();
-    stubSupabase({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')] });
+    stubAccountPlane({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')] });
     const stub = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
     const hostSocket = await authenticate(stub, host, host.deviceId, 'host');
     const client = await authenticate(stub, phone, host.deviceId, 'client');
@@ -1216,11 +1332,11 @@ describe('RelayHub in-place reauthentication', () => {
     const host = await createDeviceIdentity();
     const phone = await createDeviceIdentity();
     const devices = [deviceRow(host, 'host'), deviceRow(phone, 'phone')];
-    stubSupabase({ devices });
+    stubAccountPlane({ devices });
     const stub = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
     await authenticate(stub, host, host.deviceId, 'host');
     const client = await authenticate(stub, phone, host.deviceId, 'client');
-    stubSupabase({ devices, failAuth: true });
+    stubAccountPlane({ devices, failAuth: true });
     client.client.send(JSON.stringify({ type: 'relay_reauth', access_token: 'stale-token' }));
     await expect(client.closed).resolves.toMatchObject({ code: 4001 });
     await expect(hubHealth(stub)).resolves.toMatchObject({ clients: 0 });
@@ -1229,14 +1345,13 @@ describe('RelayHub in-place reauthentication', () => {
   it('keeps the current deadline and asks for a retry when the account service is unreachable', async () => {
     const host = await createDeviceIdentity();
     const phone = await createDeviceIdentity();
-    stubSupabase({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')] });
+    stubAccountPlane({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')] });
     const stub = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
     await authenticate(stub, host, host.deviceId, 'host');
     const client = await authenticate(stub, phone, host.deviceId, 'client');
     const stubbed = globalThis.fetch;
     vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-      const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
-      if (url.pathname === '/auth/v1/user') throw new Error('account service unreachable');
+      if (gatewayFunction(input, init) === 'verifyBearerToken') throw new Error('account service unreachable');
       return stubbed(input, init);
     });
     client.client.send(JSON.stringify({ type: 'relay_reauth', access_token: 'renewed-token' }));
@@ -1260,7 +1375,7 @@ describe('RelayHub restore after revocation', () => {
     const host = await createDeviceIdentity();
     const phone = await createDeviceIdentity();
     const pairings: Record<string, unknown>[] = [];
-    stubSupabase({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')], pairings });
+    stubAccountPlane({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')], pairings });
     const stub = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
     await authenticate(stub, host, host.deviceId, 'host');
     const client = await authenticate(stub, phone, host.deviceId, 'client');
@@ -1295,7 +1410,7 @@ describe('RelayHub restore after revocation', () => {
   it('refuses to restore a browser that belongs to another account', async () => {
     const host = await createDeviceIdentity();
     const phone = await createDeviceIdentity();
-    stubSupabase({ devices: [deviceRow(host, 'host'), { ...deviceRow(phone, 'phone'), user_id: 'other-user' }] });
+    stubAccountPlane({ devices: [deviceRow(host, 'host'), { ...deviceRow(phone, 'phone'), user_id: 'other-user' }] });
     const stub = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
     const restore = await stub.fetch('https://hub.test/internal/restore-device', {
       method: 'POST', headers: { 'content-type': 'application/json' },
@@ -1323,7 +1438,7 @@ describe('SignalingHub link-code re-authorization', () => {
       host_label: 'Test Mac', host_metadata: {}, created_at: new Date().toISOString(),
       expires_at: new Date(Date.now() + 600_000).toISOString(), consumed_at: null, claimed_user_id: null,
     }];
-    stubSupabase({ devices: [hostRow, phoneRow], pairings, linkCodes });
+    stubAccountPlane({ devices: [hostRow, phoneRow], pairings, linkCodes });
     const stub = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`relink-${host.deviceId}`));
     const denial = `${phone.deviceId}->${host.deviceId}`;
     await runInDurableObject(stub, async (_hub, state) => { await state.storage.put(`revoked-pair:${denial}`, true); });
@@ -1365,12 +1480,11 @@ describe('SignalingHub Mac-to-browser envelope authorization', () => {
   it('looks the pair up once and reuses the decision for following envelopes', async () => {
     const host = await createDeviceIdentity();
     const phone = await createDeviceIdentity();
-    stubSupabase({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')] });
+    stubAccountPlane({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')] });
     let deviceLookups = 0;
     const stubbed = globalThis.fetch;
     vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-      const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
-      if (url.pathname === '/rest/v1/devices' && (init?.method ?? 'GET').toUpperCase() === 'GET') deviceLookups += 1;
+      if (gatewayFunction(input, init) === 'findDeviceByDeviceId') deviceLookups += 1;
       return stubbed(input, init);
     });
     const stub = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`hostcache-${host.deviceId}`));

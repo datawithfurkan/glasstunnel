@@ -9,7 +9,8 @@ import { fileURLToPath } from 'node:url';
 
 import { ensureRuntimeDirectories, labConfig } from './config.mjs';
 import { resetLab, startCoreLab, stopLab } from './services.mjs';
-import { defaultRunCommand, supabaseStatus, upsertLabUser } from './supabase.mjs';
+import { defaultRunCommand } from './commands.mjs';
+import { deleteLabUser, upsertLabUser } from './convex.mjs';
 
 const CHROMIUM_PROJECTS = [
   'fixture-desktop-chromium',
@@ -214,10 +215,10 @@ export async function runE2E({
     }
     if (lab.host?.linkCode) sensitiveValues.push(lab.host.linkCode);
     if (projects.includes('local-retention-mobile-chromium')) {
-      const local = await supabaseStatus({ root: config.root });
       const email = 'retention-secondary@glasstunnel.test';
-      const user = await upsertLabUser({ ...local, email, password: config.identity.password });
-      retentionIdentity = { ...local, email, id: user.id };
+      const user = await upsertLabUser({ config, email, password: config.identity.password });
+      if (!user.userId) throw new Error('The local backend did not return the secondary retention account id.');
+      retentionIdentity = { email, id: user.userId };
       sensitiveValues.push(email);
     }
 
@@ -266,10 +267,7 @@ export async function runE2E({
 
   try {
     if (retentionIdentity) {
-      const response = await fetch(new URL(`/auth/v1/admin/users/${retentionIdentity.id}`, retentionIdentity.apiUrl), {
-        method: 'DELETE', headers: { apikey: retentionIdentity.serviceRoleKey, authorization: `Bearer ${retentionIdentity.serviceRoleKey}` },
-      });
-      if (!response.ok) throw new Error('Could not remove the secondary local retention account');
+      await deleteLabUser(config, retentionIdentity.id, { runCommand: execute });
     }
   } catch (error) {
     failure = appendFailure(failure, error, 'Local retention account cleanup failed');

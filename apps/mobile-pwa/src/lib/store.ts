@@ -41,7 +41,7 @@ import { PeerConnection } from '../transport/PeerConnection';
 import type { FileAttachmentInput } from '../transport/PeerConnection';
 import type { RelayConnection, RelayScreenFrame } from '../transport/RelayConnection';
 import { PeerFlowAbortRegistry } from '../transport/PeerFlowAbortRegistry';
-import { hasSupabaseAuth, supabase, type Session, type User } from './supabase';
+import { hasAccountAuth, authClient, type Session, type User } from './authClient';
 import {
   fallbackRemoteAppsFromLayout,
   isScreenSharingOn,
@@ -245,7 +245,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   availableHosts: [],
   accessRevocationNotice: null,
   user: null,
-  authConfigured: hasSupabaseAuth(),
+  authConfigured: hasAccountAuth(),
   layout: null,
   remoteApps: [],
   hostHello: null,
@@ -275,10 +275,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({
         phoneKeypair: keypair,
         pairedHost: storedHost,
-        authConfigured: hasSupabaseAuth(),
+        authConfigured: hasAccountAuth(),
       });
 
-      if (!supabase) {
+      if (!authClient) {
         set({
           route: 'auth',
         });
@@ -287,16 +287,16 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       if (!authSubscriptionAttached) {
         authSubscriptionAttached = true;
-        supabase.auth.onAuthStateChange((event, session) => {
+        authClient.auth.onAuthStateChange((event, session) => {
           if (event === 'TOKEN_REFRESHED') return;
           void synchronizeSession(set, get, session);
         });
       }
 
-      await supabase.auth.initialize();
+      await authClient.auth.initialize();
       const {
         data: { session },
-      } = await supabase.auth.getSession();
+      } = await authClient.auth.getSession();
       await synchronizeSession(set, get, session);
     } catch (err) {
       set({
@@ -763,10 +763,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   async signInWithGoogle() {
-    if (!supabase) {
+    if (!authClient) {
       throw new Error('Hosted account login is not configured.');
     }
-    const { error } = await supabase.auth.signInWithOAuth({
+    const { error } = await authClient.auth.signInWithOAuth({
       provider: 'google',
       options: {
         redirectTo: authRedirectTo(),
@@ -776,10 +776,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   async signInWithGitHub() {
-    if (!supabase) {
+    if (!authClient) {
       throw new Error('Hosted account login is not configured.');
     }
-    const { error } = await supabase.auth.signInWithOAuth({
+    const { error } = await authClient.auth.signInWithOAuth({
       provider: 'github',
       options: {
         redirectTo: authRedirectTo(),
@@ -789,7 +789,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   async signInWithPassword(email, password) {
-    if (!supabase) {
+    if (!authClient) {
       throw new Error('Hosted account login is not configured.');
     }
     const trimmed = email.trim().toLowerCase();
@@ -799,7 +799,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!password.trim()) {
       throw new Error('Enter your password.');
     }
-    const { error } = await supabase.auth.signInWithPassword({
+    const { error } = await authClient.auth.signInWithPassword({
       email: trimmed,
       password,
     });
@@ -807,7 +807,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   async signUpWithPassword(email, password, displayName) {
-    if (!supabase) {
+    if (!authClient) {
       throw new Error('Hosted account login is not configured.');
     }
     const trimmed = email.trim().toLowerCase();
@@ -818,7 +818,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       throw new Error('Create a password.');
     }
     const name = displayName?.trim() || trimmed.split('@')[0] || 'Glasstunnel user';
-    const { error } = await supabase.auth.signUp({
+    const { error } = await authClient.auth.signUp({
       email: trimmed,
       password,
       options: {
@@ -862,8 +862,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       account ? offlineCache.clear(account) : offlineCache.clearLegacy(),
       idbDel(PAIRED_HOST_KEY),
       (async () => {
-        if (!supabase) return;
-        const { error } = await supabase.auth.signOut();
+        if (!authClient) return;
+        const { error } = await authClient.auth.signOut();
         if (error) throw error;
       })(),
     ]);
@@ -877,7 +877,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   async refreshHosts(options) {
-    if (!supabase) return;
+    if (!authClient) return;
     if (refreshHostsInFlight) return refreshHostsInFlight;
     if (
       !options?.force &&
@@ -1371,7 +1371,7 @@ async function synchronizeSession(
   const pendingLinkCode = currentURLHasLinkCode();
   if (!isCurrentSync()) return;
 
-  if (!session?.user || !supabase) {
+  if (!session?.user || !authClient) {
     const route = state.authConfigured ? 'auth' : fallbackEntryRoute();
     set({
       user: null,
@@ -1492,19 +1492,19 @@ async function synchronizeSession(
 }
 
 async function currentSession(options: { forceRefresh?: boolean } = {}): Promise<Session> {
-  if (!supabase) {
+  if (!authClient) {
     throw new Error('Hosted account login is not configured.');
   }
   const {
     data: { session },
     error,
-  } = await supabase.auth.getSession();
+  } = await authClient.auth.getSession();
   if (error) throw error;
   const activeSession = session ?? failNoSession();
   if (!options.forceRefresh) {
     return activeSession;
   }
-  const { data, error: refreshError } = await supabase.auth.refreshSession({
+  const { data, error: refreshError } = await authClient.auth.refreshSession({
     refresh_token: activeSession.refresh_token,
   });
   if (refreshError) throw refreshError;

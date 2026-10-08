@@ -19,7 +19,7 @@ not to content sent separately through the hosted WebSocket relay.
 | WebRTC media | DTLS-SRTP between peers | Signaling/transport metadata; TURN forwards ciphertext |
 | WebRTC DataChannel | SCTP over DTLS between peers | Transport metadata, not channel plaintext |
 | Hosted content relay | HTTPS/WSS transport encryption to Cloudflare | The JSON content it receives, forwards, and caches |
-| Hosted account API | HTTPS and Supabase account authentication | Account/device records and API request content |
+| Hosted account API | HTTPS and Better Auth session tokens (Convex) | Account/device records and API request content |
 | Local test lab | Loopback HTTP/WS | Disposable local test data; not suitable as an internet-facing deployment |
 
 A trusted infrastructure operator or compromised hosted control plane can access
@@ -35,10 +35,14 @@ protections at those endpoints.
 
 ## Account And Device Authentication
 
-The PWA supports Supabase-backed OAuth and email/password flows. Passwords entered
-in the PWA are submitted to Supabase Auth; the Worker verifies account access
-tokens. Do not describe the product as OTP-only or claim its client never handles
-a password.
+The PWA supports Google, GitHub, and email/password sign-in through Better Auth
+on Convex. Passwords entered in the PWA are submitted to the Convex auth server;
+the Worker verifies session tokens through a server-to-server gateway that
+requires a shared secret. Every account query and mutation is internal, so a
+browser cannot call them directly. Google and GitHub sign-in return a one-time
+token that the PWA exchanges only when it matches a nonce stored when that
+sign-in started, which blocks login CSRF. Sessions last 60 days. Do not describe
+the product as OTP-only or claim its client never handles a password.
 
 The Mac and browser generate Ed25519 device keys. WebSocket clients prove possession
 by signing a short-lived server nonce. Browser relay authentication additionally
@@ -75,8 +79,9 @@ per-message abuse protection or a guarantee about every deployment's quotas.
   registry is in Application Support. Deleting the app bundle does not erase that
   per-user state. Use Sign Out to unlink the Mac; do not treat Trash as credential
   revocation. Received attachments and coding-agent history can remain on the Mac.
-- **Browser:** device keys and the selected Mac are stored in IndexedDB. Supabase
-  persists its session through its browser client. Offline workspace snapshots,
+- **Browser:** device keys and the selected Mac are stored in IndexedDB. The
+  account session token and a snapshot of the signed-in account are stored in
+  localStorage and removed on sign-out. Offline workspace snapshots,
   including recent chat content, are also cached in IndexedDB. Expanded tool detail
   is held in memory, scoped by agent/message and cleared with connection/session
   teardown. The September 7 hosted PWA scopes each offline copy by account
@@ -86,9 +91,9 @@ per-message abuse protection or a guarantee about every deployment's quotas.
   a connected Mac can publish fresh content afterward. Browser suspension/closure
   delays physical deletion until execution resumes; expired copies are rejected
   before restoration. Storage failures are not secure-erasure guarantees.
-- **Hosted account control plane:** Supabase holds account and device records
-  until the hosted deployment is cut over. With the Convex account-plane flags,
-  Convex holds those records instead. Cloudflare Durable Object
+- **Hosted Cloudflare/Convex control plane:** Convex holds account and device
+  records, reachable only through the Worker's shared-secret gateway. Cloudflare
+  Durable Object
   storage persists host hello/app state and recent-message snapshots for offline
   replay. The September 7 hosted Worker gives each accepted host publication a
   24-hour maximum replica lifetime. Viewer reads, replays and heartbeats do not
@@ -114,7 +119,7 @@ project files, received Mac attachments, identities and revocation tombstones ar
 not part of cache cleanup. Old PWA versions must reload to adopt browser expiry.
 Cloudflare SQLite Durable Object point-in-time recovery can retain earlier storage
 for 30 days. Active-key deletion does not promise immediate provider-backup erasure;
-provider logs and Supabase backups need separate operational verification.
+provider logs and Convex backups need separate operational verification.
 
 The approved hosted inventory/apply/verify sweep passed on 2026-09-07: 183
 objects inspected, 503 expired/unverifiable cache records removed and six fresh
@@ -184,7 +189,7 @@ its own removal before it lifts its tombstone. Nothing else restores a removed
 phone; it must otherwise use a new browser identity, which appears as a new
 device to approve. Revocation cannot cancel
 a command already executing in a coding app, retract received content, or invalidate
-every Supabase account session. Same-account onboarding can authorize a new browser
+every account session. Same-account onboarding can authorize a new browser
 identity, so a compromised account requires account-level recovery as well.
 
 Signed signaling envelopes carry IDs and timestamps, but signature verification

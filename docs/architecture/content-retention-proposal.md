@@ -99,7 +99,7 @@ agent loop or GitHub workflow polling to enforce it.
 
 Glasstunnel uses SQLite-backed Durable Objects. Cloudflare documents point-in-time
 recovery for the previous 30 days, so deleting active cache keys is **not** a
-claim of immediate provider-backup erasure. Cloudflare and Supabase logs/backups
+claim of immediate provider-backup erasure. Cloudflare and Convex logs/backups
 need separate operational verification; this proposal does not alter them.
 See [Cloudflare storage](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/).
 
