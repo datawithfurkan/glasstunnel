@@ -21,6 +21,4 @@ export const platformConfig = {
   defaultSignalingUrl: import.meta.env.VITE_SIGNALING_URL || DEFAULT_SIGNALING_URL,
   convexUrl: import.meta.env.VITE_CONVEX_URL || '',
   convexSiteUrl: convexSiteUrl(),
-  supabaseUrl: import.meta.env.VITE_SUPABASE_URL || '',
-  supabaseAnonKey: import.meta.env.VITE_SUPABASE_ANON_KEY || '',
 };

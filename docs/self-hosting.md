@@ -5,11 +5,12 @@ Glasstunnel currently has two self-hosting profiles. They are not interchangeabl
 ## Account-first local environment
 
 The Local Test Lab is the supported way to run the complete account-first product on
-one development Mac. It starts local Supabase, the Cloudflare Worker under `workerd`,
-the PWA, and an optional isolated Swift host without production credentials.
+one development Mac. It starts a local Convex backend (accounts and sign-in), the
+Cloudflare Worker under `workerd`, the PWA, and an optional isolated Swift host
+without production credentials.
 
-Prerequisites are macOS, Node.js 22+, pnpm 9+, Docker Desktop, Supabase CLI, Xcode
-command-line tools, and Playwright Chromium/WebKit.
+Prerequisites are macOS, Node.js 22+, pnpm 9+, Xcode command-line tools, and
+Playwright Chromium/WebKit. `pnpm install` provides the Convex and Wrangler CLIs.
 
 ```bash
 pnpm install
@@ -27,7 +28,7 @@ All generated credentials and runtime state stay in ignored local storage. See
 
 `deploy/compose.yml` runs the standalone Go signaling service plus coturn. This is
 useful for transport development and device-key deployments, but it does **not**
-provide the hosted Supabase account, link-code, or device-approval plane.
+provide the hosted account, link-code, or device-approval plane.
 
 Prerequisites:
 
@@ -54,28 +55,32 @@ The hosted product uses:
 
 - Cloudflare Pages for `apps/mobile-pwa`.
 - Cloudflare Workers and Durable Objects for `apps/cloudflare-signal`.
-- Supabase Auth and the migrations under `supabase/migrations`.
+- Convex for accounts, devices, and sign-in (Better Auth), from `convex/`.
 - A separately operated TURN service for WebRTC fallback.
 
-A production fork needs its own Cloudflare account/project/routes, Supabase project,
-OAuth providers, domains, TURN service, and the following deployment values:
+A production fork needs its own Cloudflare account/project/routes, Convex
+deployment, OAuth providers, domains, TURN service, and the following deployment
+values:
 
-- PWA build: `VITE_PUBLIC_APP_URL`, `VITE_SIGNALING_URL`, `VITE_SUPABASE_URL`,
-  `VITE_SUPABASE_ANON_KEY`.
-- Worker secret/config: `PUBLIC_APP_URL`, `SUPABASE_URL`,
-  `ALLOWED_ORIGINS`, `SUPABASE_SERVICE_ROLE_KEY`, and optional
-  `VAPID_PUBLIC_KEY`.
-- GitHub release deployment: `CLOUDFLARE_API_TOKEN` and
-  `CLOUDFLARE_ACCOUNT_ID` if using the included manual workflow.
+- Convex deployment environment: `BETTER_AUTH_SECRET`, `PUBLIC_APP_URL`,
+  `WORKER_CONVEX_SECRET`, and the Google and GitHub client IDs and secrets. See
+  `convex/README.md` for each value and the OAuth redirect URLs.
+- PWA build: `VITE_PUBLIC_APP_URL`, `VITE_SIGNALING_URL`, `VITE_CONVEX_URL`,
+  `VITE_CONVEX_SITE_URL`.
+- Worker config and secrets: `PUBLIC_APP_URL`, `ALLOWED_ORIGINS`, `CONVEX_URL`,
+  `CONVEX_SITE_URL`, the `CONVEX_WORKER_SECRET` secret (equal to the deployment's
+  `WORKER_CONVEX_SECRET`), and optional `VAPID_PUBLIC_KEY`.
+- GitHub release deployment: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`,
+  and a production `CONVEX_DEPLOY_KEY` if using the included manual workflow.
 
 Do not reuse the checked-in production Cloudflare account ID, route, or project name
 in a fork. Copy `apps/cloudflare-signal/wrangler.jsonc`, replace those identifiers,
 set `ALLOWED_ORIGINS` to the exact comma-separated browser origins you operate,
-choose unique Rate Limiting binding namespace IDs, apply both Supabase migrations,
-configure authentication redirect URLs, and deploy the PWA and Worker from your own
-account.
+choose unique Rate Limiting binding namespace IDs, point the Deploy workflow's
+Convex URLs and deploy-key check at your deployment, configure the OAuth redirect
+URLs, and deploy Convex, the Worker, and the PWA from your own accounts.
 
 Turnkey production self-hosting is still Preview. The repository provides the code
 and repeatable local environment, but not an automated installer for domains, OAuth,
-Cloudflare, Supabase, TURN, monitoring, backups, or upgrades. Contributions that make
+Cloudflare, Convex, TURN, monitoring, backups, or upgrades. Contributions that make
 this path safer and more reproducible are welcome.

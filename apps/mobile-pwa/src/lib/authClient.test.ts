@@ -55,7 +55,7 @@ async function loadShim(href: string, routes: Record<string, Route>, seed: Recor
     if (!route) return new Response('not found', { status: 404 });
     return route({ path, init: request ? { method: request.method, body: await request.text() } : init, headers });
   });
-  return import('./supabase');
+  return import('./authClient');
 }
 
 beforeEach(() => {
@@ -73,7 +73,7 @@ describe('Better Auth session shim', () => {
   });
 
   it('exchanges the one-time token from this browser\'s OAuth flow, keeps linkCode, and restores the session', async () => {
-    const { supabase } = await loadShim('https://app.test/?linkCode=ABC234&gtAuthFlow=n1&ott=one-time', {
+    const { authClient } = await loadShim('https://app.test/?linkCode=ABC234&gtAuthFlow=n1&ott=one-time', {
       '/cross-domain/one-time-token/verify': ({ init }) => {
         expect(JSON.parse(String(init.body))).toEqual({ token: 'one-time' });
         return Response.json(userPayload('from-ott'));
@@ -83,7 +83,7 @@ describe('Better Auth session shim', () => {
         return Response.json(userPayload('from-ott'));
       },
     }, flowSeed('n1'));
-    const { data } = await supabase!.auth.getSession();
+    const { data } = await authClient!.auth.getSession();
     expect(data.session?.access_token).toBe('from-ott');
     expect(data.session?.user.id).toBe('legacy-user-1');
     expect(replacedUrl).toBe('https://app.test/?linkCode=ABC234');
@@ -97,10 +97,10 @@ describe('Better Auth session shim', () => {
       ['https://app.test/?ott=attacker-token&gtAuthFlow=guess', flowSeed('real-nonce')],
       ['https://app.test/?ott=attacker-token&gtAuthFlow=old', flowSeed('old', Date.now() - 16 * 60_000)],
     ] as const) {
-      const { supabase, readAuthRedirectError } = await loadShim(href, {
+      const { authClient, readAuthRedirectError } = await loadShim(href, {
         '/cross-domain/one-time-token/verify': () => Response.json(userPayload('attacker')),
       }, { ...seed });
-      expect((await supabase!.auth.getSession()).data.session).toBeNull();
+      expect((await authClient!.auth.getSession()).data.session).toBeNull();
       expect(await readAuthRedirectError()).toBe('This sign-in was started in another browser or tab. Start sign-in again here.');
       expect(calls).toEqual([]);
       expect(localStorage.getItem('gt.better-auth.bearer-token')).toBeNull();
@@ -108,30 +108,30 @@ describe('Better Auth session shim', () => {
   });
 
   it('restores a Mac linkCode the provider round trip dropped', async () => {
-    const { supabase } = await loadShim('https://app.test/?gtAuthFlow=n2&ott=one-time', {
+    const { authClient } = await loadShim('https://app.test/?gtAuthFlow=n2&ott=one-time', {
       '/cross-domain/one-time-token/verify': () => Response.json(userPayload('from-ott')),
       '/get-session': () => Response.json(userPayload('from-ott')),
     }, flowSeed('n2', Date.now(), 'LINK42'));
-    await supabase!.auth.getSession();
+    await authClient!.auth.getSession();
     expect(replacedUrl).toBe('https://app.test/?linkCode=LINK42');
   });
 
   it('retries a one-time token exchange that hit a server error once', async () => {
     let attempts = 0;
-    const { supabase } = await loadShim('https://app.test/?gtAuthFlow=n3&ott=one-time', {
+    const { authClient } = await loadShim('https://app.test/?gtAuthFlow=n3&ott=one-time', {
       '/cross-domain/one-time-token/verify': () => (++attempts === 1 ? new Response('busy', { status: 503 }) : Response.json(userPayload('from-ott'))),
       '/get-session': () => Response.json(userPayload('from-ott')),
     }, flowSeed('n3'));
-    expect((await supabase!.auth.getSession()).data.session?.access_token).toBe('from-ott');
+    expect((await authClient!.auth.getSession()).data.session?.access_token).toBe('from-ott');
     expect(attempts).toBe(2);
   });
 
   it('turns an OAuth error return into a readable message and no session', async () => {
-    const { supabase, readAuthRedirectError } = await loadShim('https://app.test/?authError=1&error=access_denied&gtAuthFlow=n4', {}, flowSeed('n4'));
+    const { authClient, readAuthRedirectError } = await loadShim('https://app.test/?authError=1&error=access_denied&gtAuthFlow=n4', {}, flowSeed('n4'));
     expect(await readAuthRedirectError()).toBe('Sign-in was cancelled. Try again when you are ready.');
     // Still there for a second render (StrictMode), until the next attempt.
     expect(await readAuthRedirectError()).toBe('Sign-in was cancelled. Try again when you are ready.');
-    const { data } = await supabase!.auth.getSession();
+    const { data } = await authClient!.auth.getSession();
     expect(data.session).toBeNull();
     expect(replacedUrl).toBe('https://app.test/');
     expect(calls).toEqual([]);
@@ -139,46 +139,46 @@ describe('Better Auth session shim', () => {
 
   it('keeps the last confirmed session while the auth server is unreachable', async () => {
     let online = true;
-    const { supabase } = await loadShim('https://app.test/', {
+    const { authClient } = await loadShim('https://app.test/', {
       '/sign-in/email': () =>
         new Response(JSON.stringify({ token: 'email-token', user: userPayload().user }), {
           headers: { 'content-type': 'application/json', 'set-auth-token': 'email-token' },
         }),
       '/get-session': () => (online ? Response.json(userPayload('email-token')) : new Response('down', { status: 503 })),
     });
-    const signedIn = await supabase!.auth.signInWithPassword({ email: 'Person@Example.test ', password: 'correct horse' });
+    const signedIn = await authClient!.auth.signInWithPassword({ email: 'Person@Example.test ', password: 'correct horse' });
     expect(signedIn.error).toBeNull();
     expect(signedIn.data.session?.access_token).toBe('email-token');
     online = false;
-    const { data, error } = await supabase!.auth.getSession();
+    const { data, error } = await authClient!.auth.getSession();
     expect(error).toBeNull();
     expect(data.session?.user.id).toBe('legacy-user-1');
   });
 
   it('signs out locally when the server says the session is gone', async () => {
     let valid = true;
-    const { supabase } = await loadShim('https://app.test/', {
+    const { authClient } = await loadShim('https://app.test/', {
       '/sign-in/email': () =>
         new Response(JSON.stringify({ token: 'email-token', user: userPayload().user }), {
           headers: { 'content-type': 'application/json', 'set-auth-token': 'email-token' },
         }),
       '/get-session': () => (valid ? Response.json(userPayload('email-token')) : Response.json(null)),
     });
-    await supabase!.auth.signInWithPassword({ email: 'person@example.test', password: 'correct horse' });
+    await authClient!.auth.signInWithPassword({ email: 'person@example.test', password: 'correct horse' });
     valid = false;
-    expect((await supabase!.auth.getSession()).data.session).toBeNull();
+    expect((await authClient!.auth.getSession()).data.session).toBeNull();
     expect(localStorage.getItem('gt.better-auth.bearer-token')).toBeNull();
   });
 
   it('sends email sign-in without a callback URL so the app does not reload', async () => {
     let body: Record<string, unknown> = {};
-    const { supabase } = await loadShim('https://app.test/?linkCode=ABC234', {
+    const { authClient } = await loadShim('https://app.test/?linkCode=ABC234', {
       '/sign-in/email': ({ init }) => {
         body = JSON.parse(String(init.body));
         return Response.json({ code: 'INVALID_EMAIL_OR_PASSWORD', message: 'Invalid email or password' }, { status: 401 });
       },
     });
-    const result = await supabase!.auth.signInWithPassword({ email: 'person@example.test', password: 'wrong' });
+    const result = await authClient!.auth.signInWithPassword({ email: 'person@example.test', password: 'wrong' });
     expect(body).not.toHaveProperty('callbackURL');
     expect(result.data.session).toBeNull();
     expect((result.error as { code?: string }).code).toBe('INVALID_EMAIL_OR_PASSWORD');
@@ -186,13 +186,13 @@ describe('Better Auth session shim', () => {
 
   it('asks the provider flow to return errors to the app, keeping linkCode', async () => {
     let body: Record<string, unknown> = {};
-    const { supabase } = await loadShim('https://app.test/', {
+    const { authClient } = await loadShim('https://app.test/', {
       '/sign-in/social': ({ init }) => {
         body = JSON.parse(String(init.body));
         return Response.json({ url: 'https://accounts.example.test/authorize', redirect: false });
       },
     });
-    await supabase!.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: 'https://app.test/?linkCode=ABC234' } });
+    await authClient!.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: 'https://app.test/?linkCode=ABC234' } });
     const flow = JSON.parse(localStorage.getItem('gt.better-auth.oauth-flow') ?? '{}');
     expect(flow.linkCode).toBe('ABC234');
     expect(flow.nonce).toMatch(/^[0-9a-f]{32}$/);
@@ -206,7 +206,7 @@ describe('Better Auth session shim', () => {
   it('ends the local session at once and queues the server revocation when offline', async () => {
     let online = true;
     const signOutAuth: (string | null)[] = [];
-    const { supabase } = await loadShim('https://app.test/', {
+    const { authClient } = await loadShim('https://app.test/', {
       '/sign-in/email': () =>
         new Response(JSON.stringify({ token: 'email-token', user: userPayload().user }), {
           headers: { 'content-type': 'application/json', 'set-auth-token': 'email-token' },
@@ -217,25 +217,25 @@ describe('Better Auth session shim', () => {
       },
       '/get-session': () => Response.json(null),
     });
-    await supabase!.auth.signInWithPassword({ email: 'person@example.test', password: 'correct horse' });
+    await authClient!.auth.signInWithPassword({ email: 'person@example.test', password: 'correct horse' });
     online = false;
-    expect((await supabase!.auth.signOut()).error).toBeNull();
+    expect((await authClient!.auth.signOut()).error).toBeNull();
     expect(localStorage.getItem('gt.better-auth.bearer-token')).toBeNull();
     expect(localStorage.getItem('gt.better-auth.pending-revocation')).toBe('email-token');
     online = true;
-    await supabase!.auth.getSession();
+    await authClient!.auth.getSession();
     await vi.waitFor(() => expect(localStorage.getItem('gt.better-auth.pending-revocation')).toBeNull());
     expect(signOutAuth).toEqual(['Bearer email-token', 'Bearer email-token']);
   });
 
   it('never pairs a cached account with a different account\'s token', async () => {
-    const { supabase } = await loadShim('https://app.test/', {
+    const { authClient } = await loadShim('https://app.test/', {
       '/get-session': () => new Response('down', { status: 503 }),
     }, {
       'gt.better-auth.bearer-token': 'token-b',
       'gt.better-auth.session-snapshot': JSON.stringify({ token: 'token-a', user: { id: 'user-a' } }),
     });
-    const { data, error } = await supabase!.auth.getSession();
+    const { data, error } = await authClient!.auth.getSession();
     expect(data.session).toBeNull();
     expect(error).toBeTruthy();
   });

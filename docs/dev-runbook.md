@@ -1,14 +1,13 @@
 # Local Development Runbook
 
 The account-first Local Test Lab is the default development path. It runs the
-PWA, Cloudflare Worker, local Supabase, and optionally an isolated Swift host
-without production credentials or hosted deploys.
+PWA, Cloudflare Worker, a local Convex backend (accounts and sign-in), and
+optionally an isolated Swift host without production credentials or hosted
+deploys.
 
 ## Prerequisites
 
-- Node.js 22+ and pnpm 9+
-- Docker Desktop running
-- Supabase CLI
+- Node.js 22+ and pnpm 9+ (`pnpm install` provides the Convex and Wrangler CLIs)
 - Swift and Xcode command-line tools
 - Playwright Chromium and WebKit
 
@@ -18,8 +17,8 @@ pnpm exec playwright install chromium webkit
 pnpm lab:doctor
 ```
 
-`lab:doctor` is read-only. It reports exact tool versions, Docker readiness,
-browser engines, signing availability, fixed-port ownership, and stale lab
+`lab:doctor` is read-only. It reports exact tool versions (including the Convex
+CLI), browser engines, signing availability, fixed-port ownership, and stale lab
 state. Follow its `actions` list before starting the stack.
 
 ## Fast Start
@@ -32,13 +31,16 @@ This starts:
 
 - PWA: `http://127.0.0.1:5173`
 - Worker signaling and account API: `http://127.0.0.1:8787`
-- Supabase API: `http://127.0.0.1:54321`
+- Convex backend: `http://127.0.0.1:3210`, with sign-in and the Worker's account
+  gateway on `http://127.0.0.1:3211`
 - An isolated Swift host linked through the local account flow
 
 The lab creates and signs in a disposable `@glasstunnel.test` user. It never
-uses a private account or production Supabase credentials. Runtime state,
-generated environment files, logs, and browser artifacts stay under ignored
-local directories.
+uses a private account or a cloud Convex deployment: the backend runs in Convex's
+anonymous local mode, every URL is checked to be loopback, and its secrets are
+generated per machine. The database lives in `.convex/local/` and the rest of
+the runtime state, generated environment files, logs, and browser artifacts
+stay under ignored local directories.
 
 ```bash
 pnpm lab:status
@@ -53,7 +55,7 @@ before stopping anything, and refuses to replace or kill unknown listeners.
 | Command                   | Purpose                                                          |
 | ------------------------- | ---------------------------------------------------------------- |
 | `pnpm lab:doctor`         | Inspect prerequisites and stale state without changing anything  |
-| `pnpm lab:up`             | Start local Supabase, Worker, and PWA                            |
+| `pnpm lab:up`             | Start the local Convex backend, Worker, and PWA                  |
 | `pnpm lab:up:host`        | Start the core lab plus an isolated Swift host                   |
 | `pnpm lab:status`         | Show owned services, health, URLs, and host metadata             |
 | `pnpm lab:reset -- --yes` | Stop owned services and reset disposable local data              |

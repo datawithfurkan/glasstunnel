@@ -149,7 +149,7 @@ record_matches_required_commit() {
 
 is_product_path() {
   case "$1" in
-    apps/*|packages/*|site/*|supabase/*|Casks/*|deploy/*|package.json|pnpm-lock.yaml|pnpm-workspace.yaml|Makefile|Dockerfile*)
+    apps/*|packages/*|site/*|convex/*|Casks/*|deploy/*|package.json|pnpm-lock.yaml|pnpm-workspace.yaml|Makefile|Dockerfile*)
       return 0
       ;;
     *)

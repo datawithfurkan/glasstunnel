@@ -21,7 +21,7 @@ host-macos app     <-------->  signaling (Go)       <-------> mobile-pwa
   WebRTC peer                  OR
                                Cloudflare Workers +
                                Durable Objects +
-                               Supabase (account plane)
+                               Convex (accounts, sign-in)
 
               <--------- WebRTC E2E (DTLS-SRTP) --------->
 ```
@@ -29,7 +29,7 @@ host-macos app     <-------->  signaling (Go)       <-------> mobile-pwa
 - **Mac host app** — Swift/SwiftUI, discovers local agent apps, exposes them as remote apps, wraps CLI agents in a PTY, watches GUI agents via the Accessibility API, and streams to your phone over WebRTC.
 - **Signaling + TURN** — Two options:
   - **Self-hosted:** Small Go WebSocket service + coturn. One `docker compose up`.
-  - **Hosted:** Cloudflare Workers with Durable Objects for WebSocket state, Supabase for accounts/devices. The account plane handles sign-in, host linking, and device approvals.
+  - **Hosted:** Cloudflare Workers with Durable Objects for WebSocket state, Convex for accounts and devices (with Better Auth for sign-in). The account plane handles sign-in, host linking, and device approvals.
 - **Mobile PWA** — Installable React web app. Sign in to your account, choose a linked Mac, and send prompts. A local device-unlock screen is available, with platform-authenticator support where the browser provides it. Web Push availability depends on the deployment.
 
 WebRTC media and DataChannel traffic are end-to-end encrypted between your Mac and
@@ -98,7 +98,6 @@ cd glasstunnel
 #   - Node 22+ and pnpm 9+
 #   - Go 1.26.5+
 #   - protoc (for codegen)
-#   - Docker Desktop and the Supabase CLI (for the full local lab)
 
 # Install JS dependencies
 pnpm install
@@ -106,7 +105,7 @@ pnpm install
 # Inspect prerequisites without changing the machine
 pnpm lab:doctor
 
-# Start disposable local Supabase, Worker, PWA, and isolated Mac host
+# Start a disposable local Convex backend, Worker, PWA, and isolated Mac host
 pnpm lab:up:host
 
 # Run the authenticated mobile journey, then clean up owned services

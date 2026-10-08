@@ -1,4 +1,4 @@
-# Cloudflare + Supabase rollout
+# Hosted platform: Cloudflare and Convex
 
 This document tracks the hosted Glasstunnel platform layout.
 
@@ -8,9 +8,15 @@ This document tracks the hosted Glasstunnel platform layout.
 - Hosted PWA URLs:
   - `https://app.glasstunnel.io`
   - `https://glasstunnel.pages.dev`
-- GitHub auto-deploy workflow: `.github/workflows/deploy.yml`
-- Supabase project: `Glass Tunnel`
-- Supabase project ref: `gdvqnyebglrimangddts`
+- Signaling Worker: `glasstunnel-signal` on `signaling.glasstunnel.io`
+- Convex project `glasstunnel-convex`:
+  - Production deployment: `adorable-perch-596` (accounts, sign-in, account plane)
+  - Development deployment: `whimsical-sockeye-495`
+- Deploy workflow: `.github/workflows/deploy.yml` (manual; Convex first, then
+  the Worker and the web surfaces)
+
+The Supabase project (`gdvqnyebglrimangddts`) is retired. Accounts moved to
+Convex on 2026-09-29, and nothing in the product reads it since 2026-10-08.
 
 ## Recommended public hostnames
 
@@ -49,7 +55,7 @@ Notes:
 
 ## Current platform status
 
-- Cloudflare worker signaling is implemented with Durable Object WebSocket routing, nonce auth, bounded offline queues, Supabase-backed device registration, host claim codes, host listing, and approval requests.
+- Cloudflare worker signaling is implemented with Durable Object WebSocket routing, nonce auth, bounded offline queues, and Convex-backed device registration, host claim codes, host listing, and approval requests through the shared-secret gateway.
 - Push fanout is still pending on the Cloudflare worker. `/push/register` currently acknowledges with a migration-pending response while the Go signaling server remains the complete push implementation.
 
 ## Immediate next platform steps
@@ -57,8 +63,8 @@ Notes:
 1. Add GitHub repository secrets:
    - `CLOUDFLARE_API_TOKEN`
    - `CLOUDFLARE_ACCOUNT_ID`
-2. Let `CI` remain the quality gate, and let `Deploy` run after successful
-   `main` builds.
+2. Let `CI` remain the quality gate, and run `Deploy` for a commit on `main`
+   after its CI passes.
 3. Migrate Web Push registration and VAPID fanout into `apps/cloudflare-signal`.
 4. Keep TURN separate from Pages. TURN needs its own public hostname and relay
    infrastructure.

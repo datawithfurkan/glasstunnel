@@ -8,8 +8,8 @@ Push registration and VAPID fanout have not yet migrated to this Worker.
 
 ## Local Development
 
-Use the root Local Test Lab so the Worker receives generated local Supabase
-credentials without touching developer or production secrets:
+Use the root Local Test Lab so the Worker talks to a local Convex backend with
+generated lab-only secrets, without touching developer or production secrets:
 
 ```bash
 pnpm lab:up
@@ -35,30 +35,31 @@ and connecting address. Raw bearer tokens are never placed in rate-limit keys.
 
 ## Account Plane
 
-Supabase remains the default account-plane provider. To canary the migrated
-Convex account/control-plane rows, set:
+Accounts, devices, pairings, link codes, and approval requests live in Convex
+(`convex/`). Every Convex function is internal; the Worker reaches them through
+one HTTP gateway on the deployment's `.convex.site` origin:
 
-```bash
-ACCOUNT_PLANE_PROVIDER=convex
-CONVEX_URL=https://<deployment>.convex.cloud
+```text
+POST {CONVEX_SITE_URL}/worker/account-plane
+Authorization: Bearer {CONVEX_WORKER_SECRET}
+{"fn": "<allowlisted function>", "args": {...}}
 ```
 
-With `ACCOUNT_PLANE_PROVIDER=convex`, the Worker reads and writes profiles,
-devices, device pairings, host link codes, push subscriptions, and approval
-requests through Convex functions.
+Bearer tokens from the app are Better Auth session tokens; the Worker verifies
+them through the same gateway (`verifyBearerToken`) and caps relay
+authorization at the session's expiry.
 
-Bearer-token verification remains Supabase-backed by default. To canary the
-migrated Convex + Better Auth sessions, set:
+Configuration:
 
-```bash
-ACCOUNT_AUTH_PROVIDER=convex
-# or AUTH_BACKEND=convex
-CONVEX_URL=https://<deployment>.convex.cloud
-```
+- `CONVEX_URL` and `CONVEX_SITE_URL` (vars in `wrangler.jsonc`). The site URL is
+  derived from `CONVEX_URL` when unset.
+- `CONVEX_WORKER_SECRET` (a Worker secret). It must equal the deployment's
+  `WORKER_CONVEX_SECRET`.
 
-When both `ACCOUNT_PLANE_PROVIDER=convex` and `ACCOUNT_AUTH_PROVIDER=convex`
-are set, account endpoints and relay client auth no longer require
-`SUPABASE_URL` or `SUPABASE_SERVICE_ROLE_KEY`.
+The Worker fails closed: without the secret, or when Convex is unreachable,
+account requests answer `503` and relay auth is refused. A gateway rejection
+(for example `access_revoked`) becomes a `403`. Function names and gateway
+codes stay in the Worker log and never appear in replies.
 
 ## Validation
 
@@ -72,7 +73,8 @@ pnpm worker:build
 configuration. It runs in real `workerd` without loading `.dev.vars` or cloud
 credentials. Tests never reach the network: `test/setup.ts` fails any outbound
 `fetch` fast, and tests that exercise account or relay auth stub `fetch` with a
-fake Supabase (see `test/relayHub.test.ts`). `worker:build` is a dry run and
+fake Convex gateway that mirrors `convex/accountPlane.ts` (see
+`test/relayHub.test.ts`). `worker:build` is a dry run and
 does not deploy.
 
 Use manual `wrangler dev` only for Worker-only debugging. Prefer the lab for
@@ -81,8 +83,9 @@ account, PWA, relay, or host behavior.
 ## Deployment
 
 Production configuration is in `wrangler.jsonc`. Deployment requires the
-documented Cloudflare, Supabase, and VAPID environment values and must happen
-through the explicit release workflow, never as part of a local test command.
+Cloudflare credentials and the `CONVEX_WORKER_SECRET` Worker secret, and
+happens only through the Deploy workflow (after Convex), never as part of a
+local test command.
 
 Production endpoints:
 

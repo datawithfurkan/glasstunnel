@@ -13,7 +13,17 @@ import {
   stopManifestServices,
   writeManifest,
 } from './processes.mjs';
-import { bootstrapSupabase, defaultRunCommand, resetSupabase } from './supabase.mjs';
+import { defaultRunCommand } from './commands.mjs';
+import {
+  assertLoopbackUrl,
+  configureLabConvex,
+  convexServiceDefinition,
+  labConvexSecrets,
+  resetConvexState,
+  upsertLabUser,
+  waitForConvexFunctions,
+  writeConvexEnvFile,
+} from './convex.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -21,19 +31,18 @@ function envLine(name, value) {
   return `${name}=${JSON.stringify(String(value))}`;
 }
 
-export function writeWorkerEnvironment(config, supabase) {
+export function writeWorkerEnvironment(config, secrets = labConvexSecrets(config)) {
   ensureRuntimeDirectories(config);
+  assertLoopbackUrl(config.urls.convex);
+  assertLoopbackUrl(config.urls.convexSite);
   const contents = [
     envLine('PUBLIC_APP_URL', config.urls.pwa),
     envLine('ALLOWED_ORIGINS', config.urls.pwa),
-    envLine('SUPABASE_URL', supabase.apiUrl),
-    envLine('SUPABASE_SERVICE_ROLE_KEY', supabase.serviceRoleKey),
-    // wrangler.jsonc points the deployed Worker at production Convex; the lab
-    // must never reach it.
-    envLine('ACCOUNT_PLANE_PROVIDER', 'supabase'),
-    envLine('ACCOUNT_AUTH_PROVIDER', 'supabase'),
-    envLine('CONVEX_URL', ''),
-    envLine('CONVEX_SITE_URL', ''),
+    // Overrides wrangler.jsonc, which points the deployed Worker at production
+    // Convex: the lab Worker talks only to the local backend.
+    envLine('CONVEX_URL', config.urls.convex),
+    envLine('CONVEX_SITE_URL', config.urls.convexSite),
+    envLine('CONVEX_WORKER_SECRET', secrets.workerSecret),
     '',
   ].join('\n');
   writeFileSync(config.files.workerEnv, contents, { encoding: 'utf8', mode: 0o600 });
@@ -67,7 +76,7 @@ export function workerServiceDefinition(config) {
   };
 }
 
-export function pwaServiceDefinition(config, supabase) {
+export function pwaServiceDefinition(config) {
   return {
     name: 'pwa',
     command: 'pnpm',
@@ -85,8 +94,8 @@ export function pwaServiceDefinition(config, supabase) {
     env: {
       VITE_PUBLIC_APP_URL: config.urls.pwa,
       VITE_SIGNALING_URL: config.urls.signaling,
-      VITE_SUPABASE_URL: supabase.apiUrl,
-      VITE_SUPABASE_ANON_KEY: supabase.anonKey,
+      VITE_CONVEX_URL: config.urls.convex,
+      VITE_CONVEX_SITE_URL: config.urls.convexSite,
     },
     cwd: config.root,
     healthUrl: config.urls.pwa,
@@ -232,11 +241,17 @@ export async function findPortOwners(port) {
   }
 }
 
+/** Every port the core lab binds, with the name people see in messages. */
+const LAB_PORT_LABELS = {
+  pwa: 'PWA',
+  worker: 'Worker',
+  convex: 'Convex',
+  convexSite: 'Convex site',
+};
+
 export async function assertPortsAvailable(config, { findOwners = findPortOwners } = {}) {
-  for (const [name, port] of [
-    ['PWA', config.ports.pwa],
-    ['Worker', config.ports.worker],
-  ]) {
+  for (const [key, name] of Object.entries(LAB_PORT_LABELS)) {
+    const port = config.ports[key];
     const owners = await findOwners(port);
     if (owners.length > 0) {
       throw new Error(
@@ -267,21 +282,32 @@ export async function waitForHttp(
   throw new Error(`Timed out waiting for ${url}: ${lastError?.message ?? 'no response'}`);
 }
 
-async function cleanupFailedStart(config, manifest, runCommand) {
+async function cleanupFailedStart(config, manifest) {
   if (manifest.services.length > 0) {
     await stopManifestServices(config).catch(() => {});
   } else {
     rmSync(config.files.manifest, { force: true });
   }
-  if (manifest.startedSupabaseByLab) {
-    await runCommand('supabase', ['stop'], { cwd: config.root }).catch(() => {});
-  }
+}
+
+/** Starts the local Convex backend, configures it, and makes sure the lab account exists. */
+export async function bootstrapConvex({ config, runId, manifest, spawnService, waitHealth, runCommand, fetchImpl = fetch }) {
+  writeConvexEnvFile(config);
+  const definition = convexServiceDefinition(config);
+  const service = await spawnService(config, { ...definition, runId });
+  manifest.services.push(service);
+  writeManifest(config, manifest);
+  await waitHealth(definition.healthUrl, { timeoutMs: 120_000, fetchImpl });
+  await waitForConvexFunctions(config, { fetchImpl });
+  const secrets = await configureLabConvex(config, { runCommand });
+  await upsertLabUser({ config, ...config.identity, fetchImpl });
+  return secrets;
 }
 
 export async function startCoreLab({
   host = false,
   config = ensureRuntimeDirectories(labConfig()),
-  bootstrap = bootstrapSupabase,
+  bootstrap = bootstrapConvex,
   spawnService = spawnManagedService,
   waitHealth = waitForHttp,
   findOwners = findPortOwners,
@@ -300,22 +326,21 @@ export async function startCoreLab({
   }
 
   await assertPortsAvailable(config, { findOwners });
-  const supabase = await bootstrap({ config, runCommand });
   const runId = randomUUID();
   const manifest = {
-    version: 1,
+    version: 2,
     runId,
     createdAt: new Date().toISOString(),
-    startedSupabaseByLab: supabase.startedByLab,
     services: [],
   };
   writeManifest(config, manifest);
 
   try {
-    writeWorkerEnvironment(config, supabase);
+    const secrets = await bootstrap({ config, runId, manifest, spawnService, waitHealth, runCommand });
+    writeWorkerEnvironment(config, secrets);
     for (const definition of [
       workerServiceDefinition(config),
-      pwaServiceDefinition(config, supabase),
+      pwaServiceDefinition(config),
     ]) {
       const service = await spawnService(config, { ...definition, runId });
       manifest.services.push(service);
@@ -336,7 +361,7 @@ export async function startCoreLab({
 
     return labStatus({ config });
   } catch (error) {
-    await cleanupFailedStart(config, manifest, runCommand);
+    await cleanupFailedStart(config, manifest);
     throw error;
   }
 }
@@ -353,7 +378,9 @@ export async function labStatus({ config = labConfig(), fetchImpl = fetch } = {}
         ? `${config.urls.worker}/health`
         : service.name === 'pwa'
           ? config.urls.pwa
-          : null;
+          : service.name === 'convex'
+            ? `${config.urls.convex}/version`
+            : null;
     let healthy = processStatus.alive && processStatus.owned;
     if (healthy && healthUrl) {
       try {
@@ -393,9 +420,6 @@ export async function stopLab({
     return { stopped: macAppStopped, macAppStopped, services: [] };
   }
   const services = await stopManifestServices(config);
-  if (manifest.startedSupabaseByLab) {
-    await runCommand('supabase', ['stop'], { cwd: config.root });
-  }
   rmSync(config.files.workerEnv, { force: true });
   return { stopped: true, macAppStopped, services };
 }
@@ -404,28 +428,21 @@ export async function resetLab({
   config = ensureRuntimeDirectories(labConfig()),
   runCommand = defaultRunCommand,
   stopMacApp = stopSignedMacApp,
-  resetDatabase = resetSupabase,
-  bootstrap = bootstrapSupabase,
+  resetDatabase = resetConvexState,
 } = {}) {
   await stopLab({ config, runCommand, stopMacApp });
-  const resetStatus = await resetDatabase({ root: config.root, runCommand });
-  try {
-    const supabase = await bootstrap({ config, runCommand });
-    rmSync(config.paths.workerState, { recursive: true, force: true });
-    ensureRuntimeDirectories(config);
-    return { reset: true, email: supabase.email };
-  } finally {
-    if (resetStatus.startedByLab) {
-      await runCommand('supabase', ['stop'], { cwd: config.root });
-    }
-  }
+  // Accounts and devices live in the local Convex database; the next start
+  // recreates the lab account in an empty one.
+  resetDatabase(config);
+  rmSync(config.paths.workerState, { recursive: true, force: true });
+  ensureRuntimeDirectories(config);
+  return { reset: true, email: config.identity.email };
 }
 
 const TOOL_VERSION_ARGS = {
   node: ['--version'],
   pnpm: ['--version'],
-  docker: ['--version'],
-  supabase: ['--version'],
+  convex: ['--version'],
   wrangler: ['--version'],
   swift: ['--version'],
   xcodebuild: ['-version'],
@@ -483,16 +500,6 @@ export async function runDoctor({
     tools[command] = await inspectTool(command, { config, runCommand, pathExists });
   }
 
-  let docker;
-  try {
-    const result = await runCommand('docker', ['info', '--format', '{{.ServerVersion}}'], {
-      cwd: config.root,
-    });
-    docker = { ready: true, version: commandOutput(result) };
-  } catch (error) {
-    docker = { ready: false, error: error.message };
-  }
-
   const browsers = {};
   try {
     const executables = await browserExecutables();
@@ -521,7 +528,7 @@ export async function runDoctor({
   }
 
   const ports = {};
-  for (const name of ['pwa', 'worker', 'supabase']) {
+  for (const name of Object.keys(LAB_PORT_LABELS)) {
     const port = config.ports[name];
     const owners = await findOwners(port);
     ports[name] = { port, owners, available: owners.length === 0 };
@@ -551,16 +558,15 @@ export async function runDoctor({
   for (const [name, tool] of Object.entries(tools)) {
     if (!tool.available) actions.push(`Install or repair ${name}, then rerun \`pnpm lab:doctor\`.`);
   }
-  if (!docker.ready) actions.push('Start Docker Desktop, then rerun `pnpm lab:doctor`.');
   for (const [name, browser] of Object.entries(browsers)) {
     if (!browser.available)
       actions.push(`Install Playwright ${name} with \`pnpm exec playwright install ${name}\`.`);
   }
   if (manifest.stale) actions.push('Remove stale lab ownership safely with `pnpm lab:down`.');
-  for (const name of ['pwa', 'worker']) {
+  for (const [name, label] of Object.entries(LAB_PORT_LABELS)) {
     if (!ports[name].available) {
       actions.push(
-        `Free ${name.toUpperCase()} port ${ports[name].port}; the lab will not replace another process.`,
+        `Free the ${label} port ${ports[name].port}; the lab will not replace another process.`,
       );
     }
   }
@@ -572,13 +578,12 @@ export async function runDoctor({
 
   const requiredToolsReady = Object.values(tools).every((tool) => tool.available);
   const browsersReady = Object.values(browsers).every((browser) => browser.available);
-  const corePortsReady = ports.pwa.available && ports.worker.available;
+  const corePortsReady = Object.keys(LAB_PORT_LABELS).every((name) => ports[name].available);
 
   return {
-    ok: requiredToolsReady && docker.ready && browsersReady && corePortsReady && !manifest.stale,
+    ok: requiredToolsReady && browsersReady && corePortsReady && !manifest.stale,
     canonicalRoot: config.root,
     tools,
-    docker,
     browsers,
     signing,
     ports,

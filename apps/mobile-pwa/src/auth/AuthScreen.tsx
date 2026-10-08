@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../lib/store';
-import { readAuthRedirectError } from '../lib/supabase';
+import { readAuthRedirectError } from '../lib/authClient';
 import { BrandMark } from '../ui/Brand';
 
 type EmailAuthMode = 'signin' | 'signup';

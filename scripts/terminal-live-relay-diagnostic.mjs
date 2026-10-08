@@ -5,7 +5,7 @@ import { AgentStatus, DEFAULT_SIGNALING_URL, encodeDataChannelMessageJson } from
 import { base64FromBytes, bytesFromBase64, generateDeviceKeypair, sign } from '../packages/shared-crypto/dist/index.js';
 
 const usage = `Usage:
-  GT_TERMINAL_LIVE_ACCESS_TOKEN=<supabase-access-token> pnpm qa:terminal:live
+  GT_TERMINAL_LIVE_ACCESS_TOKEN=<session-token> pnpm qa:terminal:live
 
 Optional:
   GT_TERMINAL_LIVE_HOST_DEVICE_ID=<host-device-id>

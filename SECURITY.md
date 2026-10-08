@@ -32,7 +32,7 @@ In scope:
 - Mac host app (`apps/host-macos`)
 - Mobile PWA (`apps/mobile-pwa`)
 - Signaling server (`apps/signaling`)
-- Hosted Cloudflare/Supabase account and relay control plane configuration
+- Hosted Cloudflare/Convex account and relay control plane configuration (`apps/cloudflare-signal`, `convex/`)
 - Shared crypto package (`packages/shared-crypto`)
 - Protocol definitions (`packages/protocol`)
 - Deployment configuration under `deploy/`

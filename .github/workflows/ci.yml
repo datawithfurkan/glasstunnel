@@ -34,10 +34,11 @@ jobs:
         run: pnpm exec tsc -p convex --noEmit
       - name: Worker runtime tests
         run: pnpm worker:test
-      - name: Convex migration and lab script tests
+      - name: Convex migration, lab, and script tests
         run: |
           node --test scripts/convex-migration/*.test.mjs
           node --test scripts/lab/*.test.mjs
+          node --test scripts/*.test.mjs
       - run: pnpm build
 
   go:

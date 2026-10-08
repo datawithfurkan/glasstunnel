@@ -20,9 +20,9 @@ const mocks = vi.hoisted(() => ({
   }>,
 }));
 
-vi.mock('./supabase', () => ({
-  hasSupabaseAuth: () => true,
-  supabase: { auth: {
+vi.mock('./authClient', () => ({
+  hasAccountAuth: () => true,
+  authClient: { auth: {
     initialize: vi.fn(async () => {}),
     onAuthStateChange: vi.fn(),
     getSession: mocks.getSession,

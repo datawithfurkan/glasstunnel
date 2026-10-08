@@ -45,7 +45,7 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   exit 0
 fi
 
-for file in .env.platform.local .env.smoke.local; do
+for file in .env.smoke.local; do
   if [[ ! -f "$ROOT_DIR/$file" ]]; then
     echo "Missing $file. Platform and smoke email credentials are required." >&2
     exit 2
@@ -54,13 +54,11 @@ done
 
 set -a
 # shellcheck disable=SC1091
-source "$ROOT_DIR/.env.platform.local"
+[[ -f "$ROOT_DIR/.env.platform.local" ]] && source "$ROOT_DIR/.env.platform.local"
 # shellcheck disable=SC1091
 source "$ROOT_DIR/.env.smoke.local"
 set +a
 
-: "${SUPABASE_URL:?SUPABASE_URL is required in .env.platform.local}"
-: "${SUPABASE_ANON_KEY:?SUPABASE_ANON_KEY is required in .env.platform.local}"
 : "${SMOKE_EMAIL:?SMOKE_EMAIL is required in .env.smoke.local}"
 : "${SMOKE_PASSWORD:?SMOKE_PASSWORD is required in .env.smoke.local}"
 
@@ -170,33 +168,7 @@ if [[ -z "$host_device_id" || -z "$link_code" ]]; then
   exit 1
 fi
 
-access_token="$(
-  node <<'NODE'
-const url = process.env.SUPABASE_URL;
-const anon = process.env.SUPABASE_ANON_KEY;
-const email = process.env.SMOKE_EMAIL;
-const password = process.env.SMOKE_PASSWORD;
-
-const response = await fetch(`${url.replace(/\/+$/, '')}/auth/v1/token?grant_type=password`, {
-  method: 'POST',
-  headers: {
-    apikey: anon,
-    authorization: `Bearer ${anon}`,
-    'content-type': 'application/json',
-  },
-  body: JSON.stringify({ email, password }),
-});
-
-const payload = await response.json().catch(() => ({}));
-if (!response.ok || !payload.access_token) {
-  const reason = payload.error_description || payload.msg || payload.error || 'unknown error';
-  console.error(`smoke account auth failed with ${response.status}: ${reason}`);
-  process.exit(1);
-}
-
-process.stdout.write(payload.access_token);
-NODE
-)"
+access_token="$(node "$ROOT_DIR/scripts/smoke-account-token.mjs")"
 
 GT_OPENCODE_HOSTED_CHROME="$CHROME_BIN" \
 GT_OPENCODE_HOSTED_APP_URL="$APP_URL" \
