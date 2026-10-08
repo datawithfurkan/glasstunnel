@@ -339,17 +339,39 @@ describe('Account registration authorization', () => {
     expect(row).toMatchObject({ user_id: 'user-1', public_key_b64: phone.publicKeyB64, revoked_at: null, label: 'Renamed browser' });
   });
 
-  it('routes registration account records through Convex when configured', async () => {
-    const phone = await createDeviceIdentity();
-    const workerEnv = env as unknown as {
-      ACCOUNT_PLANE_PROVIDER?: string;
-      ACCOUNT_AUTH_PROVIDER?: string;
-      CONVEX_URL?: string;
-    };
-    const previousProvider = workerEnv.ACCOUNT_PLANE_PROVIDER;
-    const previousAuthProvider = workerEnv.ACCOUNT_AUTH_PROVIDER;
-    const previousConvexUrl = workerEnv.CONVEX_URL;
+  async function withConvexGateway<T>(
+    handler: (fn: string, args: Record<string, unknown>, request: { authorization: string | null }) => Response,
+    run: (calls: string[]) => Promise<T>,
+  ): Promise<T> {
+    const workerEnv = env as unknown as Record<string, string | undefined>;
+    const keys = ['ACCOUNT_PLANE_PROVIDER', 'ACCOUNT_AUTH_PROVIDER', 'CONVEX_URL', 'CONVEX_SITE_URL', 'CONVEX_WORKER_SECRET'];
+    const previous = Object.fromEntries(keys.map((key) => [key, workerEnv[key]]));
     const calls: string[] = [];
+    try {
+      workerEnv.ACCOUNT_PLANE_PROVIDER = 'convex';
+      workerEnv.ACCOUNT_AUTH_PROVIDER = 'convex';
+      workerEnv.CONVEX_URL = 'https://gateway-test.convex.cloud';
+      workerEnv.CONVEX_SITE_URL = undefined;
+      workerEnv.CONVEX_WORKER_SECRET = 'worker-gateway-secret-for-tests-0123456789';
+      vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+        if (url.origin === 'https://gateway-test.convex.site' && url.pathname === '/worker/account-plane') {
+          expect(init?.method).toBe('POST');
+          const body = JSON.parse(String(init?.body)) as { fn: string; args: Record<string, unknown> };
+          calls.push(body.fn);
+          const headers = new Headers(init?.headers);
+          return handler(body.fn, body.args, { authorization: headers.get('authorization') });
+        }
+        throw new Error(`unexpected outbound fetch: ${init?.method ?? 'GET'} ${url.href}`);
+      });
+      return await run(calls);
+    } finally {
+      for (const key of keys) workerEnv[key] = previous[key];
+    }
+  }
+
+  it('routes registration account records through the authenticated Convex gateway', async () => {
+    const phone = await createDeviceIdentity();
     const at = new Date().toISOString();
     const convexDeviceRow = (label: string) => ({
       id: `convex-${phone.deviceId}`,
@@ -367,34 +389,23 @@ describe('Account registration authorization', () => {
       updated_at: at,
     });
 
-    try {
-      workerEnv.ACCOUNT_PLANE_PROVIDER = 'convex';
-      workerEnv.ACCOUNT_AUTH_PROVIDER = 'convex';
-      workerEnv.CONVEX_URL = 'https://convex.test';
-      vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-        const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
-        if (url.origin === 'https://convex.test' && (url.pathname === '/api/query' || url.pathname === '/api/mutation')) {
-          const body = JSON.parse(String(init?.body)) as { path?: string; args?: Record<string, unknown>[] };
-          calls.push(`${url.pathname}:${body.path ?? ''}`);
-          const args = body.args?.[0] ?? {};
-          switch (body.path) {
-            case 'auth:verifyBearerToken':
-              expect(args.token).toBe('test-token');
-              return Response.json({ status: 'success', value: { id: 'user-1', email: 'user@example.test', user_metadata: { provider: 'convex' } } });
-            case 'accountPlane:findDeviceByDeviceId':
-              return Response.json({ status: 'success', value: null });
-            case 'accountPlane:upsertUserDevice':
-              return Response.json({ status: 'success', value: convexDeviceRow(String(args.label ?? 'This device')) });
-            case 'accountPlane:listHostDevicesForUser':
-            case 'accountPlane:listPairingsForRequester':
-              return Response.json({ status: 'success', value: [] });
-            default:
-              return Response.json({ status: 'error', errorMessage: `unexpected function ${body.path}` }, { status: 560 });
-          }
-        }
-        throw new Error(`unexpected outbound fetch: ${init?.method ?? 'GET'} ${url.href}`);
-      });
-
+    await withConvexGateway((fn, args, request) => {
+      expect(request.authorization).toBe('Bearer worker-gateway-secret-for-tests-0123456789');
+      switch (fn) {
+        case 'verifyBearerToken':
+          expect(args.token).toBe('test-token');
+          return Response.json({ ok: true, value: { id: 'user-1', email: 'user@example.test', user_metadata: { provider: 'convex' }, session_expires_at: Date.now() + 60_000 } });
+        case 'findDeviceByDeviceId':
+          return Response.json({ ok: true, value: null });
+        case 'upsertUserDevice':
+          return Response.json({ ok: true, value: convexDeviceRow(String(args.label ?? 'This device')) });
+        case 'listHostDevicesForUser':
+        case 'listPairingsForRequester':
+          return Response.json({ ok: true, value: [] });
+        default:
+          return Response.json({ ok: false, code: 'unknown_function' }, { status: 404 });
+      }
+    }, async (calls) => {
       const stub = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`convex-register-${phone.deviceId}`));
       const response = await stub.fetch('https://hub.test/account/device/register', {
         method: 'POST', headers: { authorization: 'Bearer test-token', 'content-type': 'application/json' },
@@ -403,17 +414,45 @@ describe('Account registration authorization', () => {
       expect(response.status).toBe(200);
       expect(await response.json()).toMatchObject({ ok: true, device_id: phone.deviceId, hosts: [] });
       expect(calls).toEqual([
-        '/api/query:auth:verifyBearerToken',
-        '/api/query:accountPlane:findDeviceByDeviceId',
-        '/api/mutation:accountPlane:upsertUserDevice',
-        '/api/query:accountPlane:listHostDevicesForUser',
-        '/api/query:accountPlane:listPairingsForRequester',
+        'verifyBearerToken',
+        'findDeviceByDeviceId',
+        'upsertUserDevice',
+        'listHostDevicesForUser',
+        'listPairingsForRequester',
       ]);
-    } finally {
-      workerEnv.ACCOUNT_PLANE_PROVIDER = previousProvider;
-      workerEnv.ACCOUNT_AUTH_PROVIDER = previousAuthProvider;
-      workerEnv.CONVEX_URL = previousConvexUrl;
-    }
+    });
+  });
+
+  it('maps a gateway rejection to 403 and an unauthorized gateway to a failure, never to success', async () => {
+    const phone = await createDeviceIdentity();
+    const existing = {
+      id: `convex-${phone.deviceId}`, user_id: 'user-1', device_id: phone.deviceId,
+      public_key_b64: phone.publicKeyB64, kind: 'phone', label: 'Old', platform: null, app_version: null,
+      last_seen_at: null, revoked_at: null, metadata: {}, created_at: 'x', updated_at: 'x',
+    };
+    await withConvexGateway((fn) => {
+      if (fn === 'verifyBearerToken') return Response.json({ ok: true, value: { id: 'user-1', email: 'user@example.test' } });
+      if (fn === 'findDeviceByDeviceId') return Response.json({ ok: true, value: existing });
+      if (fn === 'upsertUserDevice') return Response.json({ ok: false, code: 'device_registration_not_authorized' }, { status: 409 });
+      return Response.json({ ok: false, code: 'unknown_function' }, { status: 404 });
+    }, async () => {
+      const stub = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`convex-reject-${phone.deviceId}`));
+      const response = await stub.fetch('https://hub.test/account/device/register', {
+        method: 'POST', headers: { authorization: 'Bearer test-token', 'content-type': 'application/json' },
+        body: JSON.stringify({ deviceId: phone.deviceId, publicKeyB64: phone.publicKeyB64, kind: 'phone', label: 'Renamed' }),
+      });
+      expect(response.status).toBe(403);
+    });
+
+    await withConvexGateway(() => Response.json({ ok: false, code: 'unauthorized' }, { status: 401 }), async () => {
+      const stub = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`convex-unauth-${phone.deviceId}`));
+      const response = await stub.fetch('https://hub.test/account/device/register', {
+        method: 'POST', headers: { authorization: 'Bearer test-token', 'content-type': 'application/json' },
+        body: JSON.stringify({ deviceId: phone.deviceId, publicKeyB64: phone.publicKeyB64, kind: 'phone', label: 'Renamed' }),
+      });
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(response.status).not.toBe(200);
+    });
   });
 
   it('cannot clear a revocation that arrives between lookup and registration write', async () => {

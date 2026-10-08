@@ -1,5 +1,7 @@
-import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+// Internal only: the Cloudflare Worker reaches these through the
+// shared-secret gateway in http.ts. Nothing here is callable from a browser.
+import { ConvexError, v } from "convex/values";
+import { internalMutation as mutation, internalQuery as query } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 
 const nullableString = v.union(v.string(), v.null());
@@ -220,8 +222,9 @@ export const listHostDevicesForUser = query({
         q.eq("legacyUserId", args.userId).eq("kind", "host"),
       )
       .order("desc")
+      .filter((q) => q.eq(q.field("revokedAt"), null))
       .take(limit);
-    return docs.filter((doc) => doc.revokedAt === null).map(deviceToRow);
+    return docs.map(deviceToRow);
   },
 });
 
@@ -233,10 +236,9 @@ export const listPairingsForRequester = query({
     const docs = await ctx.db
       .query("devicePairings")
       .withIndex("by_phone_device_uuid", (q) => q.eq("phoneDeviceUuid", args.requesterDeviceUuid))
+      .filter((q) => q.eq(q.field("ownerUserId"), args.ownerUserId))
       .take(limit);
-    return docs
-      .filter((doc) => doc.ownerUserId === args.ownerUserId)
-      .map(pairingToRow);
+    return docs.map(pairingToRow);
   },
 });
 
@@ -353,14 +355,14 @@ export const upsertUserDevice = mutation({
       .first();
     if (existing) {
       if (existing.legacyUserId !== args.userId) {
-        throw new Error("device belongs to another account");
+        throw new ConvexError({ code: "device_belongs_to_another_account" });
       }
       if (
         existing.revokedAt !== null ||
         existing.publicKeyB64 !== args.publicKeyB64 ||
         (existing.kind === "host") !== (args.kind === "host")
       ) {
-        throw new Error("device registration is not authorized");
+        throw new ConvexError({ code: "device_registration_not_authorized" });
       }
       await ctx.db.patch(existing._id, {
         label: args.label,
@@ -372,7 +374,7 @@ export const upsertUserDevice = mutation({
       });
       const updated = await ctx.db.get(existing._id);
       if (!updated || updated.revokedAt !== null) {
-        throw new Error("device registration is not authorized");
+        throw new ConvexError({ code: "device_registration_not_authorized" });
       }
       return deviceToRow(updated);
     }
@@ -480,7 +482,7 @@ export const ensurePairing = mutation({
       )
       .take(20);
     if (existing.some((row) => row.revokedAt !== null)) {
-      throw new Error("Access to this Mac was revoked.");
+      throw new ConvexError({ code: "access_revoked" });
     }
     const active = existing.find((row) => row.revokedAt === null);
     if (active) return pairingToRow(active);
@@ -600,16 +602,14 @@ export const revokePairing = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const at = nowIso();
+    // Same scope as the Supabase-era PATCH: every pairing between this Mac and
+    // this browser, even one created while the Mac belonged to another account.
     const docs = await ctx.db
       .query("devicePairings")
-      .withIndex("by_owner_host_phone", (q) =>
-        q
-          .eq("ownerUserId", args.ownerUserId)
-          .eq("hostDeviceUuid", args.hostDeviceUuid)
-          .eq("phoneDeviceUuid", args.requesterDeviceUuid),
-      )
+      .withIndex("by_phone_device_uuid", (q) => q.eq("phoneDeviceUuid", args.requesterDeviceUuid))
+      .filter((q) => q.eq(q.field("hostDeviceUuid"), args.hostDeviceUuid))
       .take(100);
-    const hasRevoked = docs.some((doc) => doc.revokedAt !== null);
+    const hasRevoked = docs.some((doc) => doc.ownerUserId === args.ownerUserId && doc.revokedAt !== null);
     if (!hasRevoked) {
       await ctx.db.insert("devicePairings", {
         legacyId: generatedLegacyId("convex-pairing"),

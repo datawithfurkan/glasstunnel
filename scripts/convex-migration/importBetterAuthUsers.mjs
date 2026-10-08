@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { ConvexHttpClient } from "convex/browser";
-import { api } from "../../convex/_generated/api.js";
+import { internal } from "../../convex/_generated/api.js";
 
 function parseArgs(argv) {
   const args = new Map();
@@ -19,20 +19,27 @@ function parseArgs(argv) {
   if (!inputDir || !convexUrl) {
     throw new Error("Usage: node scripts/convex-migration/importBetterAuthUsers.mjs --input <better-auth-import-dir> --convex-url <url>");
   }
-  return { inputDir, convexUrl };
+  // importUserBatch is internal (it can create users with chosen password
+  // hashes), so this one-off script needs a deploy key for the target.
+  const deployKey = args.get("deploy-key") || process.env.CONVEX_DEPLOY_KEY;
+  if (!deployKey) {
+    throw new Error("CONVEX_DEPLOY_KEY (or --deploy-key) is required: importUserBatch is an internal function.");
+  }
+  return { inputDir, convexUrl, deployKey };
 }
 
 async function readJson(path) {
   return JSON.parse(await readFile(path, "utf8"));
 }
 
-export async function importBetterAuthUsers({ inputDir, convexUrl }) {
+export async function importBetterAuthUsers({ inputDir, convexUrl, deployKey }) {
   const [users, accounts] = await Promise.all([
     readJson(join(inputDir, "users.json")),
     readJson(join(inputDir, "accounts.json")),
   ]);
   const client = new ConvexHttpClient(convexUrl);
-  return client.mutation(api.auth.importUserBatch, { users, accounts });
+  client.setAdminAuth(deployKey);
+  return client.mutation(internal.auth.importUserBatch, { users, accounts });
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {

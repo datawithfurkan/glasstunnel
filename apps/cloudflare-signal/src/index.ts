@@ -1,6 +1,4 @@
 import { DurableObject } from "cloudflare:workers";
-import { ConvexHttpClient } from "convex/browser";
-import { makeFunctionReference, type FunctionReference } from "convex/server";
 import { cacheRecord, validCacheRecord, type CacheRecord } from './contentRetention';
 import {
   compactRelayAgentSnapshot,
@@ -19,6 +17,10 @@ export interface Env {
   ACCOUNT_AUTH_PROVIDER?: string;
   AUTH_BACKEND?: string;
   CONVEX_URL?: string;
+  /** HTTP actions origin (https://<deployment>.convex.site); derived from CONVEX_URL when unset. */
+  CONVEX_SITE_URL?: string;
+  /** Shared secret for the Convex account-plane gateway (wrangler secret). */
+  CONVEX_WORKER_SECRET?: string;
   SUPABASE_URL?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
   VAPID_PUBLIC_KEY?: string;
@@ -65,8 +67,11 @@ interface RelaySessionAttachment {
 
 // Supabase verifies the token before this is used. Only its expiry is retained,
 // never the bearer token. Reauthentication also bounds stale account decisions.
-function relayAuthorizationDeadline(verifiedToken: string): number {
+function relayAuthorizationDeadline(verifiedToken: string, user?: SupabaseAuthUser): number {
   const maximum = Date.now() + 5 * 60_000;
+  if (typeof user?.session_expires_at === "number" && Number.isFinite(user.session_expires_at)) {
+    return Math.min(maximum, user.session_expires_at);
+  }
   try {
     const payload = verifiedToken.split(".")[1];
     const claims = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/"))) as { exp?: number };
@@ -123,6 +128,8 @@ interface SupabaseAuthUser {
   id: string;
   email?: string | null;
   user_metadata?: Record<string, unknown> | null;
+  /** Unix ms; set by the Convex verifier (Better Auth tokens are opaque, not JWTs). */
+  session_expires_at?: number;
 }
 
 interface ProfileRow {
@@ -207,53 +214,62 @@ interface PublicHostRecord {
   lastSeenAtUnixMs?: number;
 }
 
+/** A typed handle for one account-plane function behind the Convex gateway. */
+interface GatewayRef<Kind extends "query" | "mutation", Args, Result> {
+  readonly kind: Kind;
+  readonly fn: string;
+  readonly __types?: { args: Args; result: Result };
+}
+
+function gatewayRef<Kind extends "query" | "mutation", Args, Result>(fn: string): GatewayRef<Kind, Args, Result> {
+  return { kind: undefined as unknown as Kind, fn };
+}
+
+/** A rejection the account plane reported on purpose (ConvexError code), not an outage. */
+class AccountPlaneRejection extends Error {
+  constructor(readonly code: string) {
+    super(`account plane rejected the request: ${code}`);
+    this.name = "AccountPlaneRejection";
+  }
+}
+
 const convexAccountPlane = {
-  findDeviceByDeviceId: makeFunctionReference<"query", { deviceId: string }, DeviceRow | null>(
-    "accountPlane:findDeviceByDeviceId",
-  ),
-  findDeviceByUuid: makeFunctionReference<"query", { id: string }, DeviceRow | null>(
-    "accountPlane:findDeviceByUuid",
-  ),
-  findProfileByUserId: makeFunctionReference<"query", { userId: string }, ProfileRow | null>(
-    "accountPlane:findProfileByUserId",
-  ),
-  listHostDevicesForUser: makeFunctionReference<
+  findDeviceByDeviceId: gatewayRef<"query", { deviceId: string }, DeviceRow | null>("findDeviceByDeviceId"),
+  findDeviceByUuid: gatewayRef<"query", { id: string }, DeviceRow | null>("findDeviceByUuid"),
+  findProfileByUserId: gatewayRef<"query", { userId: string }, ProfileRow | null>("findProfileByUserId"),
+  listHostDevicesForUser: gatewayRef<
     "query",
     { userId: string; limit?: number },
     DeviceRow[]
-  >("accountPlane:listHostDevicesForUser"),
-  listPairingsForRequester: makeFunctionReference<
+  >("listHostDevicesForUser"),
+  listPairingsForRequester: gatewayRef<
     "query",
     { ownerUserId: string; requesterDeviceUuid: string; limit?: number },
     DevicePairingRow[]
-  >("accountPlane:listPairingsForRequester"),
-  findActivePairing: makeFunctionReference<
+  >("listPairingsForRequester"),
+  findActivePairing: gatewayRef<
     "query",
     { ownerUserId: string; hostDeviceUuid: string; requesterDeviceUuid: string },
     DevicePairingRow | null
-  >("accountPlane:findActivePairing"),
-  hasRevokedPairing: makeFunctionReference<
+  >("findActivePairing"),
+  hasRevokedPairing: gatewayRef<
     "query",
     { ownerUserId: string; hostDeviceUuid: string; requesterDeviceUuid: string },
     boolean
-  >("accountPlane:hasRevokedPairing"),
-  findPendingApproval: makeFunctionReference<
+  >("hasRevokedPairing"),
+  findPendingApproval: gatewayRef<
     "query",
     { hostDeviceUuid: string; requesterDeviceUuid: string },
     DeviceApprovalRequestRow | null
-  >("accountPlane:findPendingApproval"),
-  findApprovalById: makeFunctionReference<"query", { requestId: string }, DeviceApprovalRequestRow | null>(
-    "accountPlane:findApprovalById",
-  ),
-  listPendingApprovalsByHost: makeFunctionReference<
+  >("findPendingApproval"),
+  findApprovalById: gatewayRef<"query", { requestId: string }, DeviceApprovalRequestRow | null>("findApprovalById"),
+  listPendingApprovalsByHost: gatewayRef<
     "query",
     { hostDeviceUuid: string; limit?: number },
     DeviceApprovalRequestRow[]
-  >("accountPlane:listPendingApprovalsByHost"),
-  getUnconsumedHostLinkCode: makeFunctionReference<"query", { code: string }, HostLinkCodeRow | null>(
-    "accountPlane:getUnconsumedHostLinkCode",
-  ),
-  upsertUserDevice: makeFunctionReference<
+  >("listPendingApprovalsByHost"),
+  getUnconsumedHostLinkCode: gatewayRef<"query", { code: string }, HostLinkCodeRow | null>("getUnconsumedHostLinkCode"),
+  upsertUserDevice: gatewayRef<
     "mutation",
     {
       userId: string;
@@ -266,11 +282,9 @@ const convexAccountPlane = {
       metadata?: Record<string, JsonValue>;
     },
     DeviceRow
-  >("accountPlane:upsertUserDevice"),
-  touchDeviceLastSeen: makeFunctionReference<"mutation", { deviceId: string }, null>(
-    "accountPlane:touchDeviceLastSeen",
-  ),
-  insertApprovalRequest: makeFunctionReference<
+  >("upsertUserDevice"),
+  touchDeviceLastSeen: gatewayRef<"mutation", { deviceId: string }, null>("touchDeviceLastSeen"),
+  insertApprovalRequest: gatewayRef<
     "mutation",
     {
       ownerUserId: string;
@@ -281,13 +295,13 @@ const convexAccountPlane = {
       requesterLabel: string;
     },
     DeviceApprovalRequestRow
-  >("accountPlane:insertApprovalRequest"),
-  markApprovalStatus: makeFunctionReference<
+  >("insertApprovalRequest"),
+  markApprovalStatus: gatewayRef<
     "mutation",
     { requestId: string; status: DeviceApprovalRequestRow["status"] },
     null
-  >("accountPlane:markApprovalStatus"),
-  ensurePairing: makeFunctionReference<
+  >("markApprovalStatus"),
+  ensurePairing: gatewayRef<
     "mutation",
     {
       ownerUserId: string;
@@ -296,8 +310,8 @@ const convexAccountPlane = {
       metadata?: Record<string, JsonValue>;
     },
     DevicePairingRow
-  >("accountPlane:ensurePairing"),
-  createHostLinkCode: makeFunctionReference<
+  >("ensurePairing"),
+  createHostLinkCode: gatewayRef<
     "mutation",
     {
       code: string;
@@ -308,26 +322,24 @@ const convexAccountPlane = {
       expiresAt: string;
     },
     null
-  >("accountPlane:createHostLinkCode"),
-  consumeHostLinkCode: makeFunctionReference<
+  >("createHostLinkCode"),
+  consumeHostLinkCode: gatewayRef<
     "mutation",
     { id: string; claimedUserId: string },
     null
-  >("accountPlane:consumeHostLinkCode"),
-  deleteHostLinkCodesByHostDeviceId: makeFunctionReference<
+  >("consumeHostLinkCode"),
+  deleteHostLinkCodesByHostDeviceId: gatewayRef<
     "mutation",
     { hostDeviceId: string; limit?: number },
     number
-  >("accountPlane:deleteHostLinkCodesByHostDeviceId"),
-  deleteDeviceByUuid: makeFunctionReference<"mutation", { id: string }, boolean>(
-    "accountPlane:deleteDeviceByUuid",
-  ),
-  deleteRevokedPairings: makeFunctionReference<
+  >("deleteHostLinkCodesByHostDeviceId"),
+  deleteDeviceByUuid: gatewayRef<"mutation", { id: string }, boolean>("deleteDeviceByUuid"),
+  deleteRevokedPairings: gatewayRef<
     "mutation",
     { ownerUserId: string; hostDeviceUuid: string; requesterDeviceUuid: string },
     number
-  >("accountPlane:deleteRevokedPairings"),
-  revokePairing: makeFunctionReference<
+  >("deleteRevokedPairings"),
+  revokePairing: gatewayRef<
     "mutation",
     {
       ownerUserId: string;
@@ -336,13 +348,11 @@ const convexAccountPlane = {
       metadata?: Record<string, JsonValue>;
     },
     null
-  >("accountPlane:revokePairing"),
+  >("revokePairing"),
 };
 
 const convexAuth = {
-  verifyBearerToken: makeFunctionReference<"query", { token: string }, SupabaseAuthUser | null>(
-    "auth:verifyBearerToken",
-  ),
+  verifyBearerToken: gatewayRef<"query", { token: string }, SupabaseAuthUser | null>("verifyBearerToken"),
 };
 
 const VERSION = "0.1.0";
@@ -648,31 +658,47 @@ function useConvexAuth(env: Env): boolean {
   return provider === "convex" || provider === "better-auth" || provider === "convex-better-auth";
 }
 
-function convexClient(env: Env): ConvexHttpClient {
-  if (!env.CONVEX_URL) {
+function convexSiteUrl(env: Env): string {
+  const explicit = (env.CONVEX_SITE_URL ?? "").trim();
+  if (explicit) return explicit.replace(/\/+$/, "");
+  const cloud = (env.CONVEX_URL ?? "").trim().replace(/\/+$/, "");
+  return cloud.endsWith(".convex.cloud") ? `${cloud.slice(0, -".convex.cloud".length)}.convex.site` : "";
+}
+
+async function callAccountPlane<Result>(env: Env, fn: string, args: Record<string, unknown>): Promise<Result> {
+  const site = convexSiteUrl(env);
+  const secret = (env.CONVEX_WORKER_SECRET ?? "").trim();
+  if (!site || !secret) {
     throw new Error("convex account plane is not configured");
   }
-  return new ConvexHttpClient(env.CONVEX_URL, { logger: false });
+  const response = await fetch(`${site}/worker/account-plane`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" },
+    body: JSON.stringify({ fn, args }),
+  });
+  const body = (await response.json().catch(() => null)) as { ok?: boolean; value?: unknown; code?: unknown } | null;
+  if (response.ok && body?.ok === true) {
+    return (body.value ?? null) as Result;
+  }
+  const code = typeof body?.code === "string" ? body.code : `http_${response.status}`;
+  if (response.status === 409) throw new AccountPlaneRejection(code);
+  throw new Error(`convex account plane ${fn} failed: ${code}`);
 }
 
-async function convexQuery<
-  Args extends Record<string, unknown>,
-  ReturnType,
->(env: Env, reference: FunctionReference<"query", "public", Args, ReturnType>, args: Args): Promise<ReturnType> {
-  const client = convexClient(env) as unknown as {
-    query<T>(reference: FunctionReference<"query">, args: Record<string, unknown>): Promise<T>;
-  };
-  return client.query<ReturnType>(reference, args);
+async function convexQuery<Args extends Record<string, unknown>, Result>(
+  env: Env,
+  reference: GatewayRef<"query", Args, Result>,
+  args: Args,
+): Promise<Result> {
+  return callAccountPlane<Result>(env, reference.fn, args);
 }
 
-async function convexMutation<
-  Args extends Record<string, unknown>,
-  ReturnType,
->(env: Env, reference: FunctionReference<"mutation", "public", Args, ReturnType>, args: Args): Promise<ReturnType> {
-  const client = convexClient(env) as unknown as {
-    mutation<T>(reference: FunctionReference<"mutation">, args: Record<string, unknown>): Promise<T>;
-  };
-  return client.mutation<ReturnType>(reference, args);
+async function convexMutation<Args extends Record<string, unknown>, Result>(
+  env: Env,
+  reference: GatewayRef<"mutation", Args, Result>,
+  args: Args,
+): Promise<Result> {
+  return callAccountPlane<Result>(env, reference.fn, args);
 }
 
 async function resolveAuthenticatedUser(env: Env, request: Request): Promise<SupabaseAuthUser> {
@@ -788,8 +814,10 @@ async function upsertUserDevice(
     try {
       return await convexMutation(env, convexAccountPlane.upsertUserDevice, input);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (message.includes("device registration is not authorized")) {
+      if (error instanceof AccountPlaneRejection) {
+        if (error.code === "device_belongs_to_another_account") {
+          throw new Error("device belongs to another account");
+        }
         throw new DeviceAuthorizationError("device registration is not authorized");
       }
       throw error;
@@ -1097,8 +1125,7 @@ async function ensurePairing(
     try {
       return await convexMutation(env, convexAccountPlane.ensurePairing, input);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (message.includes("Access to this Mac was revoked.")) {
+      if (error instanceof AccountPlaneRejection && error.code === "access_revoked") {
         throw new DeviceAuthorizationError("Access to this Mac was revoked.");
       }
       throw error;
@@ -2598,7 +2625,7 @@ export class RelayHub extends DurableObject<Env> {
         return;
       }
       const user = await resolveUserFromAccessToken(this.env, accessToken);
-      authorizationExpiresAt = relayAuthorizationDeadline(accessToken);
+      authorizationExpiresAt = relayAuthorizationDeadline(accessToken, user);
       if (authorizationExpiresAt <= Date.now()) {
         ws.close(4001, "authentication expired");
         return;
@@ -2742,7 +2769,7 @@ export class RelayHub extends DurableObject<Env> {
     let reauthorizedAt: string | undefined;
     try {
       const user = await resolveUserFromAccessToken(this.env, accessToken);
-      expiresAt = relayAuthorizationDeadline(accessToken);
+      expiresAt = relayAuthorizationDeadline(accessToken, user);
       const [host, requester] = await Promise.all([
         findDeviceByDeviceId(this.env, session.hostDeviceId),
         findDeviceByDeviceId(this.env, deviceId),

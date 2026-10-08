@@ -22,10 +22,42 @@ env:
   CLOUDFLARE_SITE_PROJECT: glasstunnel-site
   PWA_PUBLIC_APP_URL: https://app.glasstunnel.io
   PWA_SIGNALING_URL: wss://signaling.glasstunnel.io/signal
+  # Public Convex URLs (accounts and sign-in). Not secrets.
+  CONVEX_URL: https://adorable-perch-596.convex.cloud
+  CONVEX_SITE_URL: https://adorable-perch-596.convex.site
 
 jobs:
+  # Convex first: the Worker and the web app call functions that must exist.
+  deploy-convex:
+    name: Deploy Convex functions
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: pnpm/action-setup@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Deploy to the production Convex deployment
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+        run: |
+          test -n "$CONVEX_DEPLOY_KEY" || { echo "Missing CONVEX_DEPLOY_KEY secret"; exit 1; }
+          pnpm exec convex deploy -y --typecheck enable
+
   deploy-web:
     name: Deploy web surfaces
+    needs: deploy-convex
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production
@@ -48,11 +80,9 @@ jobs:
         env:
           VITE_PUBLIC_APP_URL: ${{ env.PWA_PUBLIC_APP_URL }}
           VITE_SIGNALING_URL: ${{ env.PWA_SIGNALING_URL }}
-          VITE_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          VITE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          VITE_CONVEX_URL: ${{ env.CONVEX_URL }}
+          VITE_CONVEX_SITE_URL: ${{ env.CONVEX_SITE_URL }}
         run: |
-          test -n "$VITE_SUPABASE_URL" || { echo "Missing SUPABASE_URL secret"; exit 1; }
-          test -n "$VITE_SUPABASE_ANON_KEY" || { echo "Missing SUPABASE_ANON_KEY secret"; exit 1; }
           pnpm --filter=@glasstunnel/protocol build
           pnpm --filter=@glasstunnel/shared-crypto build
           pnpm --filter=@glasstunnel/mobile-pwa build
@@ -80,6 +110,7 @@ jobs:
 
   deploy-signal:
     name: Deploy Signaling Worker
+    needs: deploy-convex
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production

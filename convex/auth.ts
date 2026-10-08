@@ -1,12 +1,14 @@
 import { createClient, type GenericCtx } from "@convex-dev/better-auth";
-import { convex } from "@convex-dev/better-auth/plugins";
+import { convex, crossDomain } from "@convex-dev/better-auth/plugins";
 import { betterAuth, type BetterAuthOptions } from "better-auth/minimal";
 import { bearer } from "better-auth/plugins";
 import bcrypt from "bcryptjs";
 import { v } from "convex/values";
 import { components } from "./_generated/api";
 import type { DataModel } from "./_generated/dataModel";
-import { mutation, query } from "./_generated/server";
+// Migration helpers and token verification are internal: only the CLI
+// (deploy key) and the Worker gateway in http.ts can call them.
+import { internalMutation as mutation, internalQuery as query } from "./_generated/server";
 import authConfig from "./auth.config";
 
 declare const process: { env: Record<string, string | undefined> };
@@ -33,6 +35,8 @@ const authUserResult = v.object({
   id: v.string(),
   email: nullableString,
   user_metadata: v.any(),
+  /** Unix ms when the verified session expires; the relay caps its socket deadline by it. */
+  session_expires_at: v.optional(v.number()),
 });
 
 type AdapterDoc = Record<string, any> & { _id: string };
@@ -49,8 +53,16 @@ function env(name: string) {
 }
 
 function authBaseUrl() {
-  return env("BETTER_AUTH_URL") || env("PUBLIC_APP_URL") || env("CONVEX_SITE_URL");
+  return env("BETTER_AUTH_URL") || env("CONVEX_SITE_URL");
 }
+
+/** The web app. OAuth returns here with a one-time token (cross-domain plugin). */
+function appUrl() {
+  return (env("PUBLIC_APP_URL") || "https://app.glasstunnel.io").replace(/\/+$/, "");
+}
+
+const SESSION_LIFETIME_SECONDS = 60 * 24 * 60 * 60;
+const SESSION_REFRESH_AFTER_SECONDS = 24 * 60 * 60;
 
 function trustedOrigins() {
   return [
@@ -87,6 +99,16 @@ export const createAuthOptions = (ctx: AdapterCtx) =>
     baseURL: authBaseUrl(),
     trustedOrigins: trustedOrigins(),
     database: authComponent.adapter(ctx),
+    session: {
+      expiresIn: SESSION_LIFETIME_SECONDS,
+      updateAge: SESSION_REFRESH_AFTER_SECONDS,
+    },
+    // Errors before the per-flow errorCallbackURL is known (state checks,
+    // provider denials) land in the app with a readable message instead of
+    // the auth server's own page, whose "Go home" link is a 404.
+    onAPIError: {
+      errorURL: `${appUrl()}/?authError=1`,
+    },
     emailAndPassword: {
       enabled: true,
       requireEmailVerification: false,
@@ -102,6 +124,10 @@ export const createAuthOptions = (ctx: AdapterCtx) =>
     socialProviders: socialProviders(),
     plugins: [
       bearer(),
+      // The auth server (convex.site) and the app (app.glasstunnel.io) are
+      // different sites: OAuth state is kept in the database and the session
+      // reaches the app as a one-time token (?ott=) the app exchanges.
+      crossDomain({ siteUrl: appUrl() }),
       convex({
         authConfig,
         jwt: {
@@ -337,13 +363,17 @@ export const verifyBearerToken = query({
       return null;
     }
 
-    return serializeAuthUser({
-      _id: session.user.id,
-      userId: (session.user as any).userId,
-      email: session.user.email,
-      name: session.user.name,
-      image: session.user.image,
-    });
+    const expiresAt = new Date((session.session as any)?.expiresAt ?? NaN).getTime();
+    return {
+      ...serializeAuthUser({
+        _id: session.user.id,
+        userId: (session.user as any).userId,
+        email: session.user.email,
+        name: session.user.name,
+        image: session.user.image,
+      }),
+      ...(Number.isFinite(expiresAt) ? { session_expires_at: expiresAt } : {}),
+    };
   },
 });
 

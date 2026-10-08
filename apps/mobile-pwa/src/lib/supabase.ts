@@ -2,6 +2,13 @@ import { convexClient } from '@convex-dev/better-auth/client/plugins';
 import { createAuthClient } from 'better-auth/react';
 import { platformConfig } from './platform';
 
+// Better Auth (on the Convex deployment) behind the small Supabase-shaped
+// surface the store was written against. The auth server lives on another
+// site (*.convex.site), so this client never relies on cookies: the session
+// token is a bearer token kept in localStorage, delivered either in the
+// `set-auth-token` header (email sign-in) or as a one-time token in the URL
+// after Google/GitHub (`?ott=`, Better Auth's cross-domain plugin).
+
 type AuthChangeEvent = 'INITIAL_SESSION' | 'SIGNED_IN' | 'SIGNED_OUT' | 'TOKEN_REFRESHED';
 type AuthCallback = (event: AuthChangeEvent, session: Session | null) => void;
 
@@ -22,42 +29,115 @@ type BetterAuthResponse<T = unknown> = {
   error?: {
     message?: string;
     statusText?: string;
+    status?: number;
     code?: string;
   } | null;
   response?: Response;
 };
 
+/** An auth failure with Better Auth's machine-readable code (e.g. INVALID_EMAIL_OR_PASSWORD). */
+export class AuthError extends Error {
+  constructor(
+    message: string,
+    readonly code?: string,
+    readonly status?: number,
+  ) {
+    super(message);
+    this.name = 'AuthError';
+  }
+}
+
+/** The auth server could not be reached or failed; the stored session is kept. */
+class AuthUnavailableError extends AuthError {}
+
 const BEARER_TOKEN_KEY = 'gt.better-auth.bearer-token';
+const SESSION_SNAPSHOT_KEY = 'gt.better-auth.session-snapshot';
 const listeners = new Set<AuthCallback>();
 
-let authClient: ReturnType<typeof createAuthClient> | null = null;
+type AuthClient = ReturnType<typeof createAuthClient>;
+// The handful of client actions this shim calls; the plugin-augmented client
+// type is too deep for TypeScript to infer usefully here.
+interface AuthActions {
+  getSession(): Promise<unknown>;
+  signIn: {
+    social(input: Record<string, unknown>): Promise<unknown>;
+    email(input: Record<string, unknown>): Promise<unknown>;
+  };
+  signUp: { email(input: Record<string, unknown>): Promise<unknown> };
+  signOut(): Promise<unknown>;
+}
+
+interface AuthUserPayload {
+  id?: unknown;
+  userId?: unknown;
+  email?: unknown;
+  name?: unknown;
+  image?: unknown;
+}
+
+interface SessionPayload {
+  token?: unknown;
+  user?: AuthUserPayload | null;
+  session?: { token?: unknown } | null;
+}
+
+let authClient: AuthClient | null = null;
+let oneTimeTokenExchange: Promise<void> | null = null;
+let pendingRedirectError: string | null = null;
 
 function getAuthBaseUrl() {
   const url = platformConfig.convexSiteUrl;
   if (!url) {
     throw new Error('VITE_CONVEX_SITE_URL is required for hosted account login.');
   }
-  return url;
+  return url.replace(/\/+$/, '');
+}
+
+function storage(): Storage | null {
+  try {
+    return typeof localStorage === 'undefined' ? null : localStorage;
+  } catch {
+    return null;
+  }
 }
 
 function readBearerToken() {
-  return localStorage.getItem(BEARER_TOKEN_KEY);
+  return storage()?.getItem(BEARER_TOKEN_KEY) ?? null;
 }
 
 function writeBearerToken(token: string | null | undefined) {
   if (!token) return;
-  localStorage.setItem(BEARER_TOKEN_KEY, token);
+  storage()?.setItem(BEARER_TOKEN_KEY, token);
 }
 
-function clearBearerToken() {
-  localStorage.removeItem(BEARER_TOKEN_KEY);
+function clearStoredSession() {
+  storage()?.removeItem(BEARER_TOKEN_KEY);
+  storage()?.removeItem(SESSION_SNAPSHOT_KEY);
+}
+
+function writeSnapshot(session: Session) {
+  storage()?.setItem(SESSION_SNAPSHOT_KEY, JSON.stringify({ user: session.user }));
+}
+
+/** The last session the server confirmed, for use while the server is unreachable. */
+function snapshotSession(): Session | null {
+  const token = readBearerToken();
+  const raw = storage()?.getItem(SESSION_SNAPSHOT_KEY);
+  if (!token || !raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as { user?: User };
+    if (!parsed.user?.id) return null;
+    return { access_token: token, refresh_token: token, user: parsed.user };
+  } catch {
+    return null;
+  }
 }
 
 function persistBearerTokenFromHeaders(headers?: Headers) {
   writeBearerToken(headers?.get('set-auth-token'));
 }
 
-function authClientInstance() {
+function authClientInstance(): AuthActions {
   if (!authClient) {
     authClient = createAuthClient({
       baseURL: getAuthBaseUrl(),
@@ -73,22 +153,27 @@ function authClientInstance() {
       },
     });
   }
-  return authClient as any;
+  return authClient as unknown as AuthActions;
 }
 
 function assertAuthSuccess<T>(result: BetterAuthResponse<T>, fallbackMessage: string): T | null {
   if (result?.error) {
-    throw new Error(result.error.message || result.error.statusText || fallbackMessage);
+    const status = result.error.status ?? result.response?.status;
+    const message = result.error.message || result.error.statusText || fallbackMessage;
+    if (status === undefined || status === 0 || status === 429 || status >= 500) {
+      throw new AuthUnavailableError(message, result.error.code, status);
+    }
+    throw new AuthError(message, result.error.code, status);
   }
   return result?.data ?? null;
 }
 
-async function sessionFromPayload(payload: unknown): Promise<Session | null> {
-  const data = (payload as { data?: unknown })?.data ?? payload;
-  const user = (data as any)?.user;
-  const session = (data as any)?.session;
-  const accessToken = (data as any)?.token || session?.token || readBearerToken();
-  if (!user || !accessToken) return null;
+function sessionFromPayload(payload: unknown): Session | null {
+  const data = ((payload as { data?: unknown } | null)?.data ?? payload) as SessionPayload | null;
+  const user = data?.user;
+  const tokenValue = data?.token || data?.session?.token || readBearerToken();
+  const accessToken = typeof tokenValue === 'string' ? tokenValue : null;
+  if (!user || typeof user.id !== 'string' || !accessToken) return null;
 
   const legacyUserId = typeof user.userId === 'string' && user.userId ? user.userId : user.id;
   const metadata: Record<string, unknown> = {
@@ -110,17 +195,124 @@ async function sessionFromPayload(payload: unknown): Promise<Session | null> {
   };
 }
 
+const FRIENDLY_REDIRECT_ERRORS: Record<string, string> = {
+  access_denied: 'Sign-in was cancelled. Try again when you are ready.',
+  state_mismatch: 'That sign-in link expired. Start sign-in again.',
+  state_not_found: 'That sign-in link expired. Start sign-in again.',
+  please_restart_the_process: 'That sign-in link expired. Start sign-in again.',
+  invalid_code: 'The provider did not confirm your sign-in. Try again.',
+  email_not_found: 'Your account at that provider has no email address Glasstunnel can use.',
+  unable_to_link_account: 'That provider account could not be linked to your Glasstunnel account.',
+  account_not_linked: 'That email already has a Glasstunnel account with a different sign-in method.',
+};
+
+/**
+ * Reads what the auth server sent back in the URL after Google/GitHub: a
+ * one-time token to exchange for a session, or an error to show. Both are
+ * removed from the address bar (other parameters such as linkCode stay).
+ */
+function takeRedirectParameters(): { token: string | null; error: string | null } {
+  if (typeof window === 'undefined' || !window.location?.href) return { token: null, error: null };
+  const url = new URL(window.location.href);
+  const token = url.searchParams.get('ott');
+  const errorCode = url.searchParams.get('error');
+  const flagged = url.searchParams.has('authError');
+  if (!token && !errorCode && !flagged) return { token: null, error: null };
+  for (const name of ['ott', 'error', 'error_description', 'authError']) url.searchParams.delete(name);
+  window.history.replaceState(window.history.state, '', url.toString());
+  if (token) return { token, error: null };
+  const message =
+    (errorCode && FRIENDLY_REDIRECT_ERRORS[errorCode.toLowerCase()]) ||
+    'Sign-in did not finish. Try again, or use email instead.';
+  return { token: null, error: message };
+}
+
+async function exchangeOneTimeToken(token: string): Promise<void> {
+  const response = await fetch(`${getAuthBaseUrl()}/api/auth/cross-domain/one-time-token/verify`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ token }),
+    credentials: 'omit',
+  });
+  if (!response.ok) {
+    throw new AuthError('That sign-in link expired. Start sign-in again.', undefined, response.status);
+  }
+  const body = (await response.json().catch(() => null)) as { session?: { token?: string } } | null;
+  const sessionToken = response.headers.get('set-auth-token') || body?.session?.token;
+  if (!sessionToken) {
+    throw new AuthError('Sign-in did not finish. Try again, or use email instead.');
+  }
+  writeBearerToken(sessionToken);
+}
+
+/** Runs once per page load, before the first session read. */
+function consumeRedirect(): Promise<void> {
+  if (!oneTimeTokenExchange) {
+    oneTimeTokenExchange = (async () => {
+      const { token, error } = takeRedirectParameters();
+      if (error) {
+        pendingRedirectError = error;
+        return;
+      }
+      if (!token) return;
+      try {
+        await exchangeOneTimeToken(token);
+      } catch (exchangeError) {
+        pendingRedirectError =
+          exchangeError instanceof Error ? exchangeError.message : 'Sign-in did not finish. Try again.';
+      }
+    })();
+  }
+  return oneTimeTokenExchange;
+}
+
+/** A sign-in error carried back from Google/GitHub, shown once on the sign-in screen. */
+export async function takeAuthRedirectError(): Promise<string | null> {
+  await consumeRedirect().catch(() => undefined);
+  const message = pendingRedirectError;
+  pendingRedirectError = null;
+  return message;
+}
+
+/**
+ * The confirmed session, null when signed out (no token, 200 null, or 401),
+ * or the last confirmed session when the auth server is unreachable.
+ */
 async function currentSession(): Promise<Session | null> {
-  const result = (await authClientInstance().getSession()) as BetterAuthResponse;
-  assertAuthSuccess(result, 'Could not restore your session.');
+  await consumeRedirect().catch(() => undefined);
+  if (!readBearerToken()) {
+    clearStoredSession();
+    return null;
+  }
+  let result: BetterAuthResponse;
+  try {
+    result = (await authClientInstance().getSession()) as BetterAuthResponse;
+    assertAuthSuccess(result, 'Could not restore your session.');
+  } catch (error) {
+    if (error instanceof AuthError && !(error instanceof AuthUnavailableError) && error.status === 401) {
+      clearStoredSession();
+      return null;
+    }
+    const cached = snapshotSession();
+    if (cached) return cached;
+    throw error instanceof AuthError ? error : new AuthUnavailableError('Could not reach the sign-in service.');
+  }
   persistBearerTokenFromHeaders(result.response?.headers);
-  return sessionFromPayload(result);
+  const session = sessionFromPayload(result);
+  if (session) {
+    writeSnapshot(session);
+  } else {
+    clearStoredSession();
+  }
+  return session;
 }
 
 async function sessionFromResult(result: BetterAuthResponse, fallbackMessage: string) {
   assertAuthSuccess(result, fallbackMessage);
   persistBearerTokenFromHeaders(result.response?.headers);
-  return (await sessionFromPayload(result)) ?? currentSession();
+  const session = sessionFromPayload(result) ?? (await currentSession());
+  if (session) writeSnapshot(session);
+  return session;
 }
 
 function notify(event: AuthChangeEvent, session: Session | null) {
@@ -137,6 +329,12 @@ function providerFromSupabaseName(provider: string) {
   return normalized;
 }
 
+function errorCallbackFor(redirectTo: string | undefined): string {
+  const url = new URL(redirectTo || platformConfig.publicAppUrl || window.location.origin);
+  url.searchParams.set('authError', '1');
+  return url.toString();
+}
+
 export const supabase = platformConfig.convexSiteUrl
   ? {
       auth: {
@@ -144,7 +342,7 @@ export const supabase = platformConfig.convexSiteUrl
           listeners.add(callback);
           void currentSession()
             .then((session) => callback('INITIAL_SESSION', session))
-            .catch(() => callback('INITIAL_SESSION', null));
+            .catch(() => callback('INITIAL_SESSION', snapshotSession()));
           return {
             data: {
               subscription: {
@@ -165,7 +363,9 @@ export const supabase = platformConfig.convexSiteUrl
             return { data: { session: null }, error };
           }
         },
-        async refreshSession(_input?: { refresh_token?: string }) {
+        // The argument mirrors supabase-js; Better Auth refreshes from the bearer token.
+        async refreshSession(input?: { refresh_token?: string }) {
+          void input;
           try {
             return { data: { session: await currentSession() }, error: null };
           } catch (error) {
@@ -177,6 +377,7 @@ export const supabase = platformConfig.convexSiteUrl
             const result = (await authClientInstance().signIn.social({
               provider: providerFromSupabaseName(input.provider),
               callbackURL: input.options?.redirectTo,
+              errorCallbackURL: errorCallbackFor(input.options?.redirectTo),
             })) as BetterAuthResponse;
             assertAuthSuccess(result, `Could not start ${input.provider} sign-in.`);
             return { data: result.data, error: null };
@@ -186,10 +387,11 @@ export const supabase = platformConfig.convexSiteUrl
         },
         async signInWithPassword(input: { email: string; password: string }) {
           try {
+            // No callbackURL: with one, Better Auth answers with a redirect and the
+            // client navigates, which reloads the app and drops a pending linkCode.
             const result = (await authClientInstance().signIn.email({
               email: input.email.trim().toLowerCase(),
               password: input.password,
-              callbackURL: platformConfig.publicAppUrl,
             })) as BetterAuthResponse;
             const session = await sessionFromResult(result, 'Could not sign in with that email and password.');
             notify('SIGNED_IN', session);
@@ -208,7 +410,6 @@ export const supabase = platformConfig.convexSiteUrl
               name: input.options?.data?.name || input.email.split('@')[0] || 'Glasstunnel user',
               email: input.email.trim().toLowerCase(),
               password: input.password,
-              callbackURL: platformConfig.publicAppUrl,
             })) as BetterAuthResponse;
             const session = await sessionFromResult(result, 'Could not create your account.');
             notify('SIGNED_IN', session);
@@ -218,9 +419,14 @@ export const supabase = platformConfig.convexSiteUrl
           }
         },
         async signOut() {
-          const result = (await authClientInstance().signOut()) as BetterAuthResponse;
-          clearBearerToken();
-          if (result?.error) {
+          let result: BetterAuthResponse | null = null;
+          try {
+            result = (await authClientInstance().signOut()) as BetterAuthResponse;
+          } finally {
+            // The local session ends even when the server cannot be reached.
+            clearStoredSession();
+          }
+          if (result?.error && (result.error.status ?? 0) !== 401) {
             return { error: result.error };
           }
           notify('SIGNED_OUT', null);

@@ -9,7 +9,8 @@
     "ALLOWED_ORIGINS": "https://app.glasstunnel.io",
     "ACCOUNT_PLANE_PROVIDER": "convex",
     "ACCOUNT_AUTH_PROVIDER": "convex",
-    "CONVEX_URL": "https://adorable-perch-596.convex.cloud"
+    "CONVEX_URL": "https://adorable-perch-596.convex.cloud",
+    "CONVEX_SITE_URL": "https://adorable-perch-596.convex.site"
   },
   "ratelimits": [
     {
