@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../lib/store';
+import { readAuthRedirectError } from '../lib/supabase';
 import { BrandMark } from '../ui/Brand';
 
 type EmailAuthMode = 'signin' | 'signup';
@@ -26,6 +27,17 @@ export function AuthScreen() {
   const [error, setError] = useState<string | null>(null);
   const requestedProvider = useRef<HostedAuthProvider | null>(readRequestedProvider());
   const providerRequestHandled = useRef(false);
+
+  // A Google/GitHub sign-in that failed comes back with an error in the URL.
+  useEffect(() => {
+    let active = true;
+    void readAuthRedirectError().then((message) => {
+      if (active && message) setError(message);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const submitGoogle = async () => {
     setGoogleBusy(true);
@@ -106,12 +118,19 @@ export function AuthScreen() {
       }
     } catch (err) {
       const message = (err as Error).message;
-      if (emailMode === 'signup' && /already registered/i.test(message)) {
+      const code = String((err as { code?: unknown }).code ?? '');
+      if (emailMode === 'signup' && (code.startsWith('USER_ALREADY_EXISTS') || /already (registered|exists)/i.test(message))) {
         setEmailMode('signin');
         setPassword('');
         setError('That email already has an account. Sign in instead.');
-      } else if (emailMode === 'signin' && /invalid login credentials/i.test(message)) {
-        setError('Wrong email or password. If you are new here, switch to Create account.');
+      } else if (emailMode === 'signin' && (code === 'INVALID_EMAIL_OR_PASSWORD' || /invalid (login credentials|email or password)/i.test(message))) {
+        setError('Wrong email or password. If you signed up with Google or GitHub, use that button. If you are new here, switch to Create account.');
+      } else if (code === 'PASSWORD_TOO_SHORT') {
+        setError('Use a password with at least 8 characters.');
+      } else if (code === 'PASSWORD_TOO_LONG') {
+        setError('That password is too long. Use 128 characters or fewer.');
+      } else if (code === 'INVALID_EMAIL') {
+        setError('Enter a valid email address.');
       } else {
         setError(message);
       }

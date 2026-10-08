@@ -86,8 +86,9 @@ per-message abuse protection or a guarantee about every deployment's quotas.
   a connected Mac can publish fresh content afterward. Browser suspension/closure
   delays physical deletion until execution resumes; expired copies are rejected
   before restoration. Storage failures are not secure-erasure guarantees.
-- **Hosted Cloudflare/Supabase control plane:** Supabase holds account and device
-  records, linking/pairing data and approval requests. Cloudflare Durable Object
+- **Hosted account control plane:** Supabase holds account and device records
+  until the hosted deployment is cut over. With the Convex account-plane flags,
+  Convex holds those records instead. Cloudflare Durable Object
   storage persists host hello/app state and recent-message snapshots for offline
   replay. The September 7 hosted Worker gives each accepted host publication a
   24-hour maximum replica lifetime. Viewer reads, replays and heartbeats do not

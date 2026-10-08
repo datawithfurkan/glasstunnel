@@ -10,7 +10,9 @@ on:
 
 concurrency:
   group: deploy-production
-  cancel-in-progress: true
+  # Never cancel a rollout halfway: Convex, the Worker and the web app must
+  # land together.
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -22,10 +24,56 @@ env:
   CLOUDFLARE_SITE_PROJECT: glasstunnel-site
   PWA_PUBLIC_APP_URL: https://app.glasstunnel.io
   PWA_SIGNALING_URL: wss://signaling.glasstunnel.io/signal
+  # Public Convex URLs (accounts and sign-in). Not secrets.
+  CONVEX_URL: https://adorable-perch-596.convex.cloud
+  CONVEX_SITE_URL: https://adorable-perch-596.convex.site
 
 jobs:
+  # Convex first: the Worker and the web app call functions that must exist.
+  deploy-convex:
+    name: Deploy Convex functions
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: pnpm/action-setup@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Preflight production Convex
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+        run: |
+          case "$CONVEX_DEPLOY_KEY" in
+            prod:adorable-perch-596\|*) ;;
+            *) echo "CONVEX_DEPLOY_KEY is missing or is not the adorable-perch-596 production key"; exit 1 ;;
+          esac
+          secret="$(pnpm exec convex env get WORKER_CONVEX_SECRET 2>/dev/null || true)"
+          test "${#secret}" -ge 32 || { echo "Convex env WORKER_CONVEX_SECRET is missing or shorter than 32 characters"; exit 1; }
+
+      - name: Deploy to the production Convex deployment
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+        run: pnpm exec convex deploy -y --typecheck enable
+
+      - name: Check the account gateway answers
+        run: |
+          status="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$CONVEX_SITE_URL/worker/account-plane")"
+          test "$status" = "401" || { echo "Gateway without credentials returned $status, expected 401 (503 = secret missing, 404 = route missing)"; exit 1; }
+
   deploy-web:
     name: Deploy web surfaces
+    needs: deploy-convex
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production
@@ -48,14 +96,13 @@ jobs:
         env:
           VITE_PUBLIC_APP_URL: ${{ env.PWA_PUBLIC_APP_URL }}
           VITE_SIGNALING_URL: ${{ env.PWA_SIGNALING_URL }}
-          VITE_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          VITE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          VITE_CONVEX_URL: ${{ env.CONVEX_URL }}
+          VITE_CONVEX_SITE_URL: ${{ env.CONVEX_SITE_URL }}
         run: |
-          test -n "$VITE_SUPABASE_URL" || { echo "Missing SUPABASE_URL secret"; exit 1; }
-          test -n "$VITE_SUPABASE_ANON_KEY" || { echo "Missing SUPABASE_ANON_KEY secret"; exit 1; }
           pnpm --filter=@glasstunnel/protocol build
           pnpm --filter=@glasstunnel/shared-crypto build
           pnpm --filter=@glasstunnel/mobile-pwa build
+          grep -q "$CONVEX_SITE_URL" apps/mobile-pwa/dist/assets/*.js || { echo "The web build does not point at $CONVEX_SITE_URL"; exit 1; }
 
       - name: Deploy PWA to Cloudflare Pages
         env:
@@ -80,6 +127,7 @@ jobs:
 
   deploy-signal:
     name: Deploy Signaling Worker
+    needs: deploy-convex
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production
@@ -93,9 +141,31 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Preflight Worker secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          pnpm dlx wrangler@4 secret list --config apps/cloudflare-signal/wrangler.jsonc | grep -q '"CONVEX_WORKER_SECRET"' \
+            || { echo "Worker secret CONVEX_WORKER_SECRET is missing"; exit 1; }
 
       - name: Deploy Worker to Cloudflare
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: pnpm dlx wrangler@4 deploy --config apps/cloudflare-signal/wrangler.jsonc
+
+      - name: Check the Worker reaches the account plane
+        run: |
+          for attempt in 1 2 3 4 5 6; do
+            status="$(curl -s -o /dev/null -w '%{http_code}' -H 'authorization: Bearer invalid' 'https://signaling.glasstunnel.io/account/hosts?deviceId=deploy-smoke')"
+            test "$status" = "401" && exit 0
+            sleep 10
+          done
+          echo "/account/hosts with an invalid token returned $status, expected 401 (503 = Worker cannot reach Convex)"
+          exit 1

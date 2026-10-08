@@ -28,6 +28,12 @@ export function writeWorkerEnvironment(config, supabase) {
     envLine('ALLOWED_ORIGINS', config.urls.pwa),
     envLine('SUPABASE_URL', supabase.apiUrl),
     envLine('SUPABASE_SERVICE_ROLE_KEY', supabase.serviceRoleKey),
+    // wrangler.jsonc points the deployed Worker at production Convex; the lab
+    // must never reach it.
+    envLine('ACCOUNT_PLANE_PROVIDER', 'supabase'),
+    envLine('ACCOUNT_AUTH_PROVIDER', 'supabase'),
+    envLine('CONVEX_URL', ''),
+    envLine('CONVEX_SITE_URL', ''),
     '',
   ].join('\n');
   writeFileSync(config.files.workerEnv, contents, { encoding: 'utf8', mode: 0o600 });

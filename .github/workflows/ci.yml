@@ -30,6 +30,14 @@ jobs:
       - run: pnpm --filter=./apps/mobile-pwa lint
       - run: pnpm --filter=@glasstunnel/shared-crypto test
       - run: pnpm --filter=./apps/mobile-pwa test
+      - name: Convex functions typecheck
+        run: pnpm exec tsc -p convex --noEmit
+      - name: Worker runtime tests
+        run: pnpm worker:test
+      - name: Convex migration and lab script tests
+        run: |
+          node --test scripts/convex-migration/*.test.mjs
+          node --test scripts/lab/*.test.mjs
       - run: pnpm build
 
   go:

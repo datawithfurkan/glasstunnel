@@ -14,9 +14,11 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@convex-dev/better-auth": "0.12.5",
     "@glasstunnel/protocol": "workspace:*",
     "@glasstunnel/shared-crypto": "workspace:*",
     "@supabase/supabase-js": "^2.106.1",
+    "better-auth": "~1.6.15",
     "clsx": "^2.1.1",
     "idb-keyval": "^6.2.1",
     "react": "^18.3.1",

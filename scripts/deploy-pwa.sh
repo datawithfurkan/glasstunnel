@@ -13,13 +13,13 @@ set -a
 source "${ENV_FILE}"
 set +a
 
-: "${SUPABASE_URL:?SUPABASE_URL is required in .env.platform.local}"
-: "${SUPABASE_ANON_KEY:?SUPABASE_ANON_KEY is required in .env.platform.local}"
+: "${CONVEX_URL:?CONVEX_URL is required in .env.platform.local}"
+: "${CONVEX_SITE_URL:?CONVEX_SITE_URL is required in .env.platform.local}"
 
 export VITE_PUBLIC_APP_URL="${VITE_PUBLIC_APP_URL:-https://app.glasstunnel.io}"
 export VITE_SIGNALING_URL="${VITE_SIGNALING_URL:-wss://signaling.glasstunnel.io/signal}"
-export VITE_SUPABASE_URL="${SUPABASE_URL}"
-export VITE_SUPABASE_ANON_KEY="${SUPABASE_ANON_KEY}"
+export VITE_CONVEX_URL="${CONVEX_URL}"
+export VITE_CONVEX_SITE_URL="${CONVEX_SITE_URL}"
 
 PROJECT_NAME="${CLOUDFLARE_PAGES_PROJECT:-glasstunnel}"
 BRANCH_NAME="${1:-main}"
