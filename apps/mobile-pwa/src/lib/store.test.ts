@@ -1016,6 +1016,17 @@ describe('app store account link routing', () => {
       'old-host',
     ]);
   });
+
+  it('keeps the listed entry of a claimed Mac over the claim answer that preceded the list', () => {
+    const oldHost = accountHost('old-host', 'Test Mac');
+    const listed = accountHost('new-host', 'New Mac');
+    // The claim answered before this browser was registered and before the Mac's relay was up.
+    const claimAnswer = { ...listed, trusted: false, online: false };
+
+    const merged = mergeClaimedHost([oldHost, listed], claimAnswer);
+    expect(merged.map((host) => host.deviceId)).toEqual(['new-host', 'old-host']);
+    expect(merged[0]).toMatchObject({ trusted: true, online: true });
+  });
 });
 
 describe('app store screen video recovery', () => {

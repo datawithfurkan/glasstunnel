@@ -27,6 +27,37 @@ test('@fixture host selection states render and Refresh reports completion', asy
   await expect(page.getByText('Macs updated.', { exact: true })).toBeVisible();
 });
 
+test('@fixture Your Macs never shows a loading or failed list as an account without Macs', async ({ page }) => {
+  const addThisMac = page.getByRole('button', { name: 'Add this Mac', exact: true });
+
+  await page.goto('/?gtFixture=hosts-loading');
+  await expect(page.getByRole('heading', { name: 'Your Macs', exact: true })).toBeVisible();
+  // The list container is busy, and one persistent polite live region says so.
+  const busyList = page.locator('[aria-busy="true"]').filter({ hasText: 'Loading your Macs…' });
+  await expect(busyList).toBeVisible();
+  const announcement = page.getByRole('status').filter({ hasText: 'Loading your Macs…' });
+  await expect(announcement).toHaveCount(1);
+  await expect(announcement).toHaveAttribute('aria-live', 'polite');
+  await expect(announcement).not.toHaveAttribute('aria-busy', 'true');
+  await expect(addThisMac).toHaveCount(0);
+  await expectNoHorizontalOverflow(page);
+
+  await page.goto('/?gtFixture=hosts-error');
+  const failure = page.getByRole('alert').filter({ hasText: 'Could not load your Macs' });
+  await expect(failure).toBeVisible();
+  await expect(page.getByText('Could not load your Macs', { exact: true })).toBeVisible();
+  await expect(failure.getByRole('button', { name: 'Try again', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toBeVisible();
+  await expect(page.locator('[aria-busy="true"]').filter({ hasText: 'Could not load your Macs' })).toHaveCount(0);
+  await expect(addThisMac).toHaveCount(0);
+  await expectNoHorizontalOverflow(page);
+
+  await page.goto('/?gtFixture=hosts-empty');
+  await expect(addThisMac).toBeVisible();
+  await expect(page.getByText('Loading your Macs…')).toHaveCount(0);
+  await expect(page.getByRole('status').filter({ hasText: 'No Macs on this account yet.' })).toHaveCount(1);
+});
+
 test('@fixture Terminal running state is usable at the current viewport', async ({ page }) => {
   await page.goto('/?gtFixture=workspace-terminal-running');
 

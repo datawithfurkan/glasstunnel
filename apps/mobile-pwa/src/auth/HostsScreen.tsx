@@ -1,21 +1,33 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import type { AccountHost } from '../lib/accountApi';
-import { useAppStore } from '../lib/store';
+import { useAppStore, type HostListStatus } from '../lib/store';
 
 export function HostsScreen() {
   const user = useAppStore((s) => s.user);
   const accessRevocationNotice = useAppStore((s) => s.accessRevocationNotice);
   const availableHosts = useAppStore((s) => s.availableHosts);
+  const hostsStatus = useAppStore((s) => s.hostsStatus);
   const chooseHost = useAppStore((s) => s.chooseHost);
   const refreshHosts = useAppStore((s) => s.refreshHosts);
   const claimHostLinkCode = useAppStore((s) => s.claimHostLinkCode);
   const [linkCode, setLinkCode] = useState('');
+  // A Mac opened this page with its one-time code: the add flow shows at once,
+  // as it always has, even while the account's Macs are still loading, and
+  // only until that claim settles (see claimCodeFromMac).
+  const [macClaimPending, setMacClaimPending] = useState(() => linkCodeInAddressBar() !== '');
+  const macClaimUserIdRef = useRef(user?.id ?? null);
+  // The live region starts empty and fills once on screen, so its first
+  // message ("Loading your Macs…") is announced too.
+  const [announcing, setAnnouncing] = useState(false);
   const [busyHostId, setBusyHostId] = useState<string | null>(null);
   const [linking, setLinking] = useState(false);
   const [pendingClaimedHostId, setPendingClaimedHostId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const retryButtonRef = useRef<HTMLButtonElement>(null);
+  const retryFocusPending = useRef(false);
   const autoClaimedCodeRef = useRef<string | null>(null);
   const lastAutoRefreshAtRef = useRef(0);
 
@@ -48,14 +60,11 @@ export function HostsScreen() {
     setError(null);
     setStatus('Refreshing Macs…');
     try {
-      await refreshHosts({ force: true });
-      const latestError = useAppStore.getState().error;
-      if (latestError) {
-        setError(latestError);
-        setStatus(null);
-      } else {
-        setStatus('Macs updated.');
-      }
+      await refreshHosts({ force: true, userInitiated: true });
+      // A failed list refresh is already on screen: the top bar shows the
+      // store's message, and an empty list shows the "Could not load" alert.
+      // A local copy would outlive a later background refresh that succeeds.
+      setStatus(useAppStore.getState().error ? null : 'Macs updated.');
     } catch (err) {
       setError((err as Error).message);
       setStatus(null);
@@ -89,6 +98,19 @@ export function HostsScreen() {
   );
 
   useEffect(() => {
+    setAnnouncing(true);
+  }, []);
+
+  // Declared before the auto-claim below: when another account signs in, a
+  // claim this page started belongs to the account that left.
+  useEffect(() => {
+    const userId = user?.id ?? null;
+    if (macClaimUserIdRef.current === userId) return;
+    macClaimUserIdRef.current = userId;
+    setMacClaimPending(false);
+  }, [user?.id]);
+
+  useEffect(() => {
     if (!user) return;
     const params = new URLSearchParams(window.location.search);
     const code = normalizeCode(params.get('linkCode') ?? '');
@@ -101,7 +123,7 @@ export function HostsScreen() {
     const nextURL = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}${window.location.hash}`;
     window.history.replaceState({}, '', nextURL);
 
-    void submitLinkCode(code);
+    void claimCodeFromMac(code, { submitLinkCode, setMacClaimPending });
   }, [submitLinkCode, user]);
 
   useEffect(() => {
@@ -135,7 +157,30 @@ export function HostsScreen() {
     return () => window.clearInterval(interval);
   }, [pendingClaimedHostId, availableHosts, chooseHost, refreshHostsVisible]);
 
-  const hasHosts = availableHosts.length > 0;
+  const listView = hostListView({
+    hostCount: availableHosts.length,
+    hostsStatus,
+    macClaimPending,
+  });
+
+  // "Try again" unmounts itself when the list starts loading. Keep keyboard
+  // and screen reader focus in the list: on the list while it loads, back on
+  // "Try again" if the retry failed, on the list once it shows.
+  useEffect(() => {
+    if (!retryFocusPending.current) return;
+    if (listView === 'error') {
+      // The button is disabled until the retry has fully settled.
+      if (refreshing) return;
+      retryButtonRef.current?.focus();
+      retryFocusPending.current = false;
+    } else {
+      listRef.current?.focus();
+      if (listView !== 'loading') retryFocusPending.current = false;
+    }
+  }, [listView, refreshing]);
+  const announcement = announcing
+    ? hostListAnnouncement({ view: listView, hostCount: availableHosts.length, hostsStatus, macClaimPending })
+    : '';
 
   return (
     <div className="h-full overflow-y-auto safe-pad-x safe-pad-bottom">
@@ -172,64 +217,87 @@ export function HostsScreen() {
           </section>
         )}
 
-        {!hasHosts ? (
-          <LinkCodePanel
-            title={hostEmptyStateTitle()}
-            subtitle={hostEmptyStateCopy()}
-            linkCode={linkCode}
-            linking={linking}
-            onLinkCodeChange={setLinkCode}
-            onSubmit={() => void submitLinkCode(linkCode)}
-          />
-        ) : (
-          <>
-            <section className="space-y-3">
-              <div className="grid gap-3">
-                {availableHosts.map((host) => {
-                  const busy = busyHostId === host.deviceId;
-                  const available = hostActionAvailable(host, busy);
-                  return (
-                    <article key={host.deviceId} className="gt-panel px-5 py-5">
-                      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <h2 className="truncate text-xl font-semibold">{host.label}</h2>
-                            <HostStatusBadge host={host} />
-                          </div>
-                          {host.lastSeenAtUnixMs && (
-                            <div className="gt-dim mt-2 text-sm">
-                              Last seen {formatTimestamp(host.lastSeenAtUnixMs)}
-                            </div>
-                          )}
-                        </div>
-                        <div className="flex gap-2">
-                          <button
-                            type="button"
-                            onClick={() => void openHost(host)}
-                            disabled={!available}
-                            className="gt-button gt-button-primary"
-                          >
-                            {hostActionLabel(host, busy)}
-                          </button>
-                        </div>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            </section>
+        {/* Persistent, so "Loading your Macs…" and then the outcome are announced. */}
+        <p role="status" aria-live="polite" className="sr-only">
+          {announcement}
+        </p>
 
+        <div
+          ref={listRef}
+          tabIndex={-1}
+          aria-busy={listView === 'loading'}
+          className="flex flex-col gap-5 focus:outline-none"
+        >
+          {listView === 'loading' ? (
+            <HostListLoadingPanel />
+          ) : listView === 'error' ? (
+            <HostListErrorPanel
+              retryRef={retryButtonRef}
+              refreshing={refreshing}
+              onRefresh={() => {
+                retryFocusPending.current = true;
+                void refreshHostsFromButton();
+              }}
+            />
+          ) : listView === 'empty' ? (
             <LinkCodePanel
-              title="Add another Mac"
-              subtitle="Enter a new code from the Mac app."
+              title={hostEmptyStateTitle()}
+              subtitle={hostEmptyStateCopy()}
               linkCode={linkCode}
               linking={linking}
               onLinkCodeChange={setLinkCode}
               onSubmit={() => void submitLinkCode(linkCode)}
-              compact
             />
-          </>
-        )}
+          ) : (
+            <>
+              <section className="space-y-3">
+                <div className="grid gap-3">
+                  {availableHosts.map((host) => {
+                    const busy = busyHostId === host.deviceId;
+                    const available = hostActionAvailable(host, busy);
+                    return (
+                      <article key={host.deviceId} className="gt-panel px-5 py-5">
+                        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h2 className="truncate text-xl font-semibold">{host.label}</h2>
+                              <HostStatusBadge host={host} />
+                            </div>
+                            {host.lastSeenAtUnixMs && (
+                              <div className="gt-dim mt-2 text-sm">
+                                Last seen {formatTimestamp(host.lastSeenAtUnixMs)}
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => void openHost(host)}
+                              disabled={!available}
+                              className="gt-button gt-button-primary"
+                            >
+                              {hostActionLabel(host, busy)}
+                            </button>
+                          </div>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              </section>
+
+              <LinkCodePanel
+                title="Add another Mac"
+                subtitle="Enter a new code from the Mac app."
+                linkCode={linkCode}
+                linking={linking}
+                onLinkCodeChange={setLinkCode}
+                onSubmit={() => void submitLinkCode(linkCode)}
+                compact
+              />
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -312,6 +380,51 @@ function LinkCodePanel({
   );
 }
 
+function HostListLoadingPanel() {
+  // The list container around it is aria-busy; the live region above speaks.
+  return (
+    <section className="gt-panel p-6">
+      <div className="flex items-center gap-4">
+        <div
+          aria-hidden="true"
+          className="h-8 w-8 shrink-0 rounded-full border-2 border-[color:var(--gt-border)] border-t-[color:var(--gt-text)] animate-spin"
+        />
+        <div className="min-w-0">
+          <div className="text-lg font-semibold">{HOST_LIST_COPY.loadingTitle}</div>
+          <div className="gt-muted mt-1 text-sm">{HOST_LIST_COPY.loadingDetail}</div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function HostListErrorPanel({
+  retryRef,
+  refreshing,
+  onRefresh,
+}: {
+  retryRef: RefObject<HTMLButtonElement>;
+  refreshing: boolean;
+  onRefresh: () => void;
+}) {
+  return (
+    <section role="alert" className="gt-panel p-6">
+      {/* The top bar already says why; this offers the way out. */}
+      <div className="text-lg font-semibold">{HOST_LIST_COPY.errorTitle}</div>
+      <button
+        ref={retryRef}
+        type="button"
+        onClick={onRefresh}
+        disabled={refreshing}
+        aria-busy={refreshing}
+        className="gt-button gt-button-primary mt-4 px-5 py-3 text-base"
+      >
+        {HOST_LIST_COPY.errorAction}
+      </button>
+    </section>
+  );
+}
+
 function HostStatusBadge({ host }: { host: AccountHost }) {
   if (!host.trusted) {
     return (
@@ -362,6 +475,75 @@ export function hostEmptyStateCopy(): string {
   return 'Enter the code shown on your Mac.';
 }
 
+export const HOST_LIST_COPY = {
+  loadingTitle: 'Loading your Macs…',
+  loadingDetail: 'Checking your account for linked Macs.',
+  errorTitle: 'Could not load your Macs',
+  errorAction: 'Try again',
+  emptyAnnouncement: 'No Macs on this account yet.',
+} as const;
+
+export type HostListView = 'hosts' | 'loading' | 'error' | 'empty';
+
+/**
+ * What the list area shows. Macs on hand are always listed. Without any, the
+ * add-a-Mac form shows for a list that loaded empty, and at once while a
+ * claim a Mac started (with its code in this page's address) is pending. A
+ * list still on its way, or one that could not load, never looks like "no
+ * Macs".
+ */
+export function hostListView(input: {
+  hostCount: number;
+  hostsStatus: HostListStatus;
+  macClaimPending: boolean;
+}): HostListView {
+  if (input.hostCount > 0) return 'hosts';
+  if (input.macClaimPending) return 'empty';
+  if (input.hostsStatus === 'loading') return 'loading';
+  if (input.hostsStatus === 'error') return 'error';
+  return 'empty';
+}
+
+/**
+ * What the list's live region says: "Loading your Macs…", then the outcome.
+ * A failed list announces itself (its panel is an alert), and a claim a Mac
+ * started reports its own progress, so neither repeats here.
+ */
+export function hostListAnnouncement(input: {
+  view: HostListView;
+  hostCount: number;
+  hostsStatus: HostListStatus;
+  macClaimPending?: boolean;
+}): string {
+  // A claim the Mac started reports its own progress ("Adding this Mac…");
+  // the list must not announce "no Macs" in the middle of it.
+  if (input.macClaimPending) return '';
+  if (input.view === 'loading') return HOST_LIST_COPY.loadingTitle;
+  if (input.view === 'hosts') return input.hostCount === 1 ? '1 Mac listed.' : `${input.hostCount} Macs listed.`;
+  if (input.view === 'empty' && input.hostsStatus === 'loaded') return HOST_LIST_COPY.emptyAnnouncement;
+  return '';
+}
+
+/**
+ * Claims the code a Mac put in this page's address. Its add flow shows while
+ * the claim is pending and goes once the claim settles, either way: then the
+ * list shows what the account holds (loading, failed, empty, or the Macs).
+ */
+export async function claimCodeFromMac(
+  code: string,
+  actions: {
+    submitLinkCode: (code: string) => Promise<void>;
+    setMacClaimPending: (pending: boolean) => void;
+  },
+): Promise<void> {
+  actions.setMacClaimPending(true);
+  try {
+    await actions.submitLinkCode(code);
+  } finally {
+    actions.setMacClaimPending(false);
+  }
+}
+
 export async function claimLinkedHostAndOpen(
   normalizedCode: string,
   actions: {
@@ -399,6 +581,12 @@ export async function claimLinkedHostAndOpen(
 
 function normalizeCode(value: string): string {
   return value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+}
+
+/** The one-time code a Mac put in this page's address, as the auto-claim reads it. */
+function linkCodeInAddressBar(): string {
+  if (typeof window === 'undefined') return '';
+  return normalizeCode(new URLSearchParams(window.location.search).get('linkCode') ?? '');
 }
 
 function formatTimestamp(unixMs: number): string {

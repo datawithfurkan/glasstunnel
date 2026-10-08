@@ -93,6 +93,16 @@ export type Route =
   | 'grid'
   | 'workspace';
 
+/**
+ * Where the signed-in account's list of Macs stands. `loading` lasts until the
+ * first list for the session arrives, so an empty list is never shown as "no
+ * Macs" while it is still on its way. A refresh of a list already on screen
+ * stays `loaded`, and so does its failure. A failed first list (`error`) goes
+ * back to `loading` only for a refresh the person asked for; background
+ * refreshes leave the failure on screen until one of them succeeds.
+ */
+export type HostListStatus = 'idle' | 'loading' | 'loaded' | 'error';
+
 const LOCAL_MESSAGE_HISTORY_LIMIT = 250;
 const LOCAL_OPTIMISTIC_MESSAGE_TTL_MS = 60_000;
 
@@ -137,6 +147,8 @@ export interface AppState {
   phoneKeypair: DeviceKeypair | null;
   pairedHost: PairedHost | null;
   availableHosts: AccountHost[];
+  /** Whether `availableHosts` is the account's list yet; see HostListStatus. */
+  hostsStatus: HostListStatus;
   accessRevocationNotice: string | null;
   user: AuthenticatedUser | null;
   authConfigured: boolean;
@@ -202,7 +214,11 @@ export interface AppState {
   requestPasswordReset: (email: string) => Promise<boolean>;
   /** Sets the new password; on success every session, including this one, is signed out. */
   completePasswordReset: (token: string, newPassword: string) => Promise<boolean>;
-  refreshHosts: (options?: { force?: boolean }) => Promise<void>;
+  /**
+   * Loads the account's Macs again. `userInitiated` is for the person's own
+   * Refresh or Try again: only that moves a failed list back to loading.
+   */
+  refreshHosts: (options?: { force?: boolean; userInitiated?: boolean }) => Promise<void>;
   claimHostLinkCode: (code: string) => Promise<AccountHost>;
   chooseHost: (hostDeviceId: string) => Promise<void>;
   sendText: (agentId: string, text: string, submit: boolean) => boolean;
@@ -249,6 +265,50 @@ let sessionSyncVersion = 0;
 let pendingSignOutAccount: string | undefined;
 let refreshHostsInFlight: Promise<void> | null = null;
 let lastRefreshHostsCompletedAt = 0;
+
+/**
+ * A session sync, as far as this browser's registration with the account
+ * goes. The registration answers with the account's Macs as this browser may
+ * use them. A plain list fetch before it succeeded reads this browser as an
+ * unknown device, so every Mac would show as untrusted ("Preparing"). While
+ * the current sync runs, refreshHosts therefore waits for it instead of
+ * fetching, and when the current sync did not register this browser,
+ * refreshHosts registers it again.
+ */
+interface BrowserRegistration {
+  syncVersion: number;
+  /** Until the sync applied what it received, or gave up. */
+  running: boolean;
+  /** This browser's registration succeeded in this sync. */
+  succeeded: boolean;
+  /** Resolves (never rejects) when the sync stops running. */
+  done: Promise<void>;
+}
+let browserRegistration: BrowserRegistration | null = null;
+const HOST_LIST_UNAVAILABLE_COPY = 'Signed in, but your Macs could not load. Refresh to try again.';
+const HOST_CHOICE_NOT_SAVED_COPY =
+  "Your Macs loaded, but this browser could not save your Mac choice. Check this site's storage settings.";
+
+type SessionSyncOrigin = 'start-up' | 'auth-event';
+
+interface SharedSessionSync {
+  userId: string;
+  accessToken: string;
+  origin: SessionSyncOrigin;
+  version: number;
+  settled: boolean;
+  done: Promise<void>;
+}
+
+/**
+ * Start-up reads the session itself, and on the same load the auth listener
+ * announces that session too (INITIAL_SESSION, or SIGNED_IN after a provider
+ * return). Each would register this browser and load its Macs. The later one
+ * joins the earlier synchronization of the same session (user and token)
+ * instead. Auth events never join each other: a sign-in, account switch,
+ * cross-tab change, or sign-out always synchronizes.
+ */
+let sharedSessionSync: SharedSessionSync | null = null;
 let peerStartGeneration = 0;
 let videoPeerStartGeneration = 0;
 /** True between startVideoPeer and stopVideoPeer: the screen panel wants video. */
@@ -289,6 +349,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   phoneKeypair: null,
   pairedHost: null,
   availableHosts: [],
+  hostsStatus: 'idle',
   accessRevocationNotice: null,
   user: null,
   authConfigured: hasAccountAuth(),
@@ -343,7 +404,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         authSubscriptionAttached = true;
         authClient.auth.onAuthStateChange((event, session) => {
           if (event === 'TOKEN_REFRESHED') return;
-          void synchronizeSession(set, get, session);
+          void synchronizeSessionOnce(set, get, session, 'auth-event');
         });
       }
 
@@ -351,7 +412,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       const {
         data: { session },
       } = await authClient.auth.getSession();
-      await synchronizeSession(set, get, session);
+      // The listener usually announced this session already; that
+      // synchronization registers this browser, not a second one.
+      await synchronizeSessionOnce(set, get, session, 'start-up');
     } catch (err) {
       set({
         error: (err as Error).message,
@@ -899,6 +962,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       signingOut: true,
       accessRevocationNotice: null,
       availableHosts: [],
+      hostsStatus: 'idle',
       pairedHost: null,
       peer: null,
       signaling: null,
@@ -1021,59 +1085,97 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   async refreshHosts(options) {
     if (!authClient) return;
-    if (refreshHostsInFlight) return refreshHostsInFlight;
+    const userInitiated = options?.userInitiated === true;
+    if (refreshHostsInFlight) {
+      if (!userInitiated) return refreshHostsInFlight;
+      // The person asked while a background refresh runs: it finishes first,
+      // and if the list still could not load, theirs runs, showing progress.
+      return refreshHostsInFlight.then(() =>
+        get().hostsStatus === 'error' ? get().refreshHosts({ ...options, force: true }) : undefined,
+      );
+    }
     if (
       !options?.force &&
       Date.now() - lastRefreshHostsCompletedAt < REFRESH_HOSTS_MIN_INTERVAL_MS
     ) {
       return;
     }
+    // Only the person's own Refresh or Try again moves a failed list back to
+    // loading and clears its message. Background refreshes (opening the
+    // screen, the timer, focus) leave the failure on screen until they succeed.
+    if (userInitiated && get().hostsStatus === 'error') set({ hostsStatus: 'loading', error: null });
+    const resync = (session: Session | null) =>
+      synchronizeSession(set, get, session, { preserveRoute: true, background: !userInitiated });
 
     refreshHostsInFlight = (async () => {
-      const syncVersion = sessionSyncVersion;
-      const isCurrentSync = () => syncVersion === sessionSyncVersion;
+      // The running session sync registers this browser and brings the list
+      // with it. A fetch now would read this browser as unknown (every Mac
+      // untrusted) and could land after the registration's list.
+      if (await waitForRunningSessionSync()) return;
       const session = await currentSession().catch(() => null);
       const keypair = get().phoneKeypair;
 
       if (!session?.user || !keypair) {
-        await synchronizeSession(set, get, session, { preserveRoute: true });
+        await resync(session);
+        return;
+      }
+      if (await waitForRunningSessionSync()) return;
+
+      const registration = currentBrowserRegistration();
+      if (!registration?.succeeded) {
+        // This browser is not registered for this session (its registration
+        // failed): register it again, which brings the list, not a bare fetch.
+        await resync(session);
         return;
       }
 
+      // Only a list read after this session's registration succeeded applies.
+      // A newer sync (sign-in, account switch, sign-out) replaces this one.
+      const isCurrentList = () =>
+        registration.syncVersion === sessionSyncVersion && browserRegistration === registration;
       try {
         const { result: hosts, session: accountSession } = await accountRequestWithSessionRetry(
           session,
           (accessToken) => fetchAccountHosts(accessToken, keypair.deviceId),
         );
-        if (!isCurrentSync()) return;
+        if (!isCurrentList()) return;
 
         const state = get();
         const selected = chooseHostSelection(hosts, state.pairedHost);
-        if (selected) {
-          await idbSet(PAIRED_HOST_KEY, selected);
-        } else if (state.pairedHost) {
-          await idbDel(PAIRED_HOST_KEY);
+        let storageError: string | null = null;
+        try {
+          if (selected) {
+            await idbSet(PAIRED_HOST_KEY, selected);
+          } else if (state.pairedHost) {
+            await idbDel(PAIRED_HOST_KEY);
+          }
+        } catch {
+          // The list arrived; only remembering the chosen Mac failed.
+          storageError = HOST_CHOICE_NOT_SAVED_COPY;
         }
 
-        if (!isCurrentSync()) return;
+        if (!isCurrentList()) return;
         const selectedOnline = selected
           ? (hosts.find((host) => host.deviceId === selected.deviceId)?.online ?? null)
           : null;
         set({
           user: state.user ?? mapUser(accountSession.user),
           availableHosts: hosts,
+          hostsStatus: 'loaded',
           pairedHost: selected,
           relayHostOnline: selectedOnline,
-          error: null,
+          error: storageError,
           authConfigured: true,
         });
       } catch (err) {
-        if (!isCurrentSync()) return;
-        set({ error: friendlyAccountSyncError(err) });
-      } finally {
-        lastRefreshHostsCompletedAt = Date.now();
+        if (!isCurrentList()) return;
+        set({
+          error: friendlyAccountSyncError(err),
+          hostsStatus: hostsStatusAfterFailure(get().hostsStatus),
+        });
       }
     })().finally(() => {
+      lastRefreshHostsCompletedAt = Date.now();
       refreshHostsInFlight = null;
     });
 
@@ -1091,10 +1193,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     // A code kept through a password reset is used up now.
     clearPendingLinkCode(code);
     await get().refreshHosts({ force: true });
-    set((state) => ({
-      availableHosts: mergeClaimedHost(state.availableHosts, host),
-    }));
-    return host;
+    // The Mac as the list now shows it (see mergeClaimedHost): the caller
+    // opens it at once when it is online, or waits for it.
+    let added = host;
+    set((state) => {
+      const availableHosts = mergeClaimedHost(state.availableHosts, host);
+      added = availableHosts[0];
+      return { availableHosts };
+    });
+    return added;
   },
 
   async chooseHost(hostDeviceId) {
@@ -1477,11 +1584,21 @@ function cacheMessageDetail(set: SetState, detail: MessageDetail): void {
   }));
 }
 
+interface SessionSyncOptions {
+  /** Keep a workspace route on screen (a refresh, not a sign-in). */
+  preserveRoute?: boolean;
+  /**
+   * A refresh the person did not ask for: a failed list and its message stay
+   * on screen until this sync succeeds.
+   */
+  background?: boolean;
+}
+
 async function synchronizeSession(
   set: SetState,
   get: () => AppState,
   session: Session | null,
-  options: { preserveRoute?: boolean } = {},
+  options: SessionSyncOptions = {},
 ) {
   if (get().signingOut && session?.user) return;
   // A sign-in made in this tab (not a session adopted from another tab, a
@@ -1490,6 +1607,37 @@ async function synchronizeSession(
   // below, the hosts screen claims it as in the usual Mac flow.
   if (session?.user && takeSignInFromThisTab()) restorePendingLinkCodeForSignIn(session.user.email);
   const syncVersion = ++sessionSyncVersion;
+  let finish!: () => void;
+  const registration: BrowserRegistration = {
+    syncVersion,
+    running: true,
+    succeeded: false,
+    done: new Promise<void>((resolve) => {
+      finish = resolve;
+    }),
+  };
+  browserRegistration = registration;
+  try {
+    await runSessionSync(set, get, session, options, registration);
+  } catch (err) {
+    settleHostListLoading(set, get, syncVersion, friendlyAccountSyncError(err));
+    throw err;
+  } finally {
+    // Every way out of the current sync leaves the list out of `loading`.
+    settleHostListLoading(set, get, syncVersion, HOST_LIST_UNAVAILABLE_COPY);
+    registration.running = false;
+    finish();
+  }
+}
+
+async function runSessionSync(
+  set: SetState,
+  get: () => AppState,
+  session: Session | null,
+  options: SessionSyncOptions,
+  registration: BrowserRegistration,
+) {
+  const { syncVersion } = registration;
   const isCurrentSync = () => syncVersion === sessionSyncVersion;
   const previousUser = get().user;
   const accountChanged = !!previousUser && previousUser.id !== session?.user?.id;
@@ -1498,6 +1646,8 @@ async function synchronizeSession(
     set({
       user: null,
       availableHosts: [],
+      // The new account's Macs load next; the old account's list is gone.
+      hostsStatus: session?.user ? 'loading' : 'idle',
       pairedHost: null,
       locked: true,
       route: session?.user ? 'hosts' : fallbackEntryRoute(),
@@ -1508,7 +1658,7 @@ async function synchronizeSession(
     } catch {
       if (!isCurrentSync()) return;
       pendingSignOutAccount = previousUser?.id ?? pendingSignOutAccount;
-      set({ signOutError: SIGN_OUT_FAILURE_COPY, route: fallbackEntryRoute() });
+      set({ signOutError: SIGN_OUT_FAILURE_COPY, route: fallbackEntryRoute(), hostsStatus: 'idle' });
       return;
     }
     if (!isCurrentSync()) return;
@@ -1526,6 +1676,7 @@ async function synchronizeSession(
     set({
       user: null,
       availableHosts: [],
+      hostsStatus: 'idle',
       pairedHost: storedHost,
       relayHostOnline: null,
       route,
@@ -1545,28 +1696,49 @@ async function synchronizeSession(
   }
   const keypair = state.phoneKeypair;
   if (!keypair) {
+    // Without this browser's key no host list can load.
     set({
       user,
       route: 'hosts',
       locked: false,
       authConfigured: true,
+      hostsStatus: get().hostsStatus === 'loaded' ? 'loaded' : 'idle',
     });
     return;
   }
 
-  const initialSignedInRoute: Route = pendingLinkCode
-    ? 'hosts'
-    : isWorkspaceRoute(state.route)
-      ? 'workspace'
-      : 'hosts';
+  // A refresh (preserveRoute) never moves the person: whatever screen they
+  // are on stays, including the hosts list, the profile and the workspace.
+  // Only a sign-in chooses the first signed-in screen.
+  const refreshKeepsRoute =
+    options.preserveRoute === true && state.route !== 'loading' && state.route !== 'auth';
+  const initialSignedInRoute: Route = refreshKeepsRoute
+    ? state.route
+    : pendingLinkCode
+      ? 'hosts'
+      : isWorkspaceRoute(state.route)
+        ? 'workspace'
+        : 'hosts';
 
+  // The route and user change before the registration below answers; until
+  // then the hosts screen shows the list as loading, never as "no Macs". A
+  // list this account already shows stays while it refreshes, and a failed
+  // one stays during a background refresh, with its message.
+  const listStatus = get().hostsStatus;
+  const keepFailedList = options.background === true && listStatus === 'error';
   set({
     user,
     authConfigured: true,
     route: initialSignedInRoute,
-    locked: isWorkspaceRoute(state.route) ? state.locked : false,
-    error: null,
+    locked: refreshKeepsRoute || isWorkspaceRoute(state.route) ? state.locked : false,
+    ...(options.background ? {} : { error: null }),
+    hostsStatus: listStatus === 'loaded' || keepFailedList ? listStatus : 'loading',
   });
+  const errorBeforeRegistration = get().error;
+  // The person may move on while the registration runs (open a Mac a claim
+  // just added or one already listed, the profile, the lock screen). Their
+  // newer route wins over the one this sync would choose.
+  const movedOn = () => get().route !== initialSignedInRoute;
 
   let hosts: AccountHost[];
   let accountSession = session;
@@ -1590,31 +1762,62 @@ async function synchronizeSession(
     set({
       user,
       availableHosts: latest.availableHosts,
+      hostsStatus: hostsStatusAfterFailure(latest.hostsStatus),
       pairedHost: latest.pairedHost ?? storedHost,
       route: fallbackRoute,
-      locked: false,
+      locked: movedOn() ? latest.locked : false,
       authConfigured: true,
       error: friendlyAccountSyncError(err),
     });
     return;
   }
+  registration.succeeded = true;
 
   if (!isCurrentSync()) return;
 
+  // After the person moved on only the list updates: the screen they reached
+  // stays as it is, and a Mac they opened was saved when they opened it.
+  const updateListOnly = (storageError: string | null) => {
+    set({
+      user: mapUser(accountSession.user),
+      availableHosts: hosts,
+      hostsStatus: 'loaded',
+      authConfigured: true,
+      // The failure this sync replaces goes; a message from that screen stays.
+      ...(get().error === errorBeforeRegistration ? { error: storageError } : {}),
+    });
+  };
+  if (movedOn()) {
+    updateListOnly(null);
+    return;
+  }
+
   const selected = chooseHostSelection(hosts, get().pairedHost ?? storedHost);
-  if (selected) {
-    await idbSet(PAIRED_HOST_KEY, selected);
-  } else {
-    await idbDel(PAIRED_HOST_KEY);
+  let storageError: string | null = null;
+  try {
+    if (selected) {
+      await idbSet(PAIRED_HOST_KEY, selected);
+    } else {
+      await idbDel(PAIRED_HOST_KEY);
+    }
+  } catch {
+    // The list arrived; only remembering the chosen Mac failed. The list
+    // shows, and the message says what did not work.
+    storageError = HOST_CHOICE_NOT_SAVED_COPY;
   }
 
   if (!isCurrentSync()) return;
 
+  if (movedOn()) {
+    updateListOnly(storageError);
+    return;
+  }
+
   const shouldRestoreWorkspace =
     !!storedHost && !!selected && storedHost.deviceId === selected.deviceId;
   let nextRoute: Route = 'hosts';
-  if (!pendingLinkCode && options.preserveRoute && isWorkspaceRoute(state.route)) {
-    nextRoute = 'workspace';
+  if (refreshKeepsRoute) {
+    nextRoute = initialSignedInRoute;
   } else if (!pendingLinkCode && shouldRestoreWorkspace) {
     nextRoute = 'workspace';
   }
@@ -1626,14 +1829,15 @@ async function synchronizeSession(
   set({
     user: mapUser(accountSession.user),
     availableHosts: hosts,
+    hostsStatus: 'loaded',
     pairedHost: selected,
     relayHostOnline: selected
       ? (hosts.find((host) => host.deviceId === selected.deviceId)?.online ?? null)
       : null,
     route: nextRoute,
-    locked: isWorkspaceRoute(state.route) ? state.locked : false,
+    locked: refreshKeepsRoute || isWorkspaceRoute(state.route) ? state.locked : false,
     authConfigured: true,
-    error: null,
+    error: storageError,
     ...(shouldKeepWorkspaceState
       ? {}
       : {
@@ -1646,6 +1850,104 @@ async function synchronizeSession(
           relayScreenFrames: {},
         }),
   });
+}
+
+/**
+ * Shares one synchronization between start-up and the auth listener when both
+ * bring the same session (see `sharedSessionSync`). A start-up read joins any
+ * current synchronization of that session; an auth event joins only one that
+ * start-up began and that is still running.
+ */
+function synchronizeSessionOnce(
+  set: SetState,
+  get: () => AppState,
+  session: Session | null,
+  origin: SessionSyncOrigin,
+): Promise<void> {
+  const shared = sharedSessionSync;
+  if (
+    session?.user &&
+    shared &&
+    shared.version === sessionSyncVersion &&
+    shared.userId === session.user.id &&
+    shared.accessToken === session.access_token &&
+    (origin === 'start-up'
+      ? // A finished one still counts while its account is the one signed in.
+        !shared.settled || get().user?.id === shared.userId
+      : shared.origin === 'start-up' && !shared.settled)
+  ) {
+    return shared.done;
+  }
+  const versionBefore = sessionSyncVersion;
+  const done = synchronizeSession(set, get, session);
+  if (!session?.user || sessionSyncVersion === versionBefore) {
+    // Signed out, or ignored while a sign-out finishes: nothing to share.
+    sharedSessionSync = null;
+    return done;
+  }
+  const started: SharedSessionSync = {
+    userId: session.user.id,
+    accessToken: session.access_token,
+    origin,
+    version: sessionSyncVersion,
+    settled: false,
+    done,
+  };
+  const settle = () => {
+    started.settled = true;
+  };
+  void done.then(settle, settle);
+  sharedSessionSync = started;
+  return done;
+}
+
+/**
+ * The status after a load of the host list failed. A list already on screen
+ * stays; otherwise the failure shows. Only one load of a session's list runs
+ * at a time: refreshHosts waits for a running registration and never fetches
+ * alongside it.
+ */
+function hostsStatusAfterFailure(current: HostListStatus): HostListStatus {
+  return current === 'loaded' ? 'loaded' : 'error';
+}
+
+/** The current session sync's registration record, if the current sync made one. */
+function currentBrowserRegistration(): BrowserRegistration | null {
+  return browserRegistration && browserRegistration.syncVersion === sessionSyncVersion
+    ? browserRegistration
+    : null;
+}
+
+/**
+ * Waits while the current session sync runs, and any sync that replaces it
+ * meanwhile. True when it waited: that sync brought the list, or reported
+ * why it could not.
+ */
+async function waitForRunningSessionSync(): Promise<boolean> {
+  let waited = false;
+  for (
+    let running = currentBrowserRegistration();
+    running?.running;
+    running = currentBrowserRegistration()
+  ) {
+    waited = true;
+    await running.done;
+  }
+  return waited;
+}
+
+/**
+ * A current sync that ends with the list still `loading` (it threw, or gave up
+ * on a path that set no status) shows the failure instead of loading forever.
+ */
+function settleHostListLoading(
+  set: SetState,
+  get: () => AppState,
+  syncVersion: number,
+  error: string,
+) {
+  if (syncVersion !== sessionSyncVersion || get().hostsStatus !== 'loading') return;
+  set({ hostsStatus: 'error', error: get().error ?? error });
 }
 
 async function currentSession(options: { forceRefresh?: boolean } = {}): Promise<Session> {
@@ -2181,8 +2483,15 @@ export function shouldEnterHostLinkFlow(route: Route, search: string): boolean {
   );
 }
 
+/**
+ * Puts the Mac a link code just added first. When the list read after the
+ * claim already has that Mac, its entry wins: the claim can answer before this
+ * browser's registration reached the account (the Mac then reads as untrusted,
+ * "Preparing") and before the Mac's relay connection is up (offline).
+ */
 export function mergeClaimedHost(hosts: AccountHost[], claimedHost: AccountHost): AccountHost[] {
-  return [claimedHost, ...hosts.filter((host) => host.deviceId !== claimedHost.deviceId)];
+  const listed = hosts.find((host) => host.deviceId === claimedHost.deviceId);
+  return [listed ?? claimedHost, ...hosts.filter((host) => host.deviceId !== claimedHost.deviceId)];
 }
 
 function currentURLHasLinkCode(): boolean {
