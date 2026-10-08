@@ -1,4 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
+import { ConvexHttpClient } from "convex/browser";
+import { makeFunctionReference, type FunctionReference } from "convex/server";
 import { cacheRecord, validCacheRecord, type CacheRecord } from './contentRetention';
 import {
   compactRelayAgentSnapshot,
@@ -13,6 +15,10 @@ export interface Env {
   UPGRADE_RATE_LIMITER: RateLimit;
   PUBLIC_APP_URL: string;
   ALLOWED_ORIGINS?: string;
+  ACCOUNT_PLANE_PROVIDER?: string;
+  ACCOUNT_AUTH_PROVIDER?: string;
+  AUTH_BACKEND?: string;
+  CONVEX_URL?: string;
   SUPABASE_URL?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
   VAPID_PUBLIC_KEY?: string;
@@ -200,6 +206,144 @@ interface PublicHostRecord {
   pairedAtUnixMs: number;
   lastSeenAtUnixMs?: number;
 }
+
+const convexAccountPlane = {
+  findDeviceByDeviceId: makeFunctionReference<"query", { deviceId: string }, DeviceRow | null>(
+    "accountPlane:findDeviceByDeviceId",
+  ),
+  findDeviceByUuid: makeFunctionReference<"query", { id: string }, DeviceRow | null>(
+    "accountPlane:findDeviceByUuid",
+  ),
+  findProfileByUserId: makeFunctionReference<"query", { userId: string }, ProfileRow | null>(
+    "accountPlane:findProfileByUserId",
+  ),
+  listHostDevicesForUser: makeFunctionReference<
+    "query",
+    { userId: string; limit?: number },
+    DeviceRow[]
+  >("accountPlane:listHostDevicesForUser"),
+  listPairingsForRequester: makeFunctionReference<
+    "query",
+    { ownerUserId: string; requesterDeviceUuid: string; limit?: number },
+    DevicePairingRow[]
+  >("accountPlane:listPairingsForRequester"),
+  findActivePairing: makeFunctionReference<
+    "query",
+    { ownerUserId: string; hostDeviceUuid: string; requesterDeviceUuid: string },
+    DevicePairingRow | null
+  >("accountPlane:findActivePairing"),
+  hasRevokedPairing: makeFunctionReference<
+    "query",
+    { ownerUserId: string; hostDeviceUuid: string; requesterDeviceUuid: string },
+    boolean
+  >("accountPlane:hasRevokedPairing"),
+  findPendingApproval: makeFunctionReference<
+    "query",
+    { hostDeviceUuid: string; requesterDeviceUuid: string },
+    DeviceApprovalRequestRow | null
+  >("accountPlane:findPendingApproval"),
+  findApprovalById: makeFunctionReference<"query", { requestId: string }, DeviceApprovalRequestRow | null>(
+    "accountPlane:findApprovalById",
+  ),
+  listPendingApprovalsByHost: makeFunctionReference<
+    "query",
+    { hostDeviceUuid: string; limit?: number },
+    DeviceApprovalRequestRow[]
+  >("accountPlane:listPendingApprovalsByHost"),
+  getUnconsumedHostLinkCode: makeFunctionReference<"query", { code: string }, HostLinkCodeRow | null>(
+    "accountPlane:getUnconsumedHostLinkCode",
+  ),
+  upsertUserDevice: makeFunctionReference<
+    "mutation",
+    {
+      userId: string;
+      deviceId: string;
+      publicKeyB64: string;
+      label: string;
+      kind: "host" | "phone" | "browser";
+      platform?: string;
+      appVersion?: string;
+      metadata?: Record<string, JsonValue>;
+    },
+    DeviceRow
+  >("accountPlane:upsertUserDevice"),
+  touchDeviceLastSeen: makeFunctionReference<"mutation", { deviceId: string }, null>(
+    "accountPlane:touchDeviceLastSeen",
+  ),
+  insertApprovalRequest: makeFunctionReference<
+    "mutation",
+    {
+      ownerUserId: string;
+      hostDeviceUuid: string;
+      requesterDeviceUuid: string;
+      requesterDeviceId: string;
+      requesterPublicKeyB64: string;
+      requesterLabel: string;
+    },
+    DeviceApprovalRequestRow
+  >("accountPlane:insertApprovalRequest"),
+  markApprovalStatus: makeFunctionReference<
+    "mutation",
+    { requestId: string; status: DeviceApprovalRequestRow["status"] },
+    null
+  >("accountPlane:markApprovalStatus"),
+  ensurePairing: makeFunctionReference<
+    "mutation",
+    {
+      ownerUserId: string;
+      hostDeviceUuid: string;
+      requesterDeviceUuid: string;
+      metadata?: Record<string, JsonValue>;
+    },
+    DevicePairingRow
+  >("accountPlane:ensurePairing"),
+  createHostLinkCode: makeFunctionReference<
+    "mutation",
+    {
+      code: string;
+      hostDeviceId: string;
+      hostPublicKeyB64: string;
+      hostLabel: string;
+      hostMetadata: Record<string, JsonValue>;
+      expiresAt: string;
+    },
+    null
+  >("accountPlane:createHostLinkCode"),
+  consumeHostLinkCode: makeFunctionReference<
+    "mutation",
+    { id: string; claimedUserId: string },
+    null
+  >("accountPlane:consumeHostLinkCode"),
+  deleteHostLinkCodesByHostDeviceId: makeFunctionReference<
+    "mutation",
+    { hostDeviceId: string; limit?: number },
+    number
+  >("accountPlane:deleteHostLinkCodesByHostDeviceId"),
+  deleteDeviceByUuid: makeFunctionReference<"mutation", { id: string }, boolean>(
+    "accountPlane:deleteDeviceByUuid",
+  ),
+  deleteRevokedPairings: makeFunctionReference<
+    "mutation",
+    { ownerUserId: string; hostDeviceUuid: string; requesterDeviceUuid: string },
+    number
+  >("accountPlane:deleteRevokedPairings"),
+  revokePairing: makeFunctionReference<
+    "mutation",
+    {
+      ownerUserId: string;
+      hostDeviceUuid: string;
+      requesterDeviceUuid: string;
+      metadata?: Record<string, JsonValue>;
+    },
+    null
+  >("accountPlane:revokePairing"),
+};
+
+const convexAuth = {
+  verifyBearerToken: makeFunctionReference<"query", { token: string }, SupabaseAuthUser | null>(
+    "auth:verifyBearerToken",
+  ),
+};
 
 const VERSION = "0.1.0";
 const NONCE_TTL_MS = 30_000;
@@ -495,6 +639,42 @@ async function supabaseRest<T>(env: Env, path: string, init: RequestInit = {}): 
   return JSON.parse(body) as T;
 }
 
+function useConvexAccountPlane(env: Env): boolean {
+  return (env.ACCOUNT_PLANE_PROVIDER ?? "").toLowerCase() === "convex";
+}
+
+function useConvexAuth(env: Env): boolean {
+  const provider = (env.ACCOUNT_AUTH_PROVIDER || env.AUTH_BACKEND || "").toLowerCase();
+  return provider === "convex" || provider === "better-auth" || provider === "convex-better-auth";
+}
+
+function convexClient(env: Env): ConvexHttpClient {
+  if (!env.CONVEX_URL) {
+    throw new Error("convex account plane is not configured");
+  }
+  return new ConvexHttpClient(env.CONVEX_URL, { logger: false });
+}
+
+async function convexQuery<
+  Args extends Record<string, unknown>,
+  ReturnType,
+>(env: Env, reference: FunctionReference<"query", "public", Args, ReturnType>, args: Args): Promise<ReturnType> {
+  const client = convexClient(env) as unknown as {
+    query<T>(reference: FunctionReference<"query">, args: Record<string, unknown>): Promise<T>;
+  };
+  return client.query<ReturnType>(reference, args);
+}
+
+async function convexMutation<
+  Args extends Record<string, unknown>,
+  ReturnType,
+>(env: Env, reference: FunctionReference<"mutation", "public", Args, ReturnType>, args: Args): Promise<ReturnType> {
+  const client = convexClient(env) as unknown as {
+    mutation<T>(reference: FunctionReference<"mutation">, args: Record<string, unknown>): Promise<T>;
+  };
+  return client.mutation<ReturnType>(reference, args);
+}
+
 async function resolveAuthenticatedUser(env: Env, request: Request): Promise<SupabaseAuthUser> {
   const header = request.headers.get("authorization") ?? "";
   const token = header.replace(/^Bearer\s+/i, "").trim();
@@ -505,6 +685,14 @@ async function resolveAuthenticatedUser(env: Env, request: Request): Promise<Sup
 }
 
 async function resolveUserFromAccessToken(env: Env, token: string): Promise<SupabaseAuthUser> {
+  if (useConvexAuth(env)) {
+    const user = await convexQuery(env, convexAuth.verifyBearerToken, { token });
+    if (!user) {
+      throw new Error("auth 401");
+    }
+    return user;
+  }
+
   const { url, serviceRoleKey } = requireSupabase(env);
   const response = await fetch(`${url}/auth/v1/user`, {
     headers: {
@@ -529,6 +717,9 @@ function encodeFilterValue(value: string): string {
 }
 
 async function findDeviceByDeviceId(env: Env, deviceId: string): Promise<DeviceRow | null> {
+  if (useConvexAccountPlane(env)) {
+    return convexQuery(env, convexAccountPlane.findDeviceByDeviceId, { deviceId });
+  }
   const rows = await supabaseRest<DeviceRow[]>(
     env,
     `/devices?device_id=eq.${encodeFilterValue(deviceId)}&select=*`,
@@ -537,11 +728,17 @@ async function findDeviceByDeviceId(env: Env, deviceId: string): Promise<DeviceR
 }
 
 async function findDeviceByUuid(env: Env, id: string): Promise<DeviceRow | null> {
+  if (useConvexAccountPlane(env)) {
+    return convexQuery(env, convexAccountPlane.findDeviceByUuid, { id });
+  }
   const rows = await supabaseRest<DeviceRow[]>(env, `/devices?id=eq.${encodeFilterValue(id)}&select=*`);
   return rows[0] ?? null;
 }
 
 async function findProfileByUserId(env: Env, userId: string): Promise<ProfileRow | null> {
+  if (useConvexAccountPlane(env)) {
+    return convexQuery(env, convexAccountPlane.findProfileByUserId, { userId });
+  }
   const rows = await supabaseRest<ProfileRow[]>(
     env,
     `/profiles?user_id=eq.${encodeFilterValue(userId)}&select=user_id,email,display_name,avatar_url`,
@@ -587,6 +784,18 @@ async function upsertUserDevice(
     throw new DeviceAuthorizationError("device registration is not authorized");
   }
 
+  if (useConvexAccountPlane(env)) {
+    try {
+      return await convexMutation(env, convexAccountPlane.upsertUserDevice, input);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("device registration is not authorized")) {
+        throw new DeviceAuthorizationError("device registration is not authorized");
+      }
+      throw error;
+    }
+  }
+
   // Conditional updates cannot resurrect a concurrent revocation or transfer
   // ownership. New identities use INSERT, never conflict-merging another row.
   const path = existing
@@ -610,6 +819,10 @@ async function upsertUserDevice(
 
 async function touchDeviceLastSeen(env: Env, deviceId: string): Promise<void> {
   try {
+    if (useConvexAccountPlane(env)) {
+      await convexMutation(env, convexAccountPlane.touchDeviceLastSeen, { deviceId });
+      return;
+    }
     await supabaseRest<DeviceRow[]>(
       env,
       `/devices?device_id=eq.${encodeFilterValue(deviceId)}`,
@@ -700,13 +913,18 @@ async function listHostsForUser(
   requesterDeviceId: string,
   requesterDevice?: DeviceRow,
 ): Promise<PublicHostRecord[]> {
-  const [hosts, requester] = await Promise.all([
-    supabaseRest<DeviceRow[]>(
-      env,
-      `/devices?user_id=eq.${encodeFilterValue(userId)}&kind=eq.host&revoked_at=is.null&order=created_at.desc&select=*`,
-    ),
-    requesterDevice ? Promise.resolve(requesterDevice) : findDeviceByDeviceId(env, requesterDeviceId),
-  ]);
+  const [hosts, requester] = useConvexAccountPlane(env)
+    ? await Promise.all([
+        convexQuery(env, convexAccountPlane.listHostDevicesForUser, { userId, limit: 500 }),
+        requesterDevice ? Promise.resolve(requesterDevice) : findDeviceByDeviceId(env, requesterDeviceId),
+      ])
+    : await Promise.all([
+        supabaseRest<DeviceRow[]>(
+          env,
+          `/devices?user_id=eq.${encodeFilterValue(userId)}&kind=eq.host&revoked_at=is.null&order=created_at.desc&select=*`,
+        ),
+        requesterDevice ? Promise.resolve(requesterDevice) : findDeviceByDeviceId(env, requesterDeviceId),
+      ]);
   const relayPresence = await relayPresenceForHosts(env, hosts.map((host) => host.device_id));
   const isHostOnline = (host: DeviceRow) => relayPresence.get(host.device_id)?.online === true;
   const hostLastSeen = (host: DeviceRow) => relayPresence.get(host.device_id)?.lastSeenAtUnixMs;
@@ -718,10 +936,16 @@ async function listHostsForUser(
   // Account-first access means the signed-in device can open linked hosts immediately.
   // Keep this listing path read-only and bounded; creating missing pairings here made
   // /account/hosts scale with host count and could exceed Workers subrequest limits.
-  const pairings = await supabaseRest<DevicePairingRow[]>(
-    env,
-    `/device_pairings?owner_user_id=eq.${encodeFilterValue(userId)}&phone_device_uuid=eq.${encodeFilterValue(requester.id)}&select=host_device_uuid,paired_at,revoked_at`,
-  );
+  const pairings = useConvexAccountPlane(env)
+    ? await convexQuery(env, convexAccountPlane.listPairingsForRequester, {
+        ownerUserId: userId,
+        requesterDeviceUuid: requester.id,
+        limit: 500,
+      })
+    : await supabaseRest<DevicePairingRow[]>(
+        env,
+        `/device_pairings?owner_user_id=eq.${encodeFilterValue(userId)}&phone_device_uuid=eq.${encodeFilterValue(requester.id)}&select=host_device_uuid,paired_at,revoked_at`,
+      );
   const pairedAtByHost = new Map<string, string>();
   const revokedHosts = new Set<string>();
   for (const pairing of pairings) {
@@ -746,6 +970,13 @@ async function findActivePairing(
   hostDeviceUuid: string,
   requesterDeviceUuid: string,
 ): Promise<DevicePairingRow | null> {
+  if (useConvexAccountPlane(env)) {
+    return convexQuery(env, convexAccountPlane.findActivePairing, {
+      ownerUserId,
+      hostDeviceUuid,
+      requesterDeviceUuid,
+    });
+  }
   const rows = await supabaseRest<DevicePairingRow[]>(
     env,
     `/device_pairings?owner_user_id=eq.${encodeFilterValue(ownerUserId)}&host_device_uuid=eq.${encodeFilterValue(hostDeviceUuid)}&phone_device_uuid=eq.${encodeFilterValue(requesterDeviceUuid)}&revoked_at=is.null&select=*`,
@@ -758,6 +989,13 @@ async function hasRevokedPairing(
   host: DeviceRow,
   requester: DeviceRow,
 ): Promise<boolean> {
+  if (useConvexAccountPlane(env)) {
+    return convexQuery(env, convexAccountPlane.hasRevokedPairing, {
+      ownerUserId: host.user_id,
+      hostDeviceUuid: host.id,
+      requesterDeviceUuid: requester.id,
+    });
+  }
   const rows = await supabaseRest<DevicePairingRow[]>(
     env,
     `/device_pairings?owner_user_id=eq.${encodeFilterValue(host.user_id)}&host_device_uuid=eq.${encodeFilterValue(host.id)}&phone_device_uuid=eq.${encodeFilterValue(requester.id)}&revoked_at=not.is.null&select=id&limit=1`,
@@ -770,6 +1008,12 @@ async function findPendingApproval(
   hostDeviceUuid: string,
   requesterDeviceUuid: string,
 ): Promise<DeviceApprovalRequestRow | null> {
+  if (useConvexAccountPlane(env)) {
+    return convexQuery(env, convexAccountPlane.findPendingApproval, {
+      hostDeviceUuid,
+      requesterDeviceUuid,
+    });
+  }
   const rows = await supabaseRest<DeviceApprovalRequestRow[]>(
     env,
     `/device_approval_requests?host_device_uuid=eq.${encodeFilterValue(hostDeviceUuid)}&requester_device_uuid=eq.${encodeFilterValue(requesterDeviceUuid)}&status=eq.pending&select=*`,
@@ -778,6 +1022,9 @@ async function findPendingApproval(
 }
 
 async function findApprovalById(env: Env, requestId: string): Promise<DeviceApprovalRequestRow | null> {
+  if (useConvexAccountPlane(env)) {
+    return convexQuery(env, convexAccountPlane.findApprovalById, { requestId });
+  }
   const rows = await supabaseRest<DeviceApprovalRequestRow[]>(
     env,
     `/device_approval_requests?id=eq.${encodeFilterValue(requestId)}&select=*`,
@@ -796,6 +1043,9 @@ async function insertApprovalRequest(
     requesterLabel: string;
   },
 ): Promise<DeviceApprovalRequestRow> {
+  if (useConvexAccountPlane(env)) {
+    return convexMutation(env, convexAccountPlane.insertApprovalRequest, input);
+  }
   const rows = await supabaseRest<DeviceApprovalRequestRow[]>(env, `/device_approval_requests`, {
     method: "POST",
     headers: { Prefer: "return=representation" },
@@ -816,6 +1066,10 @@ async function markApprovalStatus(
   requestId: string,
   status: DeviceApprovalRequestRow["status"],
 ): Promise<void> {
+  if (useConvexAccountPlane(env)) {
+    await convexMutation(env, convexAccountPlane.markApprovalStatus, { requestId, status });
+    return;
+  }
   await supabaseRest<DeviceApprovalRequestRow[]>(
     env,
     `/device_approval_requests?id=eq.${encodeFilterValue(requestId)}`,
@@ -839,6 +1093,17 @@ async function ensurePairing(
     metadata?: Record<string, JsonValue>;
   },
 ): Promise<DevicePairingRow> {
+  if (useConvexAccountPlane(env)) {
+    try {
+      return await convexMutation(env, convexAccountPlane.ensurePairing, input);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("Access to this Mac was revoked.")) {
+        throw new DeviceAuthorizationError("Access to this Mac was revoked.");
+      }
+      throw error;
+    }
+  }
   const denied = await supabaseRest<DevicePairingRow[]>(env,
     `/device_pairings?owner_user_id=eq.${encodeFilterValue(input.ownerUserId)}&host_device_uuid=eq.${encodeFilterValue(input.hostDeviceUuid)}&phone_device_uuid=eq.${encodeFilterValue(input.requesterDeviceUuid)}&revoked_at=not.is.null&select=id&limit=1`);
   if (denied.length) throw new DeviceAuthorizationError("Access to this Mac was revoked.");
@@ -1237,11 +1502,12 @@ export class SignalingHub extends DurableObject<Env> {
       throw new Error("link code is required");
     }
 
-    const rows = await supabaseRest<HostLinkCodeRow[]>(
-      this.env,
-      `/host_link_codes?code=eq.${encodeFilterValue(code)}&consumed_at=is.null&select=*`,
-    );
-    const linkCode = rows[0];
+    const linkCode = useConvexAccountPlane(this.env)
+      ? await convexQuery(this.env, convexAccountPlane.getUnconsumedHostLinkCode, { code })
+      : (await supabaseRest<HostLinkCodeRow[]>(
+          this.env,
+          `/host_link_codes?code=eq.${encodeFilterValue(code)}&consumed_at=is.null&select=*`,
+        ))[0];
     if (!linkCode) {
       throw new Error("link code not found");
     }
@@ -1290,18 +1556,25 @@ export class SignalingHub extends DurableObject<Env> {
       }
     }
 
-    await supabaseRest<HostLinkCodeRow[]>(
-      this.env,
-      `/host_link_codes?id=eq.${encodeFilterValue(linkCode.id)}`,
-      {
-        method: "PATCH",
-        headers: { Prefer: "return=minimal" },
-        body: JSON.stringify({
-          consumed_at: isoNow(),
-          claimed_user_id: user.id,
-        }),
-      },
-    );
+    if (useConvexAccountPlane(this.env)) {
+      await convexMutation(this.env, convexAccountPlane.consumeHostLinkCode, {
+        id: linkCode.id,
+        claimedUserId: user.id,
+      });
+    } else {
+      await supabaseRest<HostLinkCodeRow[]>(
+        this.env,
+        `/host_link_codes?id=eq.${encodeFilterValue(linkCode.id)}`,
+        {
+          method: "PATCH",
+          headers: { Prefer: "return=minimal" },
+          body: JSON.stringify({
+            consumed_at: isoNow(),
+            claimed_user_id: user.id,
+          }),
+        },
+      );
+    }
 
     const hostSocket = this.peers.get(linkCode.host_device_id);
     if (hostSocket) {
@@ -1560,23 +1833,35 @@ export class SignalingHub extends DurableObject<Env> {
     let lastError: unknown = null;
     for (let attempt = 0; attempt < 6; attempt++) {
       code = generateLinkCode();
+      const expiresAt = futureIso(HOST_LINK_CODE_TTL_MS);
       try {
-        await supabaseRest<HostLinkCodeRow[]>(this.env, `/host_link_codes`, {
-          method: "POST",
-          headers: { Prefer: "return=minimal" },
-          body: JSON.stringify({
+        if (useConvexAccountPlane(this.env)) {
+          await convexMutation(this.env, convexAccountPlane.createHostLinkCode, {
             code,
-            host_device_id: deviceId,
-            host_public_key_b64: publicKeyB64,
-            host_label: hostLabel,
-            host_metadata: hostMetadata,
-            expires_at: futureIso(HOST_LINK_CODE_TTL_MS),
-          }),
-        });
+            hostDeviceId: deviceId,
+            hostPublicKeyB64: publicKeyB64,
+            hostLabel,
+            hostMetadata,
+            expiresAt,
+          });
+        } else {
+          await supabaseRest<HostLinkCodeRow[]>(this.env, `/host_link_codes`, {
+            method: "POST",
+            headers: { Prefer: "return=minimal" },
+            body: JSON.stringify({
+              code,
+              host_device_id: deviceId,
+              host_public_key_b64: publicKeyB64,
+              host_label: hostLabel,
+              host_metadata: hostMetadata,
+              expires_at: expiresAt,
+            }),
+          });
+        }
         sendJsonToOpenSocket(ws, {
           type: "link_code_created",
           code,
-          expires_at: futureIso(HOST_LINK_CODE_TTL_MS),
+          expires_at: expiresAt,
         });
         return;
       } catch (error) {
@@ -1648,23 +1933,31 @@ export class SignalingHub extends DurableObject<Env> {
         return;
       }
 
-      await supabaseRest<HostLinkCodeRow[]>(
-        this.env,
-        `/host_link_codes?host_device_id=eq.${encodeFilterValue(deviceId)}`,
-        {
-          method: "DELETE",
-          headers: { Prefer: "return=minimal" },
-        },
-      );
+      if (useConvexAccountPlane(this.env)) {
+        await convexMutation(this.env, convexAccountPlane.deleteHostLinkCodesByHostDeviceId, {
+          hostDeviceId: deviceId,
+          limit: 500,
+        });
+        await convexMutation(this.env, convexAccountPlane.deleteDeviceByUuid, { id: host.id });
+      } else {
+        await supabaseRest<HostLinkCodeRow[]>(
+          this.env,
+          `/host_link_codes?host_device_id=eq.${encodeFilterValue(deviceId)}`,
+          {
+            method: "DELETE",
+            headers: { Prefer: "return=minimal" },
+          },
+        );
 
-      await supabaseRest<DeviceRow[]>(
-        this.env,
-        `/devices?id=eq.${encodeFilterValue(host.id)}`,
-        {
-          method: "DELETE",
-          headers: { Prefer: "return=minimal" },
-        },
-      );
+        await supabaseRest<DeviceRow[]>(
+          this.env,
+          `/devices?id=eq.${encodeFilterValue(host.id)}`,
+          {
+            method: "DELETE",
+            headers: { Prefer: "return=minimal" },
+          },
+        );
+      }
       sendJsonToOpenSocket(ws, { type: "host_unlinked", ok: true, linked: false });
       sendJsonToOpenSocket(ws, { type: "host_identity", linked: false });
     } catch (error) {
@@ -1825,13 +2118,25 @@ export class SignalingHub extends DurableObject<Env> {
    * with its own tombstone.
    */
   private async liftPairingDenial(host: DeviceRow, requester: DeviceRow): Promise<boolean> {
-    const scope = `owner_user_id=eq.${encodeFilterValue(host.user_id)}&host_device_uuid=eq.${encodeFilterValue(host.id)}&phone_device_uuid=eq.${encodeFilterValue(requester.id)}&revoked_at=not.is.null`;
-    const revoked = await supabaseRest<DevicePairingRow[]>(this.env, `/device_pairings?${scope}&select=id`);
-    if (revoked.length === 0) return false;
-    await supabaseRest<DevicePairingRow[]>(this.env, `/device_pairings?${scope}`, {
-      method: "DELETE",
-      headers: { Prefer: "return=minimal" },
-    });
+    let revokedCount = 0;
+    if (useConvexAccountPlane(this.env)) {
+      revokedCount = await convexMutation(this.env, convexAccountPlane.deleteRevokedPairings, {
+        ownerUserId: host.user_id,
+        hostDeviceUuid: host.id,
+        requesterDeviceUuid: requester.id,
+      });
+    } else {
+      const scope = `owner_user_id=eq.${encodeFilterValue(host.user_id)}&host_device_uuid=eq.${encodeFilterValue(host.id)}&phone_device_uuid=eq.${encodeFilterValue(requester.id)}&revoked_at=not.is.null`;
+      const revoked = await supabaseRest<DevicePairingRow[]>(this.env, `/device_pairings?${scope}&select=id`);
+      revokedCount = revoked.length;
+      if (revokedCount > 0) {
+        await supabaseRest<DevicePairingRow[]>(this.env, `/device_pairings?${scope}`, {
+          method: "DELETE",
+          headers: { Prefer: "return=minimal" },
+        });
+      }
+    }
+    if (revokedCount === 0) return false;
     const key = accountAuthorizationCacheKey(requester.device_id, host.device_id);
     this.revokedPairs.delete(key);
     this.accountAuthorizationCache.delete(key);
@@ -1912,10 +2217,15 @@ export class SignalingHub extends DurableObject<Env> {
     const host = await findDeviceByDeviceId(this.env, hostDeviceId);
     if (!host) return;
 
-    const approvals = await supabaseRest<DeviceApprovalRequestRow[]>(
-      this.env,
-      `/device_approval_requests?host_device_uuid=eq.${encodeFilterValue(host.id)}&status=eq.pending&order=created_at.asc&select=*`,
-    );
+    const approvals = useConvexAccountPlane(this.env)
+      ? await convexQuery(this.env, convexAccountPlane.listPendingApprovalsByHost, {
+          hostDeviceUuid: host.id,
+          limit: 500,
+        })
+      : await supabaseRest<DeviceApprovalRequestRow[]>(
+          this.env,
+          `/device_approval_requests?host_device_uuid=eq.${encodeFilterValue(host.id)}&status=eq.pending&order=created_at.asc&select=*`,
+        );
 
     for (const approval of approvals) {
       if (Date.now() - Date.parse(approval.created_at) > APPROVAL_REQUEST_TTL_MS) {
@@ -2689,21 +2999,30 @@ export class RelayHub extends DurableObject<Env> {
       // Durable denial is established before the account acknowledgement. A
       // database outage leaves access denied and the host can retry confirmation.
       await this.ctx.storage.put(`revoked-device:${deviceId}`, true);
-      if (!(await hasRevokedPairing(this.env, host, requester))) {
-        await supabaseRest<DevicePairingRow[]>(this.env, "/device_pairings", {
-          method: "POST", headers: { Prefer: "return=representation" },
-          body: JSON.stringify({
-            owner_user_id: host.user_id, host_device_uuid: host.id,
-            phone_device_uuid: requester.id, revoked_at: isoNow(),
-            metadata: { revoked_via: "host" },
-          }),
+      if (useConvexAccountPlane(this.env)) {
+        await convexMutation(this.env, convexAccountPlane.revokePairing, {
+          ownerUserId: host.user_id,
+          hostDeviceUuid: host.id,
+          requesterDeviceUuid: requester.id,
+          metadata: { revoked_via: "host" },
         });
+      } else {
+        if (!(await hasRevokedPairing(this.env, host, requester))) {
+          await supabaseRest<DevicePairingRow[]>(this.env, "/device_pairings", {
+            method: "POST", headers: { Prefer: "return=representation" },
+            body: JSON.stringify({
+              owner_user_id: host.user_id, host_device_uuid: host.id,
+              phone_device_uuid: requester.id, revoked_at: isoNow(),
+              metadata: { revoked_via: "host" },
+            }),
+          });
+        }
+        await supabaseRest<DevicePairingRow[]>(this.env,
+          `/device_pairings?host_device_uuid=eq.${encodeFilterValue(host.id)}&phone_device_uuid=eq.${encodeFilterValue(requester.id)}&revoked_at=is.null`, {
+            method: "PATCH", headers: { Prefer: "return=minimal" },
+            body: JSON.stringify({ revoked_at: isoNow() }),
+          });
       }
-      await supabaseRest<DevicePairingRow[]>(this.env,
-        `/device_pairings?host_device_uuid=eq.${encodeFilterValue(host.id)}&phone_device_uuid=eq.${encodeFilterValue(requester.id)}&revoked_at=is.null`, {
-          method: "PATCH", headers: { Prefer: "return=minimal" },
-          body: JSON.stringify({ revoked_at: isoNow() }),
-        });
       return json({ ok: true, device_id: deviceId });
     } catch {
       return json({ ok: false, error: "Could not confirm revocation. Retry on the Mac." }, { status: 503 });

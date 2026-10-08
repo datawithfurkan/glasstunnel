@@ -1,0 +1,409 @@
+import { createClient, type GenericCtx } from "@convex-dev/better-auth";
+import { convex } from "@convex-dev/better-auth/plugins";
+import { betterAuth, type BetterAuthOptions } from "better-auth/minimal";
+import { bearer } from "better-auth/plugins";
+import bcrypt from "bcryptjs";
+import { v } from "convex/values";
+import { components } from "./_generated/api";
+import type { DataModel } from "./_generated/dataModel";
+import { mutation, query } from "./_generated/server";
+import authConfig from "./auth.config";
+
+declare const process: { env: Record<string, string | undefined> };
+
+const nullableString = v.union(v.string(), v.null());
+const authUserImport = v.object({
+  legacyUserId: v.string(),
+  email: v.string(),
+  name: v.string(),
+  emailVerified: v.boolean(),
+  image: nullableString,
+  createdAt: v.number(),
+  updatedAt: v.number(),
+});
+const authAccountImport = v.object({
+  legacyUserId: v.string(),
+  providerId: v.string(),
+  accountId: v.string(),
+  password: nullableString,
+  createdAt: v.number(),
+  updatedAt: v.number(),
+});
+const authUserResult = v.object({
+  id: v.string(),
+  email: nullableString,
+  user_metadata: v.any(),
+});
+
+type AdapterDoc = Record<string, any> & { _id: string };
+type AdapterCtx = GenericCtx<DataModel> & {
+  runQuery: (reference: any, args: any) => Promise<any>;
+  runMutation?: (reference: any, args: any) => Promise<any>;
+};
+
+export const authComponent = createClient<DataModel>(components.betterAuth);
+
+function env(name: string) {
+  const value = process.env[name];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function authBaseUrl() {
+  return env("BETTER_AUTH_URL") || env("PUBLIC_APP_URL") || env("CONVEX_SITE_URL");
+}
+
+function trustedOrigins() {
+  return [
+    env("BETTER_AUTH_URL"),
+    env("PUBLIC_APP_URL"),
+    env("VITE_PUBLIC_APP_URL"),
+    env("CONVEX_SITE_URL"),
+  ].filter((value): value is string => Boolean(value));
+}
+
+function socialProviders() {
+  return {
+    ...(env("GOOGLE_CLIENT_ID") && env("GOOGLE_CLIENT_SECRET")
+      ? {
+          google: {
+            clientId: env("GOOGLE_CLIENT_ID")!,
+            clientSecret: env("GOOGLE_CLIENT_SECRET")!,
+          },
+        }
+      : {}),
+    ...(env("GITHUB_CLIENT_ID") && env("GITHUB_CLIENT_SECRET")
+      ? {
+          github: {
+            clientId: env("GITHUB_CLIENT_ID")!,
+            clientSecret: env("GITHUB_CLIENT_SECRET")!,
+          },
+        }
+      : {}),
+  };
+}
+
+export const createAuthOptions = (ctx: AdapterCtx) =>
+  ({
+    baseURL: authBaseUrl(),
+    trustedOrigins: trustedOrigins(),
+    database: authComponent.adapter(ctx),
+    emailAndPassword: {
+      enabled: true,
+      requireEmailVerification: false,
+      password: {
+        hash: async (password: string) => bcrypt.hash(password, 10),
+        verify: async ({ password, hash }: { password: string; hash: string }) =>
+          bcrypt.compare(password, hash),
+      },
+      sendResetPassword: async () => {
+        throw new Error("Password reset email delivery is not configured yet.");
+      },
+    },
+    socialProviders: socialProviders(),
+    plugins: [
+      bearer(),
+      convex({
+        authConfig,
+        jwt: {
+          definePayload: ({ user }) => ({
+            legacyUserId: typeof (user as any).userId === "string" ? (user as any).userId : user.id,
+            email: user.email,
+          }),
+        },
+      }),
+    ],
+  }) satisfies BetterAuthOptions;
+
+export const createAuth = (ctx: AdapterCtx) => betterAuth(createAuthOptions(ctx));
+
+async function findUserByLegacyId(ctx: AdapterCtx, legacyUserId: string): Promise<AdapterDoc | null> {
+  const importedUser = (await ctx.runQuery(components.betterAuth.adapter.findOne, {
+    model: "user",
+    where: [{ field: "userId", value: legacyUserId }],
+  })) as AdapterDoc | null;
+
+  if (importedUser) {
+    return importedUser;
+  }
+
+  if (!looksLikeConvexId(legacyUserId)) {
+    return null;
+  }
+
+  return (await ctx.runQuery(components.betterAuth.adapter.findOne, {
+    model: "user",
+    where: [{ field: "_id", value: legacyUserId }],
+  })) as AdapterDoc | null;
+}
+
+function looksLikeConvexId(value: string) {
+  return /^[a-z0-9]+$/.test(value) && value.length >= 20;
+}
+
+async function findUserByEmail(ctx: AdapterCtx, email: string): Promise<AdapterDoc | null> {
+  return (await ctx.runQuery(components.betterAuth.adapter.findOne, {
+    model: "user",
+    where: [{ field: "email", value: email.trim().toLowerCase() }],
+  })) as AdapterDoc | null;
+}
+
+async function listAccountsForAuthUser(ctx: AdapterCtx, authUserId: string): Promise<AdapterDoc[]> {
+  const result = (await ctx.runQuery(components.betterAuth.adapter.findMany, {
+    model: "account",
+    where: [{ field: "userId", value: authUserId }],
+    paginationOpts: { cursor: null, numItems: 100 },
+  })) as { page?: AdapterDoc[] } | AdapterDoc[];
+
+  return Array.isArray(result) ? result : result.page ?? [];
+}
+
+async function upsertAccount(ctx: AdapterCtx, account: typeof authAccountImport.type, authUserId: string) {
+  if (!ctx.runMutation) {
+    throw new Error("Cannot upsert auth accounts outside a mutation.");
+  }
+
+  const existing = (await ctx.runQuery(components.betterAuth.adapter.findOne, {
+    model: "account",
+    where: [
+      { field: "accountId", value: account.accountId },
+      { field: "providerId", value: account.providerId },
+    ],
+  })) as AdapterDoc | null;
+
+  const data = {
+    accountId: account.accountId,
+    providerId: account.providerId,
+    userId: authUserId,
+    password: account.password,
+    createdAt: account.createdAt,
+    updatedAt: account.updatedAt,
+  };
+
+  if (existing) {
+    await ctx.runMutation(components.betterAuth.adapter.updateOne, {
+      input: {
+        model: "account",
+        where: [{ field: "_id", value: existing._id }],
+        update: data,
+      },
+    });
+    return;
+  }
+
+  await ctx.runMutation(components.betterAuth.adapter.create, {
+    input: {
+      model: "account",
+      data,
+    },
+  });
+}
+
+function serializeAuthUser(user: AdapterDoc): typeof authUserResult.type {
+  const legacyUserId = typeof user.userId === "string" && user.userId ? user.userId : user._id;
+  const name = typeof user.name === "string" && user.name ? user.name : "Glasstunnel user";
+  const image = typeof user.image === "string" && user.image ? user.image : null;
+
+  return {
+    id: legacyUserId,
+    email: typeof user.email === "string" ? user.email : null,
+    user_metadata: {
+      name,
+      full_name: name,
+      avatar_url: image,
+      provider: "convex",
+      auth_user_id: user._id,
+    },
+  };
+}
+
+export const importUserBatch = mutation({
+  args: {
+    users: v.array(authUserImport),
+    accounts: v.array(authAccountImport),
+  },
+  returns: v.object({
+    usersCreated: v.number(),
+    usersUpdated: v.number(),
+    accountsUpserted: v.number(),
+  }),
+  handler: async (ctx, args) => {
+    const accountsByLegacyUserId = new Map<string, Array<typeof authAccountImport.type>>();
+    for (const account of args.accounts) {
+      const list = accountsByLegacyUserId.get(account.legacyUserId) ?? [];
+      list.push(account);
+      accountsByLegacyUserId.set(account.legacyUserId, list);
+    }
+
+    let usersCreated = 0;
+    let usersUpdated = 0;
+    let accountsUpserted = 0;
+    for (const user of args.users) {
+      const existing = await findUserByLegacyId(ctx, user.legacyUserId);
+      const data = {
+        name: user.name,
+        email: user.email.trim().toLowerCase(),
+        emailVerified: user.emailVerified,
+        image: user.image,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+        userId: user.legacyUserId,
+      };
+
+      let authUser = existing;
+      if (existing) {
+        await ctx.runMutation(components.betterAuth.adapter.updateOne, {
+          input: {
+            model: "user",
+            where: [{ field: "_id", value: existing._id }],
+            update: data,
+          },
+        });
+        usersUpdated += 1;
+        authUser = await findUserByLegacyId(ctx, user.legacyUserId);
+      } else {
+        authUser = (await ctx.runMutation(components.betterAuth.adapter.create, {
+          input: {
+            model: "user",
+            data,
+          },
+        })) as AdapterDoc;
+        usersCreated += 1;
+      }
+
+      if (!authUser?._id) {
+        throw new Error(`Could not import auth user ${user.legacyUserId}.`);
+      }
+
+      for (const account of accountsByLegacyUserId.get(user.legacyUserId) ?? []) {
+        await upsertAccount(ctx, account, authUser._id);
+        accountsUpserted += 1;
+      }
+    }
+
+    return { usersCreated, usersUpdated, accountsUpserted };
+  },
+});
+
+export const lookupEmailAuthState = query({
+  args: { email: v.string() },
+  returns: v.object({
+    email: v.string(),
+    state: v.union(
+      v.literal("sign_up"),
+      v.literal("sign_in"),
+      v.literal("pending_verification"),
+      v.literal("social_only"),
+    ),
+    providers: v.optional(v.array(v.string())),
+  }),
+  handler: async (ctx, args) => {
+    const email = args.email.trim().toLowerCase();
+    const user = await findUserByEmail(ctx, email);
+    if (!user) {
+      return { email, state: "sign_up" as const };
+    }
+
+    const accounts = await listAccountsForAuthUser(ctx, user._id);
+    const providers = [...new Set(accounts.map((account) => String(account.providerId || "")).filter(Boolean))]
+      .map((provider) => (provider === "credential" ? "email" : provider))
+      .sort();
+
+    if (!user.emailVerified) {
+      return { email, state: "pending_verification" as const, providers };
+    }
+
+    if (providers.length > 0 && !providers.includes("email")) {
+      return { email, state: "social_only" as const, providers };
+    }
+
+    return { email, state: "sign_in" as const, providers };
+  },
+});
+
+export const verifyBearerToken = query({
+  args: { token: v.string() },
+  returns: v.union(authUserResult, v.null()),
+  handler: async (ctx, args) => {
+    const token = args.token.trim();
+    if (!token) {
+      return null;
+    }
+
+    const auth = createAuth(ctx);
+    const session = await auth.api.getSession({
+      headers: new Headers({ authorization: `Bearer ${token}` }),
+    });
+    if (!session?.user) {
+      return null;
+    }
+
+    return serializeAuthUser({
+      _id: session.user.id,
+      userId: (session.user as any).userId,
+      email: session.user.email,
+      name: session.user.name,
+      image: session.user.image,
+    });
+  },
+});
+
+export const deleteUserByLegacyId = mutation({
+  args: { legacyUserId: v.string() },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const user = await findUserByLegacyId(ctx, args.legacyUserId);
+    if (!user) {
+      return false;
+    }
+
+    await ctx.runMutation(components.betterAuth.adapter.deleteMany, {
+      input: {
+        model: "session",
+        where: [{ field: "userId", value: user._id }],
+      },
+      paginationOpts: { cursor: null, numItems: 100 },
+    });
+    await ctx.runMutation(components.betterAuth.adapter.deleteMany, {
+      input: {
+        model: "account",
+        where: [{ field: "userId", value: user._id }],
+      },
+      paginationOpts: { cursor: null, numItems: 100 },
+    });
+    await ctx.runMutation(components.betterAuth.adapter.deleteOne, {
+      input: {
+        model: "user",
+        where: [{ field: "_id", value: user._id }],
+      },
+    });
+
+    return true;
+  },
+});
+
+export const importStats = query({
+  args: {},
+  returns: v.object({
+    users: v.number(),
+    accounts: v.number(),
+    providers: v.array(v.string()),
+  }),
+  handler: async (ctx) => {
+    const users = (await ctx.runQuery(components.betterAuth.adapter.findMany, {
+      model: "user",
+      paginationOpts: { cursor: null, numItems: 200 },
+    })) as { page?: AdapterDoc[] };
+    const accounts = (await ctx.runQuery(components.betterAuth.adapter.findMany, {
+      model: "account",
+      paginationOpts: { cursor: null, numItems: 200 },
+    })) as { page?: AdapterDoc[] };
+
+    return {
+      users: users.page?.length ?? 0,
+      accounts: accounts.page?.length ?? 0,
+      providers: [
+        ...new Set((accounts.page ?? []).map((account) => String(account.providerId || "")).filter(Boolean)),
+      ].sort(),
+    };
+  },
+});

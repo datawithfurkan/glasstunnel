@@ -339,6 +339,83 @@ describe('Account registration authorization', () => {
     expect(row).toMatchObject({ user_id: 'user-1', public_key_b64: phone.publicKeyB64, revoked_at: null, label: 'Renamed browser' });
   });
 
+  it('routes registration account records through Convex when configured', async () => {
+    const phone = await createDeviceIdentity();
+    const workerEnv = env as unknown as {
+      ACCOUNT_PLANE_PROVIDER?: string;
+      ACCOUNT_AUTH_PROVIDER?: string;
+      CONVEX_URL?: string;
+    };
+    const previousProvider = workerEnv.ACCOUNT_PLANE_PROVIDER;
+    const previousAuthProvider = workerEnv.ACCOUNT_AUTH_PROVIDER;
+    const previousConvexUrl = workerEnv.CONVEX_URL;
+    const calls: string[] = [];
+    const at = new Date().toISOString();
+    const convexDeviceRow = (label: string) => ({
+      id: `convex-${phone.deviceId}`,
+      user_id: 'user-1',
+      device_id: phone.deviceId,
+      public_key_b64: phone.publicKeyB64,
+      kind: 'phone',
+      label,
+      platform: null,
+      app_version: null,
+      last_seen_at: at,
+      revoked_at: null,
+      metadata: {},
+      created_at: at,
+      updated_at: at,
+    });
+
+    try {
+      workerEnv.ACCOUNT_PLANE_PROVIDER = 'convex';
+      workerEnv.ACCOUNT_AUTH_PROVIDER = 'convex';
+      workerEnv.CONVEX_URL = 'https://convex.test';
+      vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+        if (url.origin === 'https://convex.test' && (url.pathname === '/api/query' || url.pathname === '/api/mutation')) {
+          const body = JSON.parse(String(init?.body)) as { path?: string; args?: Record<string, unknown>[] };
+          calls.push(`${url.pathname}:${body.path ?? ''}`);
+          const args = body.args?.[0] ?? {};
+          switch (body.path) {
+            case 'auth:verifyBearerToken':
+              expect(args.token).toBe('test-token');
+              return Response.json({ status: 'success', value: { id: 'user-1', email: 'user@example.test', user_metadata: { provider: 'convex' } } });
+            case 'accountPlane:findDeviceByDeviceId':
+              return Response.json({ status: 'success', value: null });
+            case 'accountPlane:upsertUserDevice':
+              return Response.json({ status: 'success', value: convexDeviceRow(String(args.label ?? 'This device')) });
+            case 'accountPlane:listHostDevicesForUser':
+            case 'accountPlane:listPairingsForRequester':
+              return Response.json({ status: 'success', value: [] });
+            default:
+              return Response.json({ status: 'error', errorMessage: `unexpected function ${body.path}` }, { status: 560 });
+          }
+        }
+        throw new Error(`unexpected outbound fetch: ${init?.method ?? 'GET'} ${url.href}`);
+      });
+
+      const stub = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`convex-register-${phone.deviceId}`));
+      const response = await stub.fetch('https://hub.test/account/device/register', {
+        method: 'POST', headers: { authorization: 'Bearer test-token', 'content-type': 'application/json' },
+        body: JSON.stringify({ deviceId: phone.deviceId, publicKeyB64: phone.publicKeyB64, kind: 'phone', label: 'Convex browser' }),
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ ok: true, device_id: phone.deviceId, hosts: [] });
+      expect(calls).toEqual([
+        '/api/query:auth:verifyBearerToken',
+        '/api/query:accountPlane:findDeviceByDeviceId',
+        '/api/mutation:accountPlane:upsertUserDevice',
+        '/api/query:accountPlane:listHostDevicesForUser',
+        '/api/query:accountPlane:listPairingsForRequester',
+      ]);
+    } finally {
+      workerEnv.ACCOUNT_PLANE_PROVIDER = previousProvider;
+      workerEnv.ACCOUNT_AUTH_PROVIDER = previousAuthProvider;
+      workerEnv.CONVEX_URL = previousConvexUrl;
+    }
+  });
+
   it('cannot clear a revocation that arrives between lookup and registration write', async () => {
     const phone = await createDeviceIdentity();
     const row = deviceRow(phone, 'phone');

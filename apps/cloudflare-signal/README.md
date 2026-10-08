@@ -33,6 +33,33 @@ token rotation from bypassing the guard. Requests without bearer tokens use the
 connecting address for both account buckets. Upgrade keys are scoped by endpoint
 and connecting address. Raw bearer tokens are never placed in rate-limit keys.
 
+## Account Plane
+
+Supabase remains the default account-plane provider. To canary the migrated
+Convex account/control-plane rows, set:
+
+```bash
+ACCOUNT_PLANE_PROVIDER=convex
+CONVEX_URL=https://<deployment>.convex.cloud
+```
+
+With `ACCOUNT_PLANE_PROVIDER=convex`, the Worker reads and writes profiles,
+devices, device pairings, host link codes, push subscriptions, and approval
+requests through Convex functions.
+
+Bearer-token verification remains Supabase-backed by default. To canary the
+migrated Convex + Better Auth sessions, set:
+
+```bash
+ACCOUNT_AUTH_PROVIDER=convex
+# or AUTH_BACKEND=convex
+CONVEX_URL=https://<deployment>.convex.cloud
+```
+
+When both `ACCOUNT_PLANE_PROVIDER=convex` and `ACCOUNT_AUTH_PROVIDER=convex`
+are set, account endpoints and relay client auth no longer require
+`SUPABASE_URL` or `SUPABASE_SERVICE_ROLE_KEY`.
+
 ## Validation
 
 ```bash

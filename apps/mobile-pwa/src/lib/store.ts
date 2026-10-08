@@ -1,7 +1,6 @@
 import { create } from 'zustand';
 import { del as idbDel, get as idbGet, set as idbSet, keys as idbKeys } from 'idb-keyval';
 import { OfflineCache, type CacheTiming } from './offlineCache';
-import type { Session, User } from '@supabase/supabase-js';
 import {
   base64FromBytes,
   bytesFromBase64,
@@ -42,7 +41,7 @@ import { PeerConnection } from '../transport/PeerConnection';
 import type { FileAttachmentInput } from '../transport/PeerConnection';
 import type { RelayConnection, RelayScreenFrame } from '../transport/RelayConnection';
 import { PeerFlowAbortRegistry } from '../transport/PeerFlowAbortRegistry';
-import { hasSupabaseAuth, supabase } from './supabase';
+import { hasSupabaseAuth, supabase, type Session, type User } from './supabase';
 import {
   fallbackRemoteAppsFromLayout,
   isScreenSharingOn,

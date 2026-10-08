@@ -6,7 +6,10 @@
   "account_id": "6e40b5b780f64c89c38d041b4b676922",
   "vars": {
     "PUBLIC_APP_URL": "https://app.glasstunnel.io",
-    "ALLOWED_ORIGINS": "https://app.glasstunnel.io"
+    "ALLOWED_ORIGINS": "https://app.glasstunnel.io",
+    "ACCOUNT_PLANE_PROVIDER": "convex",
+    "ACCOUNT_AUTH_PROVIDER": "convex",
+    "CONVEX_URL": "https://adorable-perch-596.convex.cloud"
   },
   "ratelimits": [
     {

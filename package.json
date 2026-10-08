@@ -65,6 +65,9 @@
     "worker:build": "pnpm --filter @glasstunnel/cloudflare-signal build",
     "worker:test": "pnpm --filter @glasstunnel/cloudflare-signal test",
     "worker:typecheck": "pnpm --filter @glasstunnel/cloudflare-signal typecheck",
+    "test:convex-auth-transform": "node --test scripts/convex-migration/transformSupabaseAuthExport.test.mjs",
+    "test:convex-account-plane-import-prep": "node --test scripts/convex-migration/prepareAccountPlaneImport.test.mjs",
+    "test:convex-account-plane-transform": "node --test scripts/convex-migration/transformAccountPlaneExport.test.mjs",
     "agent:validate": "bash scripts/agent-validate.sh",
     "agent:validate:run": "bash scripts/agent-validate.sh --run",
     "qa:goal-loop-log": "bash scripts/check-release-goal-loop-log.sh",
@@ -218,5 +221,11 @@
       "minimatch@3.1.5": "patches/minimatch@3.1.5.patch",
       "minimatch@5.1.9": "patches/minimatch@5.1.9.patch"
     }
+  },
+  "dependencies": {
+    "@convex-dev/better-auth": "0.12.5",
+    "bcryptjs": "^3.0.3",
+    "better-auth": "~1.6.15",
+    "convex": "^1.46.0"
   }
 }
