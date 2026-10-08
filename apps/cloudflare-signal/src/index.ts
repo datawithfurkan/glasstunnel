@@ -168,6 +168,9 @@ function pairingReauthorizedAt(pairing: DevicePairingRow | null | undefined): st
 
 class DeviceAuthorizationError extends Error {}
 
+const CLAIMED_LINK_CODE_UNAVAILABLE_MESSAGE =
+  "Linking didn't finish, and this code can't be used again. Show a new code on your Mac and enter it.";
+
 interface HostLinkCodeRow {
   id: string;
   code: string;
@@ -234,6 +237,14 @@ class AccountPlaneUnavailable extends Error {
   constructor(readonly code: string) {
     super("account service is temporarily unavailable");
     this.name = "AccountPlaneUnavailable";
+  }
+}
+
+/** The account service failed after a link code was claimed, so that code is spent. */
+class ClaimedLinkCodeUnavailable extends Error {
+  constructor() {
+    super("link code claimed but linking did not finish");
+    this.name = "ClaimedLinkCodeUnavailable";
   }
 }
 
@@ -1250,6 +1261,9 @@ export class SignalingHub extends DurableObject<Env> {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "unknown error";
+      if (error instanceof ClaimedLinkCodeUnavailable) {
+        return json({ ok: false, error: CLAIMED_LINK_CODE_UNAVAILABLE_MESSAGE }, { status: 503 });
+      }
       if (error instanceof AccountPlaneUnavailable) {
         return json({ ok: false, error: "Account service is temporarily unavailable. Try again." }, { status: 503 });
       }
@@ -1346,7 +1360,21 @@ export class SignalingHub extends DurableObject<Env> {
     // only one gets past this line and links the Mac or lifts a removal. The
     // claim is final; if a later step fails, the Mac has to show a new code.
     const linkCode = await claimHostLinkCode(this.env, code, user.id);
+    try {
+      return await this.linkClaimedHost(user, profile, linkCode, requesterDeviceId);
+    } catch (error) {
+      // The code is spent: "try again" with the same code can only fail.
+      if (error instanceof AccountPlaneUnavailable) throw new ClaimedLinkCodeUnavailable();
+      throw error;
+    }
+  }
 
+  private async linkClaimedHost(
+    user: AccountUser,
+    profile: ProfileRow | null,
+    linkCode: HostLinkCodeRow,
+    requesterDeviceId: string,
+  ): Promise<Response> {
     const existingDevice = await findDeviceByDeviceId(this.env, linkCode.host_device_id);
     if (existingDevice && existingDevice.user_id !== user.id) {
       throw new Error("host already belongs to another account");

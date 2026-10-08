@@ -152,8 +152,12 @@ silently (the HTTP reply and its timing do not change) and a short warning
 without the address is logged, for example
 `auth email password_reset skipped: hourly limit reached`:
 
-- Per account and email kind: one email per 2 minutes, three per rolling
-  24 hours.
+- Per account and email kind: three per rolling 24 hours. Reset emails also
+  wait 2 minutes between sends; "password changed" notices do not, so a second
+  reset made right after the first still reports itself.
+- A completed reset deletes every other reset link the account was sent
+  (`auth:revokePasswordResetLinks`, run from `onPasswordReset`), so an older
+  email cannot change the password again.
 - Across all accounts, per email kind:
   - reset emails: 15 per rolling hour and 40 per rolling 24 hours;
   - "password changed" notices: 20 per rolling 24 hours.

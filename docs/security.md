@@ -64,8 +64,10 @@ would; it does not prevent it.
 
 Reset emails are throttled per account (one per 2 minutes, three per 24 hours)
 and across the deployment (15 per hour and 40 per 24 hours). "Password
-changed" notices keep the per-account limit and have their own deployment cap
-(20 per 24 hours); a reset past that cap still completes but sends no notice.
+changed" notices are limited to three per account per 24 hours, without the
+2-minute wait, and have their own deployment cap (20 per 24 hours); a reset
+past that cap still completes but sends no notice. A completed reset
+invalidates every other reset link the account was sent.
 The deployment-wide caps are shared, so anyone who knows real account
 addresses can use them up without creating an account and block reset emails
 for everyone until they free up. Email verification at sign-up would not

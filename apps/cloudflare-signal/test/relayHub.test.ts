@@ -1535,6 +1535,28 @@ describe('SignalingHub link-code claims', () => {
     expect(pairings).toEqual([expect.objectContaining({ owner_user_id: 'user-1', phone_device_uuid: `phone-${firstPhone.deviceId}` })]);
   });
 
+  it('tells the person to show a new code when linking fails after the code was claimed', async () => {
+    const host = await createDeviceIdentity();
+    const phone = await createDeviceIdentity();
+    const linkCodes = [linkCodeRow(host)];
+    stubAccountPlane({ devices: [deviceRow(phone, 'phone')], linkCodes });
+    const stubbed = globalThis.fetch;
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      if (gatewayFunction(input, init) === 'findDeviceByDeviceId') throw new Error('account service unreachable');
+      return stubbed(input, init);
+    });
+    const stub = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`claim-spent-${host.deviceId}`));
+
+    const response = await claim(stub, 'test-token', { code: 'RACE23', requesterDeviceId: phone.deviceId });
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: "Linking didn't finish, and this code can't be used again. Show a new code on your Mac and enter it.",
+    });
+    expect(linkCodes).toEqual([expect.objectContaining({ claimed_user_id: 'user-1', consumed_at: expect.any(String) })]);
+  });
+
   it.each([
     ['expired', [{ expires_at: new Date(Date.now() - 1_000).toISOString() }], 400, 'link code expired'],
     ['already used', [{ consumed_at: new Date().toISOString(), claimed_user_id: 'user-9' }], 404, 'link code not found'],

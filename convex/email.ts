@@ -32,7 +32,12 @@ const MINUTE_MS = 60 * SECOND_MS;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 
-/** Per account and kind: one email per 2 minutes, three per rolling 24 hours. */
+/**
+ * Per account and kind: three per rolling 24 hours. Reset emails also wait 2
+ * minutes between sends; "password changed" notices do not, because each one
+ * reports a completed reset and must not be dropped by a second reset made
+ * moments later.
+ */
 const PER_ACCOUNT_COOLDOWN_MS = 2 * MINUTE_MS;
 const PER_ACCOUNT_DAILY_LIMIT = 3;
 /**
@@ -303,7 +308,7 @@ export const queueAuthEmail = internalMutation({
     const newest = recentForAccount[0];
     if (
       recentForAccount.length >= PER_ACCOUNT_DAILY_LIMIT ||
-      (newest && newest.createdAt > now - PER_ACCOUNT_COOLDOWN_MS)
+      (args.kind === "password_reset" && newest && newest.createdAt > now - PER_ACCOUNT_COOLDOWN_MS)
     ) {
       console.warn(`auth email ${args.kind} skipped: per-account limit reached`);
       return "throttled";

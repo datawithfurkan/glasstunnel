@@ -87,8 +87,9 @@ the account journey in `pnpm lab:e2e` claims the host's only link code for the
 lab user.
 
 During a reset the app keeps the Mac's link code in `localStorage`
-(`gt.pending-link-code`) for 10 minutes, the link code's own lifetime, bound to
-the address the reset was requested for. It goes back into an address bar
+(`gt.pending-link-code`) for 10 minutes, the link code's own lifetime. "Forgot
+password?" stores it with the email typed at that moment, and sending the
+reset request rebinds it to the address the reset goes to. It goes back into an address bar
 only for a sign-in that tab makes itself (email and password, sign-up, or a
 Google/GitHub return to that tab) to an account with exactly that email. A tab
 that only follows another tab's sign-in, a reload, or a session refresh never

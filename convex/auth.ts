@@ -112,6 +112,24 @@ async function queueAuthEmail(
 }
 
 /**
+ * After a reset, every other reset link the account was sent stops working:
+ * an older email must not be able to change the password again. Better Auth
+ * consumes the link that was used before this runs. Never throws, like the
+ * email hooks.
+ */
+async function revokeOtherResetLinks(ctx: AdapterCtx, userId: string) {
+  try {
+    if (!isRunMutationCtx(ctx)) {
+      console.warn("reset links not revoked: no mutation context");
+      return;
+    }
+    await ctx.runMutation(internal.auth.revokePasswordResetLinks, { userId });
+  } catch (error) {
+    console.warn(`reset links not revoked: ${error instanceof Error ? error.name : "unknown error"}`);
+  }
+}
+
+/**
  * Password reset is on only when email can go out (Resend, or the local lab
  * outbox). Without `sendResetPassword`, Better Auth answers every reset
  * request with 400 RESET_PASSWORD_DISABLED, the same for every address.
@@ -132,6 +150,7 @@ function passwordResetEmailOptions(ctx: AdapterCtx) {
       });
     },
     onPasswordReset: async ({ user }: { user: { id: string; email: string } }) => {
+      await revokeOtherResetLinks(ctx, user.id);
       await queueAuthEmail(ctx, {
         kind: "password_changed",
         userId: user.id,
@@ -504,6 +523,25 @@ export const verifyBearerToken = query({
       }),
       ...(Number.isFinite(expiresAt) ? { session_expires_at: expiresAt } : {}),
     };
+  },
+});
+
+/** Deletes an account's outstanding password reset tokens (Better Auth verification rows). */
+export const revokePasswordResetLinks = mutation({
+  args: { userId: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await ctx.runMutation(components.betterAuth.adapter.deleteMany, {
+      input: {
+        model: "verification",
+        where: [
+          { field: "value", value: args.userId },
+          { field: "identifier", operator: "starts_with", value: "reset-password:" },
+        ],
+      },
+      paginationOpts: { cursor: null, numItems: 100 },
+    });
+    return null;
   },
 });
 
