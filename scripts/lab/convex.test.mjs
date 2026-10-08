@@ -11,6 +11,8 @@ import {
   convexServiceDefinition,
   deleteLabUser,
   labConvexSecrets,
+  parseLabEmails,
+  readLabEmails,
   upsertLabUser,
   waitForConvexFunctions,
   writeConvexEnvFile,
@@ -90,11 +92,14 @@ test('configureLabConvex sets the backend environment through the pinned local C
       ['env', 'set', 'BETTER_AUTH_URL'],
       ['env', 'set', 'PUBLIC_APP_URL'],
       ['env', 'set', 'WORKER_CONVEX_SECRET'],
+      ['env', 'set', 'AUTH_EMAIL_OUTBOX'],
     ],
   );
   assert.deepEqual(calls[1].args.slice(3), ['http://127.0.0.1:3211', '--env-file', config.files.convexEnv]);
   assert.deepEqual(calls[2].args.slice(3), ['http://127.0.0.1:5173', '--env-file', config.files.convexEnv]);
   assert.equal(calls[3].args[3], secrets.workerSecret);
+  // Account emails stay in the local outbox; nothing is ever sent from the lab.
+  assert.deepEqual(calls[4].args.slice(3), ['lab', '--env-file', config.files.convexEnv]);
   for (const call of calls) {
     assert.equal(call.command, join(config.root, 'node_modules/.bin/convex'));
     assert.equal(call.env.CONVEX_AGENT_MODE, 'anonymous');
@@ -175,6 +180,78 @@ test('deleteLabUser removes the account through the local admin CLI', async (t) 
   ]);
 });
 
+test('readLabEmails reads one lab address from the local outbox through the admin CLI', async (t) => {
+  const config = fixtureConfig(t);
+  const calls = [];
+  const emails = [
+    {
+      kind: 'password_changed',
+      to: 'reset@glasstunnel.test',
+      subject: 'Your password was changed',
+      text: 'Your password was changed.',
+      url: null,
+      createdAt: 1_790_000_002_000,
+    },
+    {
+      kind: 'password_reset',
+      to: 'reset@glasstunnel.test',
+      subject: 'Reset your password',
+      text: 'Open the link to reset your password.',
+      url: 'http://127.0.0.1:5173/?resetPassword=1&token=abc',
+      createdAt: 1_790_000_001_000,
+    },
+  ];
+  const result = await readLabEmails(config, 'reset@glasstunnel.test', {
+    runCommand: async (command, args, options) => {
+      calls.push({ command, args, env: options.env, cwd: options.cwd });
+      // The CLI prints indented JSON when stdout is not a terminal.
+      return { stdout: `${JSON.stringify(emails, null, 2)}\n`, stderr: '', exitCode: 0 };
+    },
+  });
+
+  assert.deepEqual(result, emails);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command, join(config.root, 'node_modules/.bin/convex'));
+  assert.equal(calls[0].cwd, config.root);
+  assert.deepEqual(calls[0].args, [
+    'run',
+    'email:labOutbox',
+    '{"to":"reset@glasstunnel.test"}',
+    '--env-file',
+    config.files.convexEnv,
+  ]);
+  assert.equal(calls[0].env.CONVEX_AGENT_MODE, 'anonymous');
+  assert.equal(calls[0].env.CONVEX_DEPLOYMENT, 'anonymous:anonymous-agent');
+});
+
+test('readLabEmails refuses real identities before running the CLI', async (t) => {
+  const config = fixtureConfig(t);
+  const runCommand = async () => assert.fail('must not run the CLI');
+  await assert.rejects(readLabEmails(config, 'person@example.com', { runCommand }), /non-lab identity/);
+  await assert.rejects(readLabEmails(config, 'lab@glasstunnel.test.example.com', { runCommand }), /non-lab identity/);
+});
+
+test('parseLabEmails accepts empty output and a leading notice, and never echoes the outbox', () => {
+  assert.deepEqual(parseLabEmails(''), []);
+  assert.deepEqual(parseLabEmails(undefined), []);
+  assert.deepEqual(parseLabEmails('[]\n'), []);
+  assert.deepEqual(parseLabEmails('Some CLI notice\n[\n  {\n    "kind": "password_reset"\n  }\n]\n'), [
+    { kind: 'password_reset' },
+  ]);
+
+  const secretLink = 'http://127.0.0.1:5173/?resetPassword=1&token=secret-token-value';
+  for (const output of [`{"url":"${secretLink}"}`, `not json ${secretLink}`, `[\n{"url":"${secretLink}"`]) {
+    assert.throws(
+      () => parseLabEmails(output),
+      (error) => {
+        assert.match(error.message, /local email outbox/);
+        assert.doesNotMatch(error.message, /secret-token-value/);
+        return true;
+      },
+    );
+  }
+});
+
 test('bootstrapConvex starts the backend, waits for functions, configures it, then creates the lab account', async (t) => {
   const config = fixtureConfig(t);
   const steps = [];
@@ -210,6 +287,7 @@ test('bootstrapConvex starts the backend, waits for functions, configures it, th
     'env set BETTER_AUTH_URL',
     'env set PUBLIC_APP_URL',
     'env set WORKER_CONVEX_SECRET',
+    'env set AUTH_EMAIL_OUTBOX',
     'fetch /api/auth/sign-up/email',
   ]);
 });

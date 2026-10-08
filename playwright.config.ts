@@ -70,6 +70,23 @@ export default defineConfig({
       },
     },
     {
+      // Runs after the account journey in the default Chromium lab.
+      // Forgot password -> lab email outbox -> new password -> sign in.
+      // Needs the local backend only (no Mac host); see scripts/lab/e2e.mjs.
+      name: 'local-password-reset-mobile-chromium',
+      grep: /@password-reset/,
+      grepInvert: /@password-reset-mac/,
+      use: { ...devices['Pixel 7'] },
+    },
+    {
+      // The same reset started from a Mac (?linkCode=): the next sign-in must
+      // link that Mac. Needs the Swift host's fresh link code, so it runs alone:
+      // node scripts/lab/e2e.mjs password-reset-mac.
+      name: 'local-password-reset-mac-mobile-chromium',
+      grep: /@password-reset-mac/,
+      use: { ...devices['Pixel 7'] },
+    },
+    {
       name: 'local-codex-cli-mobile-chromium',
       grep: /@codex-cli-account/,
       use: {

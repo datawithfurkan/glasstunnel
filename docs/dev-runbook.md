@@ -50,22 +50,76 @@ pnpm lab:down
 Always use `lab:down` for cleanup. It validates its process wrapper and run ID
 before stopping anything, and refuses to replace or kill unknown listeners.
 
+## Account Email In The Lab
+
+The lab never sends email. `pnpm lab:up` sets `AUTH_EMAIL_OUTBOX=lab` on the
+local backend, which the backend honours only while its auth URL is loopback.
+Password reset links and "password changed" notices are then stored in the
+local `labEmailOutbox` table instead of going to Resend. Read the newest
+messages for a lab address with:
+
+```bash
+CONVEX_AGENT_MODE=anonymous CONVEX_DEPLOYMENT=anonymous:anonymous-agent \
+  node_modules/.bin/convex run email:labOutbox \
+  '{"to":"lab@glasstunnel.test"}' --env-file .cache/glasstunnel-lab/convex.env
+```
+
+Reset links point at the local PWA
+(`http://127.0.0.1:5173/?resetPassword=1&token=…`). They work once and expire
+after an hour, so treat them like passwords and do not paste them into logs or
+issues. Tests use `readLabEmails` in `scripts/lab/convex.mjs`, which runs the
+same query and accepts only `@glasstunnel.test` addresses.
+
+`pnpm lab:e2e:password-reset` (also part of `pnpm lab:e2e`) creates the
+disposable `reset-journey@glasstunnel.test` account, walks forgot password,
+the emailed link, the new password, and the one-time-link and sign-out checks
+in mobile Chromium, then deletes the account. It needs no Mac host. Each
+account can receive one email per kind every 2 minutes, so rerun after a
+`pnpm lab:reset -- --yes` (the E2E wrapper resets for you).
+
+`pnpm lab:e2e:password-reset:mac` runs the same reset started from a Mac. It
+starts the Swift host, opens email sign-in with the host's link code, resets
+the password from the emailed link in a second tab of the same browser, and
+checks that "Back to sign in" leaves the link code out of both address bars
+and offers the reset address, and that signing in there with that address
+links the Mac with exactly one claim across both tabs. It runs alone, because
+the account journey in `pnpm lab:e2e` claims the host's only link code for the
+lab user.
+
+During a reset the app keeps the Mac's link code in `localStorage`
+(`gt.pending-link-code`) for 10 minutes, the link code's own lifetime, bound to
+the address the reset was requested for. It goes back into an address bar
+only for a sign-in that tab makes itself (email and password, sign-up, or a
+Google/GitHub return to that tab) to an account with exactly that email. A tab
+that only follows another tab's sign-in, a reload, or a session refresh never
+gets it, and neither does a sign-in to another account. Sign-out and a claim
+remove it. The other-account and cross-tab cases are unit tests
+(`apps/mobile-pwa/src/lib/pendingLinkCode.test.ts`,
+`apps/mobile-pwa/src/lib/storePasswordReset.test.ts`), not lab journeys.
+
+Production delivers the same emails with Resend only when the Convex
+deployment has both `RESEND_API_KEY` and `AUTH_EMAIL_FROM`. Without them, reset
+requests answer `RESET_PASSWORD_DISABLED` and the app points people to Google
+or GitHub sign-in.
+
 ## Commands
 
-| Command                   | Purpose                                                          |
-| ------------------------- | ---------------------------------------------------------------- |
-| `pnpm lab:doctor`         | Inspect prerequisites and stale state without changing anything  |
-| `pnpm lab:up`             | Start the local Convex backend, Worker, and PWA                  |
-| `pnpm lab:up:host`        | Start the core lab plus an isolated Swift host                   |
-| `pnpm lab:status`         | Show owned services, health, URLs, and host metadata             |
-| `pnpm lab:reset -- --yes` | Stop owned services and reset disposable local data              |
-| `pnpm lab:down`           | Stop only services owned by the current lab manifest             |
-| `pnpm lab:mac`            | Launch the signed development Mac app against a running lab      |
-| `pnpm lab:test`           | Run lab unit contracts plus Worker type and runtime tests        |
-| `pnpm lab:e2e`            | Run fixtures and the real mobile account/Terminal journey        |
-| `pnpm lab:e2e:safari`     | Run responsive fixture coverage in Playwright WebKit             |
+| Command                       | Purpose                                                                    |
+| ----------------------------- | -------------------------------------------------------------------------- |
+| `pnpm lab:doctor`             | Inspect prerequisites and stale state without changing anything            |
+| `pnpm lab:up`                 | Start the local Convex backend, Worker, and PWA                            |
+| `pnpm lab:up:host`            | Start the core lab plus an isolated Swift host                             |
+| `pnpm lab:status`             | Show owned services, health, URLs, and host metadata                       |
+| `pnpm lab:reset -- --yes`     | Stop owned services and reset disposable local data                        |
+| `pnpm lab:down`               | Stop only services owned by the current lab manifest                       |
+| `pnpm lab:mac`                | Launch the signed development Mac app against a running lab                |
+| `pnpm lab:test`               | Run lab unit contracts plus Worker type and runtime tests                  |
+| `pnpm lab:e2e`                | Run fixtures, the real mobile account/Terminal journey, and password reset |
+| `pnpm lab:e2e:password-reset` | Run only the password reset journey (local backend, no Mac host)           |
+| `pnpm lab:e2e:safari`         | Run responsive fixture coverage in Playwright WebKit                       |
 
-The same commands are available as `make lab-*` aliases. `make dev-stack` is
+The same commands, except the `lab:e2e:password-reset` ones, are available as
+`make lab-*` aliases. `make dev-stack` is
 an alias for the account-first `pnpm lab:up`. The Go server on port `18080` is
 an explicit legacy compatibility path, not the default stack.
 

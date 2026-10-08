@@ -20,6 +20,7 @@ not to content sent separately through the hosted WebSocket relay.
 | WebRTC DataChannel | SCTP over DTLS between peers | Transport metadata, not channel plaintext |
 | Hosted content relay | HTTPS/WSS transport encryption to Cloudflare | The JSON content it receives, forwards, and caches |
 | Hosted account API | HTTPS and Better Auth session tokens (Convex) | Account/device records and API request content |
+| Account email (Resend) | HTTPS to Resend; onward delivery uses whatever TLS the recipient's mail server offers | Recipient address, subject, and full body, including a live single-use password reset link valid for 1 hour. Resend keeps sent messages in its logs and dashboard; restrict Resend account and dashboard access like the Convex dashboard. The recipient's mail provider sees the same message |
 | Local test lab | Loopback HTTP/WS | Disposable local test data; not suitable as an internet-facing deployment |
 
 A trusted infrastructure operator or compromised hosted control plane can access
@@ -43,6 +44,48 @@ browser cannot call them directly. Google and GitHub sign-in return a one-time
 token that the PWA exchanges only when it matches a nonce stored when that
 sign-in started, which blocks login CSRF. Sessions last 60 days. Do not describe
 the product as OTP-only or claim its client never handles a password.
+
+Forgotten passwords are reset by email, and only when the Convex deployment has
+an email provider configured (Resend: `RESEND_API_KEY` and `AUTH_EMAIL_FROM`).
+Without one, every reset request is refused the same way and the app points
+people to Google or GitHub sign-in. A reset request gets the same answer
+whether or not the address has an account, and in about the same time: the
+auth server holds every successful reply until 250 ms after the request reached
+it, which hides the extra work for a real account while that work stays under
+250 ms (on the local backend it answered in under 90 ms at p95). This removes
+one way to learn whether an address has an account, not every way: sign-up
+answers `USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL` for an address that has an
+account, and the app says so. Treat account existence as discoverable. The hold
+also has a cost: each held reply occupies a slot in the Convex deployment's
+shared action and HTTP-action concurrency pool, so a flood of reset requests,
+which need no sign-in, can delay account requests and session checks for
+everyone. A 250 ms hold makes that flood more expensive than a longer hold
+would; it does not prevent it.
+
+Reset emails are throttled per account (one per 2 minutes, three per 24 hours)
+and across the deployment (15 per hour and 40 per 24 hours). "Password
+changed" notices keep the per-account limit and have their own deployment cap
+(20 per 24 hours); a reset past that cap still completes but sends no notice.
+The deployment-wide caps are shared, so anyone who knows real account
+addresses can use them up without creating an account and block reset emails
+for everyone until they free up. Email verification at sign-up would not
+prevent that. The planned fix is a per-client limit keyed on a client IP the
+service can trust, for example by routing reset requests through the
+Cloudflare Worker, which sees `CF-Connecting-IP` and has Rate Limiting
+bindings; it is not built yet.
+
+The link opens the app with a single-use token that expires after 1 hour. The
+app removes the token from the address bar as soon as it reads it and keeps it
+only in memory and that tab's session storage. The token is in the link's query
+string, so the first page request still carries it to the app host. Setting a
+new password ends every session of the account and emails a "password changed"
+notice unless that cap is reached. Glasstunnel's own email records keep no
+address or link, but the link is not held by Glasstunnel alone. Inside Convex,
+Better Auth's verification record and the scheduled delivery job's arguments
+hold the token, so Convex dashboard access can read a live link. Resend
+receives and logs the address and the whole message, including the live link,
+and the recipient's mail provider receives it too (see the table above). See
+`convex/README.md` for throttles and retention.
 
 The Mac and browser generate Ed25519 device keys. WebSocket clients prove possession
 by signing a short-lived server nonce. Browser relay authentication additionally
@@ -72,6 +115,9 @@ Account limits use an endpoint/token-digest bucket and a higher-capacity connect
 address bucket; tokens are not stored in rate-limit keys. Rejections return HTTP
 429 with Retry-After. These are request/upgrade controls, not a claim of complete
 per-message abuse protection or a guarantee about every deployment's quotas.
+Sign-in, sign-up and password reset requests go from the PWA straight to the
+Convex auth server (`/api/auth/*`), not through the Worker, so these limits do
+not cover them; the reset email throttles above are enforced in Convex.
 
 ## Content And Credential Storage
 
@@ -112,6 +158,13 @@ per-message abuse protection or a guarantee about every deployment's quotas.
   hosted Worker. The legacy Go implementation is unchanged by this policy.
 - **TURN:** handles encrypted WebRTC packets and operational connection metadata.
   Its logging and credential retention depend on the deployment configuration.
+- **Account email (Resend):** Resend stores each sent password reset email and
+  "password changed" notice (address, subject, body, and for a reset the link)
+  in its logs under Resend's own retention. A reset link stops working once it
+  is used or after 1 hour, but anyone who reads it from those logs within that
+  hour can reset the password. Convex keeps a send record per email for 7 days
+  without the address or link; the token itself sits in Better Auth's
+  verification record and the delivery job's arguments.
 
 A fresh Mac publication can contain older source messages: this is a replica
 lifetime, not deletion 24 hours after a message was written. Original chats,
@@ -185,7 +238,10 @@ an explicit revocation. There is no supported sub-second guarantee.
 Removal is reversible only through the Mac's owner: a new link code generated on
 that Mac and entered on the phone lifts the account denial, clears the relay and
 signaling denials, and reports a re-authorization time that the Mac compares with
-its own removal before it lifts its tombstone. Nothing else restores a removed
+its own removal before it lifts its tombstone. A link code works once. The Worker
+claims it in one Convex transaction before it links the Mac or pairs the browser,
+so when two claims of the same code race, from one account or two, only one
+succeeds; a claim that fails after that point still uses up the code. Nothing else restores a removed
 phone; it must otherwise use a new browser identity, which appears as a new
 device to approve. Revocation cannot cancel
 a command already executing in a coding app, retract received content, or invalidate

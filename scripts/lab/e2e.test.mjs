@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -9,6 +9,7 @@ import {
   cleanupPtyProcessRecords,
   newManagedTerminalSessions,
   newPtyProcessRecords,
+  PASSWORD_RESET_EMAIL,
   parseTerminalScreenSessions,
   projectsForMode,
   runE2E,
@@ -24,6 +25,281 @@ function fixtureConfig(t) {
   t.after(() => rmSync(root, { recursive: true, force: true }));
   return ensureRuntimeDirectories(labConfig(root));
 }
+
+const quietCleanup = {
+  listTerminalSessions: async () => [],
+  cleanupTerminalSessions: async () => {},
+  ...noPtyProcesses,
+  settle: async () => {},
+};
+
+// Unit tests never reach a real lab backend, even when one is running locally.
+const offlineFetch = async (url) => assert.fail(`unexpected network request to ${url}`);
+
+function signUpFetch(requests, userId) {
+  return async (url, init) => {
+    requests.push({ path: new URL(url).pathname, body: JSON.parse(init.body) });
+    return new Response(JSON.stringify({ token: 'reset-token', user: { id: userId } }), {
+      status: 200,
+      headers: { 'content-type': 'application/json', 'set-auth-token': 'reset-token' },
+    });
+  };
+}
+
+test('projectsForMode runs the password reset journey alone or in the default Chromium lab', () => {
+  assert.deepEqual(projectsForMode('password-reset'), ['local-password-reset-mobile-chromium']);
+  assert.ok(projectsForMode('chromium').includes('local-password-reset-mobile-chromium'));
+  assert.ok(projectsForMode('chromium').includes('local-account-mobile-chromium'));
+  assert.ok(projectsForMode('all').includes('local-password-reset-mobile-chromium'));
+  assert.ok(!projectsForMode('webkit').includes('local-password-reset-mobile-chromium'));
+});
+
+test('projectsForMode keeps the Mac-start password reset journey out of shared runs', () => {
+  assert.deepEqual(projectsForMode('password-reset-mac'), ['local-password-reset-mac-mobile-chromium']);
+  for (const mode of ['chromium', 'all', 'password-reset', 'webkit']) {
+    assert.ok(!projectsForMode(mode).includes('local-password-reset-mac-mobile-chromium'), mode);
+  }
+});
+
+test('runE2E gives the Mac-start password reset journey the reset account and a fresh host link code', async (t) => {
+  const config = fixtureConfig(t);
+  const calls = [];
+  const requests = [];
+  let startOptions = null;
+
+  await runE2E({
+    config,
+    projects: ['local-password-reset-mac-mobile-chromium'],
+    reset: async () => calls.push('reset'),
+    start: async (options) => {
+      startOptions = options;
+      calls.push('start');
+      return { host: { linkCode: 'ABC234', label: 'Local test host' } };
+    },
+    execute: async (command, args, options) => {
+      calls.push({ command, args, env: options.env });
+      return { stdout: '', stderr: '', exitCode: 0 };
+    },
+    stop: async () => calls.push('stop'),
+    fetchImpl: signUpFetch(requests, 'reset-user'),
+    newPassword: () => 'Lab-Reset-generated-password',
+    ...quietCleanup,
+  });
+
+  assert.equal(startOptions.host, true);
+  assert.deepEqual(
+    requests.map((request) => request.body.email),
+    ['reset-journey@glasstunnel.test'],
+  );
+  const [resetStep, startStep, playwright, cleanup, stopStep] = calls;
+  assert.equal(resetStep, 'reset');
+  assert.equal(startStep, 'start');
+  assert.equal(stopStep, 'stop');
+  assert.deepEqual(playwright.args, [
+    'exec',
+    'playwright',
+    'test',
+    '--project=local-password-reset-mac-mobile-chromium',
+  ]);
+  assert.equal(playwright.env.GT_LAB_RESET_EMAIL, 'reset-journey@glasstunnel.test');
+  assert.equal(playwright.env.GT_LAB_RESET_NEW_PASSWORD, 'Lab-Reset-generated-password');
+  assert.equal(playwright.env.GT_LAB_PASSWORD, 'Glasstunnel-Lab-Only-2026');
+  assert.equal(playwright.env.GT_LAB_LINK_CODE, 'ABC234');
+  assert.equal(playwright.env.GT_LAB_HOST_LABEL, 'Local test host');
+  assert.equal(playwright.env.GT_LAB_ROOT, config.root);
+  assert.deepEqual(cleanup.args.slice(0, 3), [
+    'run',
+    'auth:deleteUserByLegacyId',
+    '{"legacyUserId":"reset-user"}',
+  ]);
+});
+
+test('runE2E refuses to share the host link code between the Mac-start reset and other projects', async (t) => {
+  const config = fixtureConfig(t);
+  let touched = false;
+  const untouched = async () => {
+    touched = true;
+  };
+
+  for (const other of ['local-account-mobile-chromium', 'local-password-reset-mobile-chromium']) {
+    await assert.rejects(
+      runE2E({
+        config,
+        projects: [other, 'local-password-reset-mac-mobile-chromium'],
+        reset: untouched,
+        start: untouched,
+        execute: untouched,
+        stop: untouched,
+        fetchImpl: offlineFetch,
+        ...quietCleanup,
+      }),
+      /local-password-reset-mac-mobile-chromium runs alone/,
+    );
+  }
+  assert.equal(touched, false);
+});
+
+test('runE2E creates the password reset account, passes it to Playwright, and deletes it without a Mac host', async (t) => {
+  const config = fixtureConfig(t);
+  const calls = [];
+  const requests = [];
+  let startOptions = null;
+
+  await runE2E({
+    config,
+    projects: ['local-password-reset-mobile-chromium'],
+    reset: async () => calls.push('reset'),
+    start: async (options) => {
+      startOptions = options;
+      calls.push('start');
+      return { host: null };
+    },
+    execute: async (command, args, options) => {
+      calls.push({ command, args, env: options.env });
+      return { stdout: '', stderr: '', exitCode: 0 };
+    },
+    stop: async () => calls.push('stop'),
+    fetchImpl: signUpFetch(requests, 'reset-user'),
+    newPassword: () => 'Lab-Reset-generated-password',
+    ...quietCleanup,
+  });
+
+  assert.equal(PASSWORD_RESET_EMAIL, 'reset-journey@glasstunnel.test');
+  assert.equal(startOptions.host, false);
+  assert.deepEqual(requests, [
+    {
+      path: '/api/auth/sign-up/email',
+      body: {
+        email: 'reset-journey@glasstunnel.test',
+        password: 'Glasstunnel-Lab-Only-2026',
+        name: 'Glasstunnel Reset Journey',
+      },
+    },
+  ]);
+
+  const [resetStep, startStep, playwright, cleanup, stopStep] = calls;
+  assert.equal(resetStep, 'reset');
+  assert.equal(startStep, 'start');
+  assert.equal(stopStep, 'stop');
+  assert.equal(calls.length, 5);
+  assert.equal(playwright.command, 'pnpm');
+  assert.deepEqual(playwright.args, [
+    'exec',
+    'playwright',
+    'test',
+    '--project=local-password-reset-mobile-chromium',
+  ]);
+  assert.equal(playwright.env.GT_LAB_RESET_EMAIL, 'reset-journey@glasstunnel.test');
+  assert.equal(playwright.env.GT_LAB_RESET_NEW_PASSWORD, 'Lab-Reset-generated-password');
+  assert.equal(playwright.env.GT_LAB_ROOT, config.root);
+  assert.equal(playwright.env.GT_LAB_EMAIL, 'lab@glasstunnel.test');
+  assert.equal(playwright.env.GT_LAB_PASSWORD, 'Glasstunnel-Lab-Only-2026');
+  assert.equal(playwright.env.GT_LAB_BASE_URL, 'http://127.0.0.1:5173');
+  assert.equal('GT_LAB_LINK_CODE' in playwright.env, false);
+  assert.equal('GT_LAB_HOST_LABEL' in playwright.env, false);
+  assert.equal('GT_LAB_SECOND_EMAIL' in playwright.env, false);
+
+  // The account is deleted through the local admin CLI before teardown.
+  assert.equal(cleanup.command, join(config.root, 'node_modules/.bin/convex'));
+  assert.deepEqual(cleanup.args, [
+    'run',
+    'auth:deleteUserByLegacyId',
+    '{"legacyUserId":"reset-user"}',
+    '--env-file',
+    config.files.convexEnv,
+  ]);
+});
+
+test('runE2E generates a fresh replacement password for each password reset run', async (t) => {
+  const config = fixtureConfig(t);
+  const passwords = [];
+  for (let run = 0; run < 2; run += 1) {
+    await runE2E({
+      config,
+      projects: ['local-password-reset-mobile-chromium'],
+      reset: async () => {},
+      start: async () => ({ host: null }),
+      execute: async (command, _args, options) => {
+        if (command === 'pnpm') passwords.push(options.env.GT_LAB_RESET_NEW_PASSWORD);
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+      stop: async () => {},
+      fetchImpl: signUpFetch([], 'reset-user'),
+      ...quietCleanup,
+    });
+  }
+  assert.equal(passwords.length, 2);
+  for (const password of passwords) {
+    assert.match(password, /^Lab-Reset-[A-Za-z0-9_-]{16}$/);
+    assert.notEqual(password, config.identity.password);
+  }
+  assert.notEqual(passwords[0], passwords[1]);
+});
+
+test('runE2E deletes the password reset account and redacts it when Playwright fails', async (t) => {
+  const config = fixtureConfig(t);
+  const steps = [];
+
+  await assert.rejects(
+    runE2E({
+      config,
+      projects: ['local-password-reset-mobile-chromium'],
+      reset: async () => {},
+      start: async () => ({ host: null }),
+      execute: async (command, args, options) => {
+        if (command !== 'pnpm') {
+          steps.push(args[1]);
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
+        steps.push('playwright');
+        const error = new Error('password reset journey failed');
+        error.stdout = [
+          `signed in as ${options.env.GT_LAB_RESET_EMAIL}`,
+          `new password ${options.env.GT_LAB_RESET_NEW_PASSWORD}`,
+          `old password ${options.env.GT_LAB_PASSWORD}`,
+        ].join('\n');
+        throw error;
+      },
+      stop: async () => steps.push('stop'),
+      fetchImpl: signUpFetch([], 'reset-user'),
+      newPassword: () => 'Lab-Reset-generated-password',
+      ...quietCleanup,
+    }),
+    /password reset journey failed/,
+  );
+
+  assert.deepEqual(steps, ['playwright', 'auth:deleteUserByLegacyId', 'stop']);
+  const log = readFileSync(join(config.paths.logs, 'playwright-last-command.log'), 'utf8');
+  assert.doesNotMatch(log, /reset-journey@glasstunnel\.test/);
+  assert.doesNotMatch(log, /Lab-Reset-generated-password/);
+  assert.doesNotMatch(log, /Glasstunnel-Lab-Only-2026/);
+  assert.match(log, /new password <redacted>/);
+});
+
+test('runE2E reports a failed password reset account cleanup after a passing run', async (t) => {
+  const config = fixtureConfig(t);
+  let stopped = false;
+
+  await assert.rejects(
+    runE2E({
+      config,
+      projects: ['local-password-reset-mobile-chromium'],
+      reset: async () => {},
+      start: async () => ({ host: null }),
+      execute: async (command) => {
+        if (command !== 'pnpm') throw new Error('convex run failed');
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+      stop: async () => {
+        stopped = true;
+      },
+      fetchImpl: signUpFetch([], 'reset-user'),
+      ...quietCleanup,
+    }),
+    /Local password reset account cleanup failed: convex run failed/,
+  );
+  assert.equal(stopped, true);
+});
 
 test('projectsForMode isolates the opt-in Codex CLI account journey', () => {
   assert.deepEqual(projectsForMode('codex-cli-chromium'), ['local-codex-cli-mobile-chromium']);
@@ -64,6 +340,7 @@ test('runE2E passes only local account and host values to Playwright', async (t)
 
   await runE2E({
     config,
+    fetchImpl: offlineFetch,
     projects: ['fixture-desktop-chromium', 'local-account-chromium'],
     reset: async () => calls.push('reset'),
     start: async () => ({
@@ -109,6 +386,7 @@ test('runE2E always stops services after Playwright fails', async (t) => {
   await assert.rejects(
     runE2E({
       config,
+      fetchImpl: signUpFetch([], 'reset-user'),
       reset: async () => {},
       start: async () => ({ host: { linkCode: 'ABC234', label: 'Local test host' } }),
       execute: async () => {
@@ -133,6 +411,7 @@ test('runE2E rejects a lab start without link metadata', async (t) => {
   await assert.rejects(
     runE2E({
       config,
+      fetchImpl: signUpFetch([], 'reset-user'),
       reset: async () => {},
       start: async () => ({ host: null }),
       execute: async () => {},
@@ -153,6 +432,7 @@ test('runE2E skips database reset and Swift host for fixture-only projects', asy
 
   await runE2E({
     config,
+    fetchImpl: offlineFetch,
     projects: ['fixture-mobile-webkit'],
     reset: async () => {
       resetCalled = true;
@@ -242,6 +522,7 @@ test('runE2E cleans a managed Terminal session that appears just after teardown'
 
   await runE2E({
     config,
+    fetchImpl: signUpFetch([], 'reset-user'),
     reset: async () => {},
     start: async () => ({ host: { linkCode: 'ABC234', label: 'Local test host' } }),
     execute: async () => ({ stdout: '', stderr: '', exitCode: 0 }),
@@ -266,6 +547,7 @@ test('runE2E cleans only a PTY process record created during the run', async (t)
 
   await runE2E({
     config,
+    fetchImpl: signUpFetch([], 'reset-user'),
     reset: async () => {},
     start: async () => ({ host: { linkCode: 'ABC234', label: 'Local test host' } }),
     execute: async () => ({ stdout: '', stderr: '', exitCode: 0 }),

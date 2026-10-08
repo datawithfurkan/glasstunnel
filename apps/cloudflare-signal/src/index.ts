@@ -272,7 +272,6 @@ const convexAccountPlane = {
     { hostDeviceUuid: string; limit?: number },
     DeviceApprovalRequestRow[]
   >("listPendingApprovalsByHost"),
-  getUnconsumedHostLinkCode: gatewayRef<"query", { code: string }, HostLinkCodeRow | null>("getUnconsumedHostLinkCode"),
   upsertUserDevice: gatewayRef<
     "mutation",
     {
@@ -327,11 +326,11 @@ const convexAccountPlane = {
     },
     null
   >("createHostLinkCode"),
-  consumeHostLinkCode: gatewayRef<
+  claimHostLinkCode: gatewayRef<
     "mutation",
-    { id: string; claimedUserId: string },
-    null
-  >("consumeHostLinkCode"),
+    { code: string; claimedUserId: string },
+    HostLinkCodeRow
+  >("claimHostLinkCode"),
   deleteHostLinkCodesByHostDeviceId: gatewayRef<
     "mutation",
     { hostDeviceId: string; limit?: number },
@@ -746,6 +745,24 @@ async function upsertUserDevice(
         throw new Error("device belongs to another account");
       }
       throw new DeviceAuthorizationError("device registration is not authorized");
+    }
+    throw error;
+  }
+}
+
+/**
+ * Claims a link code for `claimedUserId`: the account plane finds the one
+ * live row for the code and marks it used in a single transaction, so two
+ * claims racing for the same code cannot both succeed. The losing claim gets
+ * the same answer as a code that never existed.
+ */
+async function claimHostLinkCode(env: Env, code: string, claimedUserId: string): Promise<HostLinkCodeRow> {
+  try {
+    return await convexMutation(env, convexAccountPlane.claimHostLinkCode, { code, claimedUserId });
+  } catch (error) {
+    if (error instanceof AccountPlaneRejection) {
+      if (error.code === "link_code_expired") throw new Error("link code expired");
+      if (error.code === "link_code_not_found") throw new Error("link code not found");
     }
     throw error;
   }
@@ -1324,13 +1341,11 @@ export class SignalingHub extends DurableObject<Env> {
       throw new Error("link code is required");
     }
 
-    const linkCode = await convexQuery(this.env, convexAccountPlane.getUnconsumedHostLinkCode, { code });
-    if (!linkCode) {
-      throw new Error("link code not found");
-    }
-    if (Date.parse(linkCode.expires_at) <= Date.now()) {
-      throw new Error("link code expired");
-    }
+    // Claim first, before anything else changes: the claim is one atomic
+    // account-plane transaction, so of two requests racing for the same code
+    // only one gets past this line and links the Mac or lifts a removal. The
+    // claim is final; if a later step fails, the Mac has to show a new code.
+    const linkCode = await claimHostLinkCode(this.env, code, user.id);
 
     const existingDevice = await findDeviceByDeviceId(this.env, linkCode.host_device_id);
     if (existingDevice && existingDevice.user_id !== user.id) {
@@ -1372,11 +1387,6 @@ export class SignalingHub extends DurableObject<Env> {
         }
       }
     }
-
-    await convexMutation(this.env, convexAccountPlane.consumeHostLinkCode, {
-      id: linkCode.id,
-      claimedUserId: user.id,
-    });
 
     const hostSocket = this.peers.get(linkCode.host_device_id);
     if (hostSocket) {

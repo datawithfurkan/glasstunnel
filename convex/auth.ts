@@ -1,17 +1,27 @@
 import { createClient, type GenericCtx } from "@convex-dev/better-auth";
 import { convex, crossDomain } from "@convex-dev/better-auth/plugins";
+import { isRunMutationCtx } from "@convex-dev/better-auth/utils";
 import { betterAuth, type BetterAuthOptions } from "better-auth/minimal";
+import { createAuthMiddleware, isAPIError } from "better-auth/api";
 import { bearer } from "better-auth/plugins";
+import type { BetterAuthPlugin } from "better-auth/types";
 import bcrypt from "bcryptjs";
 import { v } from "convex/values";
-import { components } from "./_generated/api";
+import { components, internal } from "./_generated/api";
 import type { DataModel } from "./_generated/dataModel";
 // Migration helpers and token verification are internal: only the CLI
 // (deploy key) and the Worker gateway in http.ts can call them.
 import { internalMutation as mutation, internalQuery as query } from "./_generated/server";
 import authConfig from "./auth.config";
-
-declare const process: { env: Record<string, string | undefined> };
+import {
+  appUrl,
+  authBaseUrl,
+  emailDeliveryMode,
+  env,
+  PASSWORD_RESET_TOKEN_SECONDS,
+  passwordResetLink,
+  type AuthEmailKind,
+} from "./email";
 
 const nullableString = v.union(v.string(), v.null());
 const authUserImport = v.object({
@@ -47,20 +57,6 @@ type AdapterCtx = GenericCtx<DataModel> & {
 
 export const authComponent = createClient<DataModel>(components.betterAuth);
 
-function env(name: string) {
-  const value = process.env[name];
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function authBaseUrl() {
-  return env("BETTER_AUTH_URL") || env("CONVEX_SITE_URL");
-}
-
-/** The web app. OAuth returns here with a one-time token (cross-domain plugin). */
-function appUrl() {
-  return (env("PUBLIC_APP_URL") || "https://app.glasstunnel.io").replace(/\/+$/, "");
-}
-
 const SESSION_LIFETIME_SECONDS = 60 * 24 * 60 * 60;
 const SESSION_REFRESH_AFTER_SECONDS = 24 * 60 * 60;
 
@@ -94,6 +90,136 @@ function socialProviders() {
   };
 }
 
+/**
+ * Hands one account email to email:queueAuthEmail (throttle, record, then a
+ * scheduled delivery). Never throws and never logs the address or link: an
+ * error that only existing accounts can hit would reveal which emails have
+ * accounts, and the HTTP reply must stay identical for every address.
+ */
+async function queueAuthEmail(
+  ctx: AdapterCtx,
+  args: { kind: AuthEmailKind; userId: string; to: string; url: string | null },
+) {
+  try {
+    if (!isRunMutationCtx(ctx)) {
+      console.warn(`auth email ${args.kind} not queued: no mutation context`);
+      return;
+    }
+    await ctx.runMutation(internal.email.queueAuthEmail, args);
+  } catch (error) {
+    console.warn(`auth email ${args.kind} not queued: ${error instanceof Error ? error.name : "unknown error"}`);
+  }
+}
+
+/**
+ * Password reset is on only when email can go out (Resend, or the local lab
+ * outbox). Without `sendResetPassword`, Better Auth answers every reset
+ * request with 400 RESET_PASSWORD_DISABLED, the same for every address.
+ */
+function passwordResetEmailOptions(ctx: AdapterCtx) {
+  if (emailDeliveryMode() === "off") {
+    return {};
+  }
+  return {
+    // Better Auth's `url` points at the auth server's own callback; the email
+    // links straight to the app instead, which posts the token back.
+    sendResetPassword: async ({ user, token }: { user: { id: string; email: string }; token: string }) => {
+      await queueAuthEmail(ctx, {
+        kind: "password_reset",
+        userId: user.id,
+        to: user.email,
+        url: passwordResetLink(token),
+      });
+    },
+    onPasswordReset: async ({ user }: { user: { id: string; email: string } }) => {
+      await queueAuthEmail(ctx, {
+        kind: "password_changed",
+        userId: user.id,
+        to: user.email,
+        url: null,
+      });
+    },
+  };
+}
+
+const PASSWORD_RESET_REQUEST_PATH = "/request-password-reset";
+/**
+ * Every successful reset request answers no sooner than this after it started.
+ *
+ * It has to stay above the real work for a known address (a verification
+ * token plus email:queueAuthEmail). With the floor removed, the local backend
+ * answered known addresses in p50 77 ms / p95 89 ms and unknown ones in
+ * p50 63 ms / p95 68 ms, round trip included (convex/README.md).
+ *
+ * It also has to stay small, because the wait is not free. The reply waits
+ * inside a Convex HTTP action, so every held request keeps one slot of the
+ * deployment's shared action and HTTP-action concurrency pool (64 on Convex's
+ * free plan) for the whole floor. This endpoint needs no sign-in, so a client
+ * that sends reset requests fast enough can fill the pool and delay everything
+ * else that runs in it, including the Worker gateway (POST
+ * /worker/account-plane, which the Worker needs for every account request and
+ * device sign-in) and Better Auth routes such as get-session. Keeping all 64
+ * slots busy with held replies takes about 64 / 0.25 s = 256 requests a second
+ * at 250 ms, against about 80 a second at the earlier 800 ms. A lower floor
+ * raises that cost; it does not remove it. Removing it needs a per-client
+ * limit in front of this endpoint (the follow-up in convex/README.md,
+ * "Password reset email").
+ */
+const PASSWORD_RESET_RESPONSE_FLOOR_MS = 250;
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Makes POST /request-password-reset take the same time whether or not the
+ * address has an account. A known address costs more work (a verification
+ * token plus the email queue mutation) than an unknown one, which a client
+ * could measure. The before hook notes when the request reached the endpoint;
+ * the after hook holds every success reply until PASSWORD_RESET_RESPONSE_FLOOR_MS
+ * has passed. Error replies (invalid email, reset disabled, untrusted origin)
+ * are the same for every address and are not held. Server-side `auth.api`
+ * calls carry no Request and are not held either.
+ *
+ * This removes one signal, not every one: sign-up (POST /sign-up/email)
+ * answers 422 USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL for an address that has
+ * an account, and the app says so, so account existence stays discoverable.
+ */
+function uniformPasswordResetTiming(): BetterAuthPlugin {
+  const startedAt = new WeakMap<Request, number>();
+  const isResetRequest = (context: { path?: string }) => context.path === PASSWORD_RESET_REQUEST_PATH;
+  return {
+    id: "glasstunnel-uniform-reset-timing",
+    hooks: {
+      before: [
+        {
+          matcher: isResetRequest,
+          handler: createAuthMiddleware(async (context) => {
+            if (context.request) {
+              startedAt.set(context.request, Date.now());
+            }
+          }),
+        },
+      ],
+      after: [
+        {
+          matcher: isResetRequest,
+          handler: createAuthMiddleware(async (context) => {
+            const started = context.request ? startedAt.get(context.request) : undefined;
+            if (started === undefined || isAPIError(context.context.returned)) {
+              return;
+            }
+            const remaining = started + PASSWORD_RESET_RESPONSE_FLOOR_MS - Date.now();
+            if (remaining > 0) {
+              await sleep(remaining);
+            }
+          }),
+        },
+      ],
+    },
+  };
+}
+
 export const createAuthOptions = (ctx: AdapterCtx) =>
   ({
     baseURL: authBaseUrl(),
@@ -117,9 +243,11 @@ export const createAuthOptions = (ctx: AdapterCtx) =>
         verify: async ({ password, hash }: { password: string; hash: string }) =>
           bcrypt.compare(password, hash),
       },
-      sendResetPassword: async () => {
-        throw new Error("Password reset email delivery is not configured yet.");
-      },
+      // A reset signs the account out everywhere; reset links work once and
+      // expire after an hour.
+      revokeSessionsOnPasswordReset: true,
+      resetPasswordTokenExpiresIn: PASSWORD_RESET_TOKEN_SECONDS,
+      ...passwordResetEmailOptions(ctx),
     },
     socialProviders: socialProviders(),
     plugins: [
@@ -137,6 +265,8 @@ export const createAuthOptions = (ctx: AdapterCtx) =>
           }),
         },
       }),
+      // Last, so its after hook also covers the other plugins' after hooks.
+      uniformPasswordResetTiming(),
     ],
   }) satisfies BetterAuthOptions;
 
@@ -406,6 +536,28 @@ export const deleteUserByLegacyId = mutation({
         where: [{ field: "_id", value: user._id }],
       },
     });
+
+    // Account email records (throttle state) and any lab outbox entries go
+    // with the account.
+    for (const kind of ["password_reset", "password_changed"] as const) {
+      const rows = await ctx.db
+        .query("authEmails")
+        .withIndex("by_kind_user_created", (q) => q.eq("kind", kind).eq("userId", user._id))
+        .take(200);
+      for (const row of rows) {
+        await ctx.db.delete(row._id);
+      }
+    }
+    if (typeof user.email === "string" && user.email) {
+      const address = user.email.trim().toLowerCase();
+      const outbox = await ctx.db
+        .query("labEmailOutbox")
+        .withIndex("by_to_created", (q) => q.eq("to", address))
+        .take(200);
+      for (const row of outbox) {
+        await ctx.db.delete(row._id);
+      }
+    }
 
     return true;
   },

@@ -10,6 +10,8 @@
 
 import type * as accountPlane from "../accountPlane.js";
 import type * as auth from "../auth.js";
+import type * as crons from "../crons.js";
+import type * as email from "../email.js";
 import type * as http from "../http.js";
 
 import type {
@@ -21,6 +23,8 @@ import type {
 declare const fullApi: ApiFromModules<{
   accountPlane: typeof accountPlane;
   auth: typeof auth;
+  crons: typeof crons;
+  email: typeof email;
   http: typeof http;
 }>;
 

@@ -53,6 +53,10 @@ vi.mock('./authClient', () => ({
   authClient: {
     auth: authMock,
   },
+  readPasswordResetToken: () => null,
+  takeInvalidPasswordResetLink: () => false,
+  clearPasswordResetToken: () => {},
+  takeSignInFromThisTab: () => false,
 }));
 
 vi.mock('../transport/RelayConnection', () => ({

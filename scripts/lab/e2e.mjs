@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { execFile } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -12,11 +13,24 @@ import { resetLab, startCoreLab, stopLab } from './services.mjs';
 import { defaultRunCommand } from './commands.mjs';
 import { deleteLabUser, upsertLabUser } from './convex.mjs';
 
+const PASSWORD_RESET_PROJECT = 'local-password-reset-mobile-chromium';
+// The reset journey started from a Mac (`?linkCode=`): the reset account claims
+// the Swift host's one link code. It runs alone: the account journey claims
+// that same code for the lab user, and a second reset journey in the same run
+// would hit the reset account's 2-minute email throttle.
+const PASSWORD_RESET_MAC_PROJECT = 'local-password-reset-mac-mobile-chromium';
+const PASSWORD_RESET_PROJECTS = [PASSWORD_RESET_PROJECT, PASSWORD_RESET_MAC_PROJECT];
 const CHROMIUM_PROJECTS = [
   'fixture-desktop-chromium',
   'fixture-mobile-chromium',
   'local-account-mobile-chromium',
+  PASSWORD_RESET_PROJECT,
 ];
+// Local account projects that need the backend and a fresh database but no
+// linked Mac, so running them alone skips building the Swift host.
+const HOSTLESS_ACCOUNT_PROJECTS = new Set([PASSWORD_RESET_PROJECT]);
+// Disposable account for the password reset journey; removed after every run.
+export const PASSWORD_RESET_EMAIL = 'reset-journey@glasstunnel.test';
 const WEBKIT_PROJECTS = ['fixture-mobile-webkit'];
 const SCREEN_CHROMIUM_PROJECTS = ['local-screen-mobile-chromium'];
 const SCREEN_WEBKIT_PROJECTS = ['local-screen-mobile-webkit'];
@@ -175,7 +189,11 @@ export async function cleanupPtyProcessRecords(
 
 function appendFailure(failure, error, label) {
   const current = error instanceof Error ? error : new Error(String(error));
-  if (!failure) return current;
+  if (!failure) {
+    // A cleanup step failing after a passing run still says which step it was.
+    current.message = `${label}: ${current.message}`;
+    return current;
+  }
   failure.message = `${failure.message}\n${label}: ${current.message}`;
   return failure;
 }
@@ -196,19 +214,32 @@ export async function runE2E({
   listPtyProcesses = listPtyProcessRecords,
   cleanupPtyProcesses = cleanupPtyProcessRecords,
   settle = defaultSettle,
+  fetchImpl = fetch,
+  newPassword = () => `Lab-Reset-${randomBytes(12).toString('base64url')}`,
 } = {}) {
+  if (projects.includes(PASSWORD_RESET_MAC_PROJECT) && projects.length > 1) {
+    throw new Error(
+      `${PASSWORD_RESET_MAC_PROJECT} runs alone (node scripts/lab/e2e.mjs password-reset-mac): it claims the host's only link code with the reset account.`,
+    );
+  }
   const sensitiveValues = [config.identity.email, config.identity.password];
   let baselineSessions = [];
   let baselinePtyProcesses = [];
   let result;
   let failure = null;
+  // Extra lab accounts created for this run; each is deleted afterwards.
+  const disposableAccounts = [];
   let retentionIdentity;
+  let resetIdentity;
 
   try {
     baselineSessions = await listTerminalSessions();
     baselinePtyProcesses = await listPtyProcesses();
-    const requiresAccountHost = projects.some((project) => project.startsWith('local-'));
-    if (requiresAccountHost) await reset({ config });
+    const usesLocalAccounts = projects.some((project) => project.startsWith('local-'));
+    const requiresAccountHost = projects.some(
+      (project) => project.startsWith('local-') && !HOSTLESS_ACCOUNT_PROJECTS.has(project),
+    );
+    if (usesLocalAccounts) await reset({ config });
     const lab = await start({ config, host: requiresAccountHost });
     if (requiresAccountHost && (!lab.host?.linkCode || !lab.host?.label)) {
       throw new Error('The local host did not publish link metadata.');
@@ -216,23 +247,54 @@ export async function runE2E({
     if (lab.host?.linkCode) sensitiveValues.push(lab.host.linkCode);
     if (projects.includes('local-retention-mobile-chromium')) {
       const email = 'retention-secondary@glasstunnel.test';
-      const user = await upsertLabUser({ config, email, password: config.identity.password });
+      sensitiveValues.push(email);
+      const user = await upsertLabUser({ config, email, password: config.identity.password, fetchImpl });
       if (!user.userId) throw new Error('The local backend did not return the secondary retention account id.');
       retentionIdentity = { email, id: user.userId };
-      sensitiveValues.push(email);
+      disposableAccounts.push({ label: 'retention', id: user.userId });
+    }
+    if (PASSWORD_RESET_PROJECTS.some((project) => projects.includes(project))) {
+      const email = PASSWORD_RESET_EMAIL;
+      // The journey replaces the lab password with this one; it is generated
+      // per run and redacted from the saved Playwright log like the others.
+      const replacement = newPassword();
+      sensitiveValues.push(email, replacement);
+      const user = await upsertLabUser({
+        config,
+        email,
+        password: config.identity.password,
+        name: 'Glasstunnel Reset Journey',
+        fetchImpl,
+      });
+      if (!user.userId) throw new Error('The local backend did not return the password reset account id.');
+      resetIdentity = { email, id: user.userId, newPassword: replacement };
+      disposableAccounts.push({ label: 'password reset', id: user.userId });
     }
 
     const env = {
       ...process.env,
       GT_LAB_BASE_URL: config.urls.pwa,
       ...(retentionIdentity ? { GT_LAB_SECOND_EMAIL: retentionIdentity.email } : {}),
-      ...(requiresAccountHost
+      ...(usesLocalAccounts
         ? {
             GT_LAB_EMAIL: config.identity.email,
             GT_LAB_PASSWORD: config.identity.password,
+          }
+        : {}),
+      ...(requiresAccountHost
+        ? {
             GT_LAB_LINK_CODE: lab.host.linkCode,
             GT_LAB_HOST_LABEL: lab.host.label,
             GT_LAB_REVOCATION_CONTROL: join(config.paths.state, 'revoke-device.json'),
+          }
+        : {}),
+      ...(resetIdentity
+        ? {
+            // The reset account starts with GT_LAB_PASSWORD. GT_LAB_ROOT lets the
+            // spec read the local email outbox through the lab's admin CLI.
+            GT_LAB_RESET_EMAIL: resetIdentity.email,
+            GT_LAB_RESET_NEW_PASSWORD: resetIdentity.newPassword,
+            GT_LAB_ROOT: config.root,
           }
         : {}),
     };
@@ -265,12 +327,12 @@ export async function runE2E({
     failure = normalized;
   }
 
-  try {
-    if (retentionIdentity) {
-      await deleteLabUser(config, retentionIdentity.id, { runCommand: execute });
+  for (const account of disposableAccounts) {
+    try {
+      await deleteLabUser(config, account.id, { runCommand: execute });
+    } catch (error) {
+      failure = appendFailure(failure, error, `Local ${account.label} account cleanup failed`);
     }
-  } catch (error) {
-    failure = appendFailure(failure, error, 'Local retention account cleanup failed');
   }
 
   try {
@@ -327,6 +389,8 @@ export async function runE2E({
 export function projectsForMode(mode) {
   if (mode === 'retention') return ['local-retention-mobile-chromium'];
   if (mode === 'revocation') return ['local-revocation-mobile-chromium'];
+  if (mode === 'password-reset') return [PASSWORD_RESET_PROJECT];
+  if (mode === 'password-reset-mac') return [PASSWORD_RESET_MAC_PROJECT];
   if (mode === 'codex-cli-chromium') return CODEX_CLI_CHROMIUM_PROJECTS;
   if (mode === 'cursor-agent-chromium') return CURSOR_AGENT_CHROMIUM_PROJECTS;
   if (mode === 'cursor-agent-webkit' || mode === 'cursor-agent-safari') return CURSOR_AGENT_WEBKIT_PROJECTS;

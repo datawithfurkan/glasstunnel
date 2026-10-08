@@ -346,21 +346,6 @@ export const listPendingApprovalsByHost = query({
   },
 });
 
-export const getUnconsumedHostLinkCode = query({
-  args: { code: v.string() },
-  returns: v.union(hostLinkCodeRow, v.null()),
-  handler: async (ctx, args) => {
-    const docs = await ctx.db
-      .query("hostLinkCodes")
-      .withIndex("by_code", (q) => q.eq("code", args.code))
-      .take(20);
-    const now = Date.now();
-    const usable = docs.filter((row) => row.consumedAt === null && Date.parse(row.expiresAt) > now);
-    // Two live rows for one code would make the claim ambiguous: refuse it.
-    return usable.length === 1 ? hostLinkCodeToRow(usable[0]) : null;
-  },
-});
-
 export const upsertUserDevice = mutation({
   args: {
     userId: v.string(),
@@ -593,21 +578,44 @@ export const createHostLinkCode = mutation({
   },
 });
 
-export const consumeHostLinkCode = mutation({
-  args: { id: v.string(), claimedUserId: v.string() },
-  returns: v.null(),
+/**
+ * Claims a link code for one account. Finding the code and marking it used
+ * happen in this one mutation, and Convex runs mutations as serializable
+ * transactions, so of two claims racing for the same code (from one account
+ * or two) exactly one succeeds; the other sees the code used and gets
+ * `link_code_not_found`. The claim is final: the Worker makes it before it
+ * links the Mac or pairs the browser, so a claim that fails after this point
+ * still uses up the code and the Mac has to show a new one.
+ *
+ * Returns the claimed row. Throws ConvexError
+ * - `link_code_not_found`: no unconsumed, unexpired row for the code, or two
+ *   of them (an ambiguous claim is refused).
+ * - `link_code_expired`: no live row, but an unconsumed one that expired.
+ */
+export const claimHostLinkCode = mutation({
+  args: { code: v.string(), claimedUserId: v.string() },
+  returns: hostLinkCodeRow,
   handler: async (ctx, args) => {
-    const doc = await ctx.db
+    const unconsumed = await ctx.db
       .query("hostLinkCodes")
-      .withIndex("by_legacy_id", (q) => q.eq("legacyId", args.id))
-      .first();
-    if (doc) {
-      await ctx.db.patch(doc._id, {
+      .withIndex("by_code", (q) => q.eq("code", args.code))
+      .filter((q) => q.eq(q.field("consumedAt"), null))
+      .take(20);
+    const now = Date.now();
+    const live = unconsumed.filter((row) => Date.parse(row.expiresAt) > now);
+    if (live.length === 1) {
+      await ctx.db.patch(live[0]._id, {
         consumedAt: nowIso(),
         claimedUserId: args.claimedUserId,
       });
+      const claimed = await ctx.db.get(live[0]._id);
+      if (!claimed) throw new Error("link code claim failed");
+      return hostLinkCodeToRow(claimed);
     }
-    return null;
+    if (live.length === 0 && unconsumed.length > 0) {
+      throw new ConvexError({ code: "link_code_expired" });
+    }
+    throw new ConvexError({ code: "link_code_not_found" });
   },
 });
 
