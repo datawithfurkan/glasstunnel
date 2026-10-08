@@ -46,7 +46,8 @@ export default defineSchema({
     .index("by_legacy_id", ["legacyId"])
     .index("by_owner_user_id", ["ownerUserId"])
     .index("by_owner_host_phone", ["ownerUserId", "hostDeviceUuid", "phoneDeviceUuid"])
-    .index("by_phone_device_uuid", ["phoneDeviceUuid"]),
+    .index("by_phone_device_uuid", ["phoneDeviceUuid"])
+    .index("by_host_device_uuid", ["hostDeviceUuid"]),
 
   pushSubscriptions: defineTable({
     legacyId: v.string(),

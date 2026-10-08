@@ -28,12 +28,14 @@ function userPayload(token = 'session-token') {
 let calls: string[] = [];
 let replacedUrl: string | null = null;
 
-async function loadShim(href: string, routes: Record<string, Route>) {
+async function loadShim(href: string, routes: Record<string, Route>, seed: Record<string, string> = {}) {
   calls = [];
   replacedUrl = null;
   vi.resetModules();
   vi.stubEnv('VITE_CONVEX_SITE_URL', AUTH);
-  vi.stubGlobal('localStorage', memoryStorage());
+  const store = memoryStorage();
+  for (const [key, value] of Object.entries(seed)) store.setItem(key, value);
+  vi.stubGlobal('localStorage', store);
   const history = {
     state: null,
     replaceState: (_state: unknown, _title: string, url: string) => {
@@ -66,8 +68,12 @@ afterEach(() => {
 });
 
 describe('Better Auth session shim', () => {
-  it('exchanges the one-time token from an OAuth return, keeps linkCode, and restores the session', async () => {
-    const { supabase } = await loadShim('https://app.test/?linkCode=ABC234&ott=one-time', {
+  const flowSeed = (nonce: string, startedAt = Date.now(), linkCode: string | null = null) => ({
+    'gt.better-auth.oauth-flow': JSON.stringify({ nonce, startedAt, linkCode }),
+  });
+
+  it('exchanges the one-time token from this browser\'s OAuth flow, keeps linkCode, and restores the session', async () => {
+    const { supabase } = await loadShim('https://app.test/?linkCode=ABC234&gtAuthFlow=n1&ott=one-time', {
       '/cross-domain/one-time-token/verify': ({ init }) => {
         expect(JSON.parse(String(init.body))).toEqual({ token: 'one-time' });
         return Response.json(userPayload('from-ott'));
@@ -76,18 +82,55 @@ describe('Better Auth session shim', () => {
         expect(headers.get('authorization')).toBe('Bearer from-ott');
         return Response.json(userPayload('from-ott'));
       },
-    });
+    }, flowSeed('n1'));
     const { data } = await supabase!.auth.getSession();
     expect(data.session?.access_token).toBe('from-ott');
     expect(data.session?.user.id).toBe('legacy-user-1');
     expect(replacedUrl).toBe('https://app.test/?linkCode=ABC234');
     expect(calls).toEqual(['POST /cross-domain/one-time-token/verify', 'GET /get-session']);
+    expect(localStorage.getItem('gt.better-auth.oauth-flow')).toBeNull();
+  });
+
+  it('refuses a one-time token this browser did not ask for (login CSRF)', async () => {
+    for (const [href, seed] of [
+      ['https://app.test/?ott=attacker-token&linkCode=VICTIM', {}],
+      ['https://app.test/?ott=attacker-token&gtAuthFlow=guess', flowSeed('real-nonce')],
+      ['https://app.test/?ott=attacker-token&gtAuthFlow=old', flowSeed('old', Date.now() - 16 * 60_000)],
+    ] as const) {
+      const { supabase, readAuthRedirectError } = await loadShim(href, {
+        '/cross-domain/one-time-token/verify': () => Response.json(userPayload('attacker')),
+      }, { ...seed });
+      expect((await supabase!.auth.getSession()).data.session).toBeNull();
+      expect(await readAuthRedirectError()).toBe('This sign-in was started in another browser or tab. Start sign-in again here.');
+      expect(calls).toEqual([]);
+      expect(localStorage.getItem('gt.better-auth.bearer-token')).toBeNull();
+    }
+  });
+
+  it('restores a Mac linkCode the provider round trip dropped', async () => {
+    const { supabase } = await loadShim('https://app.test/?gtAuthFlow=n2&ott=one-time', {
+      '/cross-domain/one-time-token/verify': () => Response.json(userPayload('from-ott')),
+      '/get-session': () => Response.json(userPayload('from-ott')),
+    }, flowSeed('n2', Date.now(), 'LINK42'));
+    await supabase!.auth.getSession();
+    expect(replacedUrl).toBe('https://app.test/?linkCode=LINK42');
+  });
+
+  it('retries a one-time token exchange that hit a server error once', async () => {
+    let attempts = 0;
+    const { supabase } = await loadShim('https://app.test/?gtAuthFlow=n3&ott=one-time', {
+      '/cross-domain/one-time-token/verify': () => (++attempts === 1 ? new Response('busy', { status: 503 }) : Response.json(userPayload('from-ott'))),
+      '/get-session': () => Response.json(userPayload('from-ott')),
+    }, flowSeed('n3'));
+    expect((await supabase!.auth.getSession()).data.session?.access_token).toBe('from-ott');
+    expect(attempts).toBe(2);
   });
 
   it('turns an OAuth error return into a readable message and no session', async () => {
-    const { supabase, takeAuthRedirectError } = await loadShim('https://app.test/?authError=1&error=access_denied', {});
-    expect(await takeAuthRedirectError()).toBe('Sign-in was cancelled. Try again when you are ready.');
-    expect(await takeAuthRedirectError()).toBeNull();
+    const { supabase, readAuthRedirectError } = await loadShim('https://app.test/?authError=1&error=access_denied&gtAuthFlow=n4', {}, flowSeed('n4'));
+    expect(await readAuthRedirectError()).toBe('Sign-in was cancelled. Try again when you are ready.');
+    // Still there for a second render (StrictMode), until the next attempt.
+    expect(await readAuthRedirectError()).toBe('Sign-in was cancelled. Try again when you are ready.');
     const { data } = await supabase!.auth.getSession();
     expect(data.session).toBeNull();
     expect(replacedUrl).toBe('https://app.test/');
@@ -150,10 +193,50 @@ describe('Better Auth session shim', () => {
       },
     });
     await supabase!.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: 'https://app.test/?linkCode=ABC234' } });
+    const flow = JSON.parse(localStorage.getItem('gt.better-auth.oauth-flow') ?? '{}');
+    expect(flow.linkCode).toBe('ABC234');
+    expect(flow.nonce).toMatch(/^[0-9a-f]{32}$/);
     expect(body).toMatchObject({
       provider: 'google',
-      callbackURL: 'https://app.test/?linkCode=ABC234',
-      errorCallbackURL: 'https://app.test/?linkCode=ABC234&authError=1',
+      callbackURL: `https://app.test/?linkCode=ABC234&gtAuthFlow=${flow.nonce}`,
+      errorCallbackURL: `https://app.test/?linkCode=ABC234&gtAuthFlow=${flow.nonce}&authError=1`,
     });
+  });
+
+  it('ends the local session at once and queues the server revocation when offline', async () => {
+    let online = true;
+    const signOutAuth: (string | null)[] = [];
+    const { supabase } = await loadShim('https://app.test/', {
+      '/sign-in/email': () =>
+        new Response(JSON.stringify({ token: 'email-token', user: userPayload().user }), {
+          headers: { 'content-type': 'application/json', 'set-auth-token': 'email-token' },
+        }),
+      '/sign-out': ({ headers }) => {
+        signOutAuth.push(headers.get('authorization'));
+        return online ? Response.json({ success: true }) : new Response('down', { status: 503 });
+      },
+      '/get-session': () => Response.json(null),
+    });
+    await supabase!.auth.signInWithPassword({ email: 'person@example.test', password: 'correct horse' });
+    online = false;
+    expect((await supabase!.auth.signOut()).error).toBeNull();
+    expect(localStorage.getItem('gt.better-auth.bearer-token')).toBeNull();
+    expect(localStorage.getItem('gt.better-auth.pending-revocation')).toBe('email-token');
+    online = true;
+    await supabase!.auth.getSession();
+    await vi.waitFor(() => expect(localStorage.getItem('gt.better-auth.pending-revocation')).toBeNull());
+    expect(signOutAuth).toEqual(['Bearer email-token', 'Bearer email-token']);
+  });
+
+  it('never pairs a cached account with a different account\'s token', async () => {
+    const { supabase } = await loadShim('https://app.test/', {
+      '/get-session': () => new Response('down', { status: 503 }),
+    }, {
+      'gt.better-auth.bearer-token': 'token-b',
+      'gt.better-auth.session-snapshot': JSON.stringify({ token: 'token-a', user: { id: 'user-a' } }),
+    });
+    const { data, error } = await supabase!.auth.getSession();
+    expect(data.session).toBeNull();
+    expect(error).toBeTruthy();
   });
 });

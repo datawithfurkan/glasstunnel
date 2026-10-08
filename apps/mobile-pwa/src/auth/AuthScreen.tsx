@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../lib/store';
-import { takeAuthRedirectError } from '../lib/supabase';
+import { readAuthRedirectError } from '../lib/supabase';
 import { BrandMark } from '../ui/Brand';
 
 type EmailAuthMode = 'signin' | 'signup';
@@ -31,7 +31,7 @@ export function AuthScreen() {
   // A Google/GitHub sign-in that failed comes back with an error in the URL.
   useEffect(() => {
     let active = true;
-    void takeAuthRedirectError().then((message) => {
+    void readAuthRedirectError().then((message) => {
       if (active && message) setError(message);
     });
     return () => {

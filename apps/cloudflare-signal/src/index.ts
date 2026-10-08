@@ -233,6 +233,14 @@ class AccountPlaneRejection extends Error {
   }
 }
 
+/** The account plane could not answer (misconfigured, unreachable, or failing). */
+class AccountPlaneUnavailable extends Error {
+  constructor(readonly code: string) {
+    super("account service is temporarily unavailable");
+    this.name = "AccountPlaneUnavailable";
+  }
+}
+
 const convexAccountPlane = {
   findDeviceByDeviceId: gatewayRef<"query", { deviceId: string }, DeviceRow | null>("findDeviceByDeviceId"),
   findDeviceByUuid: gatewayRef<"query", { id: string }, DeviceRow | null>("findDeviceByUuid"),
@@ -669,20 +677,30 @@ async function callAccountPlane<Result>(env: Env, fn: string, args: Record<strin
   const site = convexSiteUrl(env);
   const secret = (env.CONVEX_WORKER_SECRET ?? "").trim();
   if (!site || !secret) {
-    throw new Error("convex account plane is not configured");
+    console.error("account plane is not configured (CONVEX_URL/CONVEX_SITE_URL or CONVEX_WORKER_SECRET missing)");
+    throw new AccountPlaneUnavailable("not_configured");
   }
-  const response = await fetch(`${site}/worker/account-plane`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" },
-    body: JSON.stringify({ fn, args }),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${site}/worker/account-plane`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" },
+      body: JSON.stringify({ fn, args }),
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch {
+    console.error(`account plane ${fn} unreachable`);
+    throw new AccountPlaneUnavailable("unreachable");
+  }
   const body = (await response.json().catch(() => null)) as { ok?: boolean; value?: unknown; code?: unknown } | null;
   if (response.ok && body?.ok === true) {
     return (body.value ?? null) as Result;
   }
   const code = typeof body?.code === "string" ? body.code : `http_${response.status}`;
   if (response.status === 409) throw new AccountPlaneRejection(code);
-  throw new Error(`convex account plane ${fn} failed: ${code}`);
+  // Function names and gateway codes stay in the Worker log, never in replies.
+  console.error(`account plane ${fn} failed: ${code}`);
+  throw new AccountPlaneUnavailable(code);
 }
 
 async function convexQuery<Args extends Record<string, unknown>, Result>(
@@ -1125,8 +1143,10 @@ async function ensurePairing(
     try {
       return await convexMutation(env, convexAccountPlane.ensurePairing, input);
     } catch (error) {
-      if (error instanceof AccountPlaneRejection && error.code === "access_revoked") {
-        throw new DeviceAuthorizationError("Access to this Mac was revoked.");
+      if (error instanceof AccountPlaneRejection) {
+        throw new DeviceAuthorizationError(
+          error.code === "access_revoked" ? "Access to this Mac was revoked." : "device pairing is not authorized",
+        );
       }
       throw error;
     }
@@ -1441,6 +1461,9 @@ export class SignalingHub extends DurableObject<Env> {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "unknown error";
+      if (error instanceof AccountPlaneUnavailable) {
+        return json({ ok: false, error: "Account service is temporarily unavailable. Try again." }, { status: 503 });
+      }
       const status = error instanceof DeviceAuthorizationError ? 403 :
         message === "missing bearer token" || message.startsWith("auth ")
           ? 401
@@ -1898,7 +1921,9 @@ export class SignalingHub extends DurableObject<Env> {
 
     sendJsonToOpenSocket(ws, {
       type: "link_code_error",
-      reason: lastError instanceof Error ? lastError.message : "could not create code",
+      reason: lastError instanceof AccountPlaneUnavailable
+        ? "Account service is temporarily unavailable. Try again."
+        : lastError instanceof Error ? lastError.message : "could not create code",
     });
   }
 

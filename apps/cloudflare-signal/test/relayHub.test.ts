@@ -450,8 +450,32 @@ describe('Account registration authorization', () => {
         method: 'POST', headers: { authorization: 'Bearer test-token', 'content-type': 'application/json' },
         body: JSON.stringify({ deviceId: phone.deviceId, publicKeyB64: phone.publicKeyB64, kind: 'phone', label: 'Renamed' }),
       });
-      expect(response.status).toBeGreaterThanOrEqual(400);
-      expect(response.status).not.toBe(200);
+      expect(response.status).toBe(503);
+      expect(JSON.stringify(await response.json())).not.toContain('upsertUserDevice');
+    });
+  });
+
+  it('answers 401 for a token the account plane does not recognise, and 503 when the gateway secret is missing', async () => {
+    const phone = await createDeviceIdentity();
+    await withConvexGateway((fn) => {
+      if (fn === 'verifyBearerToken') return Response.json({ ok: true, value: null });
+      return Response.json({ ok: false, code: 'unknown_function' }, { status: 404 });
+    }, async () => {
+      const stub = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`convex-badtoken-${phone.deviceId}`));
+      const response = await stub.fetch('https://hub.test/account/hosts?deviceId=' + phone.deviceId, {
+        headers: { authorization: 'Bearer not-a-session' },
+      });
+      expect(response.status).toBe(401);
+    });
+
+    await withConvexGateway(() => Response.json({ ok: true, value: null }), async (calls) => {
+      (env as unknown as Record<string, string | undefined>).CONVEX_WORKER_SECRET = '';
+      const stub = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`convex-nosecret-${phone.deviceId}`));
+      const response = await stub.fetch('https://hub.test/account/hosts?deviceId=' + phone.deviceId, {
+        headers: { authorization: 'Bearer some-token' },
+      });
+      expect(response.status).toBe(503);
+      expect(calls).toEqual([]);
     });
   });
 

@@ -89,14 +89,21 @@ http.route({
       return reply(401, { ok: false, code: "unauthorized" });
     }
 
-    let body: { fn?: unknown; args?: unknown };
+    let body: unknown;
     try {
-      body = (await request.json()) as { fn?: unknown; args?: unknown };
+      body = await request.json();
     } catch {
       return reply(400, { ok: false, code: "bad_request" });
     }
-    const fn = typeof body.fn === "string" ? body.fn : "";
-    const args = body.args && typeof body.args === "object" ? (body.args as Record<string, unknown>) : {};
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return reply(400, { ok: false, code: "bad_request" });
+    }
+    const { fn: rawFn, args: rawArgs } = body as { fn?: unknown; args?: unknown };
+    if (rawArgs !== undefined && (!rawArgs || typeof rawArgs !== "object" || Array.isArray(rawArgs))) {
+      return reply(400, { ok: false, code: "bad_request" });
+    }
+    const fn = typeof rawFn === "string" ? rawFn : "";
+    const args = (rawArgs ?? {}) as Record<string, unknown>;
 
     try {
       if (Object.hasOwn(QUERIES, fn)) {
@@ -114,7 +121,9 @@ http.route({
         const code = typeof data === "object" && data && typeof data.code === "string" ? data.code : "rejected";
         return reply(409, { ok: false, code });
       }
-      console.error(`account-plane ${fn} failed`, error);
+      // Never log the error object: argument validation errors echo the
+      // arguments, which can include session tokens.
+      console.error(`account-plane ${fn} failed: ${error instanceof Error ? error.name : "unknown"}`);
       return reply(500, { ok: false, code: "internal" });
     }
   }),

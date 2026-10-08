@@ -1,6 +1,7 @@
 // Internal only: the Cloudflare Worker reaches these through the
 // shared-secret gateway in http.ts. Nothing here is callable from a browser.
 import { ConvexError, v } from "convex/values";
+import { components } from "./_generated/api";
 import { internalMutation as mutation, internalQuery as query } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 
@@ -207,7 +208,30 @@ export const findProfileByUserId = query({
       .query("accountProfiles")
       .withIndex("by_legacy_user_id", (q) => q.eq("legacyUserId", args.userId))
       .first();
-    return doc ? profileToRow(doc) : null;
+    if (doc) return profileToRow(doc);
+    // Accounts created after the Supabase migration have no profile row; the
+    // Better Auth user carries the same fields. Imported users are matched by
+    // their legacy id, newer ones by the Better Auth id the Worker sees.
+    const byLegacy = (await ctx.runQuery(components.betterAuth.adapter.findOne, {
+      model: "user",
+      where: [{ field: "userId", value: args.userId }],
+    })) as Record<string, unknown> | null;
+    const user =
+      byLegacy ??
+      (/^[a-z0-9]{20,}$/.test(args.userId)
+        ? ((await ctx.runQuery(components.betterAuth.adapter.findOne, {
+            model: "user",
+            where: [{ field: "_id", value: args.userId }],
+          })) as Record<string, unknown> | null)
+        : null);
+    if (!user) return null;
+    const text = (value: unknown) => (typeof value === "string" && value ? value : null);
+    return {
+      user_id: args.userId,
+      email: text(user.email),
+      display_name: text(user.name),
+      avatar_url: text(user.image),
+    };
   },
 });
 
@@ -330,8 +354,10 @@ export const getUnconsumedHostLinkCode = query({
       .query("hostLinkCodes")
       .withIndex("by_code", (q) => q.eq("code", args.code))
       .take(20);
-    const doc = docs.find((row) => row.consumedAt === null);
-    return doc ? hostLinkCodeToRow(doc) : null;
+    const now = Date.now();
+    const usable = docs.filter((row) => row.consumedAt === null && Date.parse(row.expiresAt) > now);
+    // Two live rows for one code would make the claim ambiguous: refuse it.
+    return usable.length === 1 ? hostLinkCodeToRow(usable[0]) : null;
   },
 });
 
@@ -427,6 +453,16 @@ export const insertApprovalRequest = mutation({
   },
   returns: approvalRow,
   handler: async (ctx, args) => {
+    const pending = await ctx.db
+      .query("deviceApprovalRequests")
+      .withIndex("by_host_requester_status", (q) =>
+        q
+          .eq("hostDeviceUuid", args.hostDeviceUuid)
+          .eq("requesterDeviceUuid", args.requesterDeviceUuid)
+          .eq("status", "pending"),
+      )
+      .first();
+    if (pending) return approvalToRow(pending);
     const at = nowIso();
     const id = await ctx.db.insert("deviceApprovalRequests", {
       legacyId: generatedLegacyId("convex-approval"),
@@ -472,6 +508,22 @@ export const ensurePairing = mutation({
   args: { ...pairScope.fields, metadata: v.optional(metadataValue) },
   returns: pairingRow,
   handler: async (ctx, args) => {
+    const [host, requester] = await Promise.all([
+      ctx.db.query("accountDevices").withIndex("by_legacy_id", (q) => q.eq("legacyId", args.hostDeviceUuid)).first(),
+      ctx.db.query("accountDevices").withIndex("by_legacy_id", (q) => q.eq("legacyId", args.requesterDeviceUuid)).first(),
+    ]);
+    if (
+      !host ||
+      !requester ||
+      host.kind !== "host" ||
+      requester.kind === "host" ||
+      host.legacyUserId !== args.ownerUserId ||
+      requester.legacyUserId !== args.ownerUserId ||
+      host.revokedAt !== null ||
+      requester.revokedAt !== null
+    ) {
+      throw new ConvexError({ code: "pairing_not_authorized" });
+    }
     const existing = await ctx.db
       .query("devicePairings")
       .withIndex("by_owner_host_phone", (q) =>
@@ -516,6 +568,15 @@ export const createHostLinkCode = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const at = nowIso();
+    const now = Date.now();
+    const clash = await ctx.db
+      .query("hostLinkCodes")
+      .withIndex("by_code", (q) => q.eq("code", args.code))
+      .filter((q) => q.eq(q.field("consumedAt"), null))
+      .take(20);
+    if (clash.some((row) => Date.parse(row.expiresAt) > now)) {
+      throw new ConvexError({ code: "link_code_taken" });
+    }
     await ctx.db.insert("hostLinkCodes", {
       legacyId: generatedLegacyId("convex-host-code"),
       code: args.code,
@@ -573,6 +634,17 @@ export const deleteDeviceByUuid = mutation({
       .withIndex("by_legacy_id", (q) => q.eq("legacyId", args.id))
       .first();
     if (!doc) return false;
+    // Supabase cascaded these through foreign keys; keep the same shape so an
+    // unlinked Mac leaves no pairings or approvals pointing at it.
+    const [asHost, asPhone, approvals] = await Promise.all([
+      ctx.db.query("devicePairings").withIndex("by_host_device_uuid", (q) => q.eq("hostDeviceUuid", args.id)).take(500),
+      ctx.db.query("devicePairings").withIndex("by_phone_device_uuid", (q) => q.eq("phoneDeviceUuid", args.id)).take(500),
+      ctx.db
+        .query("deviceApprovalRequests")
+        .withIndex("by_host_status_created_at", (q) => q.eq("hostDeviceUuid", args.id))
+        .take(500),
+    ]);
+    for (const row of [...asHost, ...asPhone, ...approvals]) await ctx.db.delete(row._id);
     await ctx.db.delete(doc._id);
     return true;
   },
