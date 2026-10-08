@@ -15,6 +15,8 @@ import { useAppStore, type AppState, type AuthenticatedUser, type PairedHost } f
 export type WorkspaceFixtureId =
   | 'hosts-empty'
   | 'hosts-mixed'
+  | 'hosts-loading'
+  | 'hosts-error'
   | 'workspace-empty'
   | 'workspace-single-app'
   | 'workspace-multi-app'
@@ -72,7 +74,12 @@ export function workspaceFixtureInitialAppId(
 }
 
 export function workspaceFixtureState(fixtureId: WorkspaceFixtureId): Partial<AppState> {
-  if (fixtureId === 'hosts-empty' || fixtureId === 'hosts-mixed') {
+  if (
+    fixtureId === 'hosts-empty' ||
+    fixtureId === 'hosts-mixed' ||
+    fixtureId === 'hosts-loading' ||
+    fixtureId === 'hosts-error'
+  ) {
     return hostSelectionFixtureState(fixtureId);
   }
 
@@ -370,6 +377,8 @@ function isWorkspaceFixtureId(value: string | null): value is WorkspaceFixtureId
   return (
     value === 'hosts-empty' ||
     value === 'hosts-mixed' ||
+    value === 'hosts-loading' ||
+    value === 'hosts-error' ||
     value === 'workspace-empty' ||
     value === 'workspace-single-app' ||
     value === 'workspace-multi-app' ||
@@ -392,8 +401,13 @@ function isWorkspaceFixtureId(value: string | null): value is WorkspaceFixtureId
   );
 }
 
-function hostSelectionFixtureState(fixtureId: 'hosts-empty' | 'hosts-mixed'): Partial<AppState> {
+function hostSelectionFixtureState(
+  fixtureId: 'hosts-empty' | 'hosts-mixed' | 'hosts-loading' | 'hosts-error',
+): Partial<AppState> {
   const hosts = fixtureId === 'hosts-mixed' ? fixtureAccountHosts() : [];
+  // hosts-loading: the first list is still on its way. hosts-error: it could not load.
+  const hostsStatus =
+    fixtureId === 'hosts-loading' ? 'loading' : fixtureId === 'hosts-error' ? 'error' : 'loaded';
 
   return {
     route: 'hosts',
@@ -401,6 +415,7 @@ function hostSelectionFixtureState(fixtureId: 'hosts-empty' | 'hosts-mixed'): Pa
     readOnlyMode: false,
     pairedHost: null,
     availableHosts: hosts,
+    hostsStatus,
     user: fixtureUser(),
     authConfigured: true,
     layout: null,
@@ -411,7 +426,10 @@ function hostSelectionFixtureState(fixtureId: 'hosts-empty' | 'hosts-mixed'): Pa
     videoStreams: {},
     relayScreenFrames: {},
     relayHostOnline: null,
-    error: null,
+    error:
+      fixtureId === 'hosts-error'
+        ? 'Signed in, but Mac sync could not reach Glasstunnel. Check your connection and refresh.'
+        : null,
     refreshHosts: async () => undefined,
     claimHostLinkCode: async () => hosts[0] ?? fixtureAccountHost('fixture-new-mac', 'New Mac', true, true),
     chooseHost: async (hostDeviceId: string) => {

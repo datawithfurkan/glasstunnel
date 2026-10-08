@@ -10,7 +10,17 @@ describe('workspace mobile fixtures', () => {
     expect(state.route).toBe('hosts');
     expect(state.user?.email).toBe('fixture@glasstunnel.test');
     expect(state.availableHosts).toEqual([]);
+    expect(state.hostsStatus).toBe('loaded');
     expect(state.pairedHost).toBeNull();
+  });
+
+  it('models a signed-in account whose Macs are still loading or could not load', () => {
+    const loading = workspaceFixtureState('hosts-loading');
+    expect(loading).toMatchObject({ route: 'hosts', availableHosts: [], hostsStatus: 'loading', error: null });
+
+    const failed = workspaceFixtureState('hosts-error');
+    expect(failed).toMatchObject({ route: 'hosts', availableHosts: [], hostsStatus: 'error' });
+    expect(failed.error).toMatch(/could not reach Glasstunnel/i);
   });
 
   it('models signed-in host selection with online, offline, and preparing Macs', () => {
