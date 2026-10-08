@@ -40,7 +40,7 @@ struct AccessView: View {
         GlasstunnelGroupedList {
             GlasstunnelGroupHeader(
                 title: "This Mac",
-                subtitle: "Ready for signed-in devices"
+                subtitle: appState.accountNameLine ?? "Ready for signed-in devices"
             )
             GlasstunnelRowDivider(leadingInset: 0)
 

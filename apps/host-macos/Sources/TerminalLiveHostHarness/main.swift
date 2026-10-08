@@ -91,6 +91,13 @@ struct TerminalLiveHostHarness {
                 Task { @MainActor in
                     if identity.linked {
                         print("HOST_LINKED \(identity.email ?? identity.userID ?? "linked")")
+                        // The account's name for this Mac; a rename pushes a new line.
+                        if let hostLabel = identity.hostLabel {
+                            print("HOST_LABEL \(hostLabel)")
+                        }
+                        fflush(stdout)
+                    } else if let reason = identity.reason {
+                        print("HOST_UNLINKED \(reason)")
                         fflush(stdout)
                     }
                 }

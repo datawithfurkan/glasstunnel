@@ -12,6 +12,10 @@ export interface AccountHost {
   trusted: boolean;
   pairedAtUnixMs: number;
   lastSeenAtUnixMs?: number;
+  /** When the Mac was added to the account; older Workers omit it (use pairedAtUnixMs). */
+  addedAtUnixMs?: number;
+  /** The Glasstunnel Mac app version the Mac last reported, when the server knows it. */
+  appVersion?: string;
 }
 
 export interface ApprovalRequestResult {
@@ -120,6 +124,65 @@ export async function claimHostCode(
     }),
   });
   return result.host;
+}
+
+/**
+ * How long a rename or removal may wait for an answer before it reports a
+ * failure. The Worker gives each account-service call up to 15 s, and a
+ * removal makes several in a row (look the Mac up, remove it, and after a lost
+ * answer look it up again). A removal that still gets no answer is checked
+ * against the list of Macs (see removeHost in store.ts).
+ */
+export const HOST_MANAGEMENT_TIMEOUT_MS = 45_000;
+
+async function withRequestTimeout<T>(
+  timeoutMs: number,
+  request: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await request(controller.signal);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Renames a Mac in the signed-in account. 404 for a Mac that is not this
+ * account's. `requesterDeviceId` (this browser) lets the answer say whether
+ * this browser may open the Mac, as the host list does.
+ */
+export async function renameAccountHost(
+  accessToken: string,
+  input: { deviceId: string; label: string; requesterDeviceId?: string },
+): Promise<AccountHost | undefined> {
+  const result = await withRequestTimeout(HOST_MANAGEMENT_TIMEOUT_MS, (signal) =>
+    apiFetch<{ ok?: boolean; host?: AccountHost }>(accessToken, '/account/hosts/rename', {
+      method: 'POST',
+      body: JSON.stringify({
+        deviceId: input.deviceId,
+        label: input.label,
+        ...(input.requesterDeviceId ? { requesterDeviceId: input.requesterDeviceId } : {}),
+      }),
+      signal,
+    }),
+  );
+  return result.host;
+}
+
+/** Removes a Mac from the signed-in account. 404 for a Mac that is not this account's. */
+export async function removeAccountHost(
+  accessToken: string,
+  input: { deviceId: string },
+): Promise<void> {
+  await withRequestTimeout(HOST_MANAGEMENT_TIMEOUT_MS, (signal) =>
+    apiFetch<{ ok?: boolean }>(accessToken, '/account/hosts/remove', {
+      method: 'POST',
+      body: JSON.stringify({ deviceId: input.deviceId }),
+      signal,
+    }),
+  );
 }
 
 export async function requestHostApproval(

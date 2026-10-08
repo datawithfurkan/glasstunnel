@@ -7,6 +7,7 @@ import test from 'node:test';
 import { ensureRuntimeDirectories, labConfig } from './config.mjs';
 import {
   cleanupPtyProcessRecords,
+  DEVICE_MANAGEMENT_PROJECT,
   newManagedTerminalSessions,
   newPtyProcessRecords,
   PASSWORD_RESET_EMAIL,
@@ -59,6 +60,71 @@ test('projectsForMode keeps the Mac-start password reset journey out of shared r
   for (const mode of ['chromium', 'all', 'password-reset', 'webkit']) {
     assert.ok(!projectsForMode(mode).includes('local-password-reset-mac-mobile-chromium'), mode);
   }
+});
+
+test('projectsForMode runs the device-management journey alone and never in shared runs', () => {
+  assert.equal(DEVICE_MANAGEMENT_PROJECT, 'local-device-management-mobile-chromium');
+  assert.deepEqual(projectsForMode('device-management'), ['local-device-management-mobile-chromium']);
+  for (const mode of ['chromium', 'all', 'webkit', 'revocation', 'password-reset', undefined]) {
+    assert.ok(!projectsForMode(mode).includes(DEVICE_MANAGEMENT_PROJECT), String(mode));
+  }
+});
+
+test('runE2E gives the device-management journey the lab account and the linked lab Mac', async (t) => {
+  const config = fixtureConfig(t);
+  const calls = [];
+
+  await runE2E({
+    config,
+    projects: projectsForMode('device-management'),
+    fetchImpl: offlineFetch,
+    reset: async () => calls.push('reset'),
+    start: async (options) => {
+      calls.push({ start: options.host });
+      return { host: { linkCode: 'ABC234', label: 'Local test host' } };
+    },
+    execute: async (command, args, options) => {
+      calls.push({ command, args, options });
+      return { stdout: '', stderr: '', exitCode: 0 };
+    },
+    stop: async () => calls.push('stop'),
+    ...quietCleanup,
+  });
+
+  // A fresh database and a Swift host with a fresh link code, then teardown.
+  assert.equal(calls[0], 'reset');
+  assert.deepEqual(calls[1], { start: true });
+  assert.equal(calls.at(-1), 'stop');
+  const playwright = calls[2];
+  assert.deepEqual(playwright.args, ['exec', 'playwright', 'test', '--project=local-device-management-mobile-chromium']);
+  assert.equal(playwright.options.env.GT_LAB_EMAIL, 'lab@glasstunnel.test');
+  assert.equal(playwright.options.env.GT_LAB_LINK_CODE, 'ABC234');
+  assert.equal(playwright.options.env.GT_LAB_HOST_LABEL, 'Local test host');
+});
+
+test('runE2E refuses to run the device-management journey with others, since it removes the lab Mac', async (t) => {
+  const config = fixtureConfig(t);
+  let touched = false;
+  const untouched = async () => {
+    touched = true;
+  };
+
+  for (const other of ['local-account-mobile-chromium', 'fixture-mobile-chromium']) {
+    await assert.rejects(
+      runE2E({
+        config,
+        projects: [other, DEVICE_MANAGEMENT_PROJECT],
+        reset: untouched,
+        start: untouched,
+        execute: untouched,
+        stop: untouched,
+        fetchImpl: offlineFetch,
+        ...quietCleanup,
+      }),
+      /local-device-management-mobile-chromium runs alone \(node scripts\/lab\/e2e\.mjs device-management\)/,
+    );
+  }
+  assert.equal(touched, false);
 });
 
 test('runE2E gives the Mac-start password reset journey the reset account and a fresh host link code', async (t) => {

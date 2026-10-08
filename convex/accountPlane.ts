@@ -2,8 +2,9 @@
 // shared-secret gateway in http.ts. Nothing here is callable from a browser.
 import { ConvexError, v } from "convex/values";
 import { components } from "./_generated/api";
-import { internalMutation as mutation, internalQuery as query } from "./_generated/server";
+import { internalMutation as mutation, internalQuery as query, type MutationCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
+import { checkHostLabel } from "./hostLabel";
 
 const nullableString = v.union(v.string(), v.null());
 const metadataValue = v.any();
@@ -87,6 +88,49 @@ const pairScope = v.object({
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+/** Set by renameHostDevice: the account owner named this Mac, so a re-link keeps the name. */
+const LABEL_CUSTOMIZED_AT = "label_customized_at";
+/** A Mac app version as the Mac reports it, for example `0.1.10` or `0.1.11-beta.2`. */
+const APP_VERSION_PATTERN = /^[0-9A-Za-z][0-9A-Za-z.+_-]{0,31}$/;
+
+/**
+ * The account name for a Mac as it is stored: normalized to NFC and trimmed,
+ * 1-40 code points, without control, bidi or invisible characters (the rule in
+ * hostLabel.ts). The Worker applies the same rule first and answers with a
+ * readable message; this check keeps the stored value valid on its own.
+ */
+function validHostLabel(raw: string): string {
+  const checked = checkHostLabel(raw);
+  if (!checked.ok) throw new ConvexError({ code: "invalid_label" });
+  return checked.label;
+}
+
+/** Device metadata as a plain object; anything else (null, imported junk) reads as empty. */
+function metadataObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? { ...(value as Record<string, unknown>) } : {};
+}
+
+function customizedLabelAt(metadata: Record<string, unknown>): string | null {
+  const value = metadata[LABEL_CUSTOMIZED_AT];
+  return typeof value === "string" && value ? value : null;
+}
+
+/**
+ * The caller's active Mac with this device id. Anything else (no row, another
+ * account's device, a revoked row, or a phone or browser) is the same
+ * `host_not_found`, so a caller learns nothing about devices outside its account.
+ */
+async function activeHostOfUser(ctx: MutationCtx, userId: string, deviceId: string): Promise<Doc<"accountDevices">> {
+  const doc = await ctx.db
+    .query("accountDevices")
+    .withIndex("by_device_id", (q) => q.eq("deviceId", deviceId))
+    .first();
+  if (!doc || doc.legacyUserId !== userId || doc.kind !== "host" || doc.revokedAt !== null) {
+    throw new ConvexError({ code: "host_not_found" });
+  }
+  return doc;
 }
 
 function generatedLegacyId(prefix: string): string {
@@ -375,11 +419,20 @@ export const upsertUserDevice = mutation({
       ) {
         throw new ConvexError({ code: "device_registration_not_authorized" });
       }
+      // Re-registering (a browser signing in again, or the same account
+      // re-linking its Mac) merges metadata instead of replacing it. A name
+      // the owner chose with renameHostDevice wins over the label the device
+      // proposes, and only renameHostDevice sets its marker.
+      const previous = metadataObject(existing.metadata);
+      const customizedAt = customizedLabelAt(previous);
+      const metadata = { ...previous, ...metadataObject(args.metadata) };
+      if (customizedAt) metadata[LABEL_CUSTOMIZED_AT] = customizedAt;
+      else delete metadata[LABEL_CUSTOMIZED_AT];
       await ctx.db.patch(existing._id, {
-        label: args.label,
+        label: customizedAt ? existing.label : args.label,
         platform: args.platform ?? null,
-        appVersion: args.appVersion ?? null,
-        metadata: args.metadata ?? {},
+        appVersion: args.appVersion ?? existing.appVersion ?? null,
+        metadata,
         lastSeenAt: at,
         updatedAt: at,
       });
@@ -412,7 +465,9 @@ export const upsertUserDevice = mutation({
 });
 
 export const touchDeviceLastSeen = mutation({
-  args: { deviceId: v.string() },
+  // appVersion: the Mac app version a host reported when it signed in to
+  // signaling. Ignored for phones and browsers and when it is not a version.
+  args: { deviceId: v.string(), appVersion: v.optional(v.string()) },
   returns: v.null(),
   handler: async (ctx, args) => {
     const doc = await ctx.db
@@ -421,9 +476,73 @@ export const touchDeviceLastSeen = mutation({
       .first();
     if (doc) {
       const at = nowIso();
-      await ctx.db.patch(doc._id, { lastSeenAt: at, updatedAt: at });
+      const appVersion =
+        doc.kind === "host" && args.appVersion && APP_VERSION_PATTERN.test(args.appVersion) ? args.appVersion : null;
+      await ctx.db.patch(doc._id, { lastSeenAt: at, updatedAt: at, ...(appVersion ? { appVersion } : {}) });
     }
     return null;
+  },
+});
+
+/**
+ * Renames one of the caller's Macs. The name is what every phone and browser
+ * of the account lists the Mac as, and it is marked as chosen by the owner
+ * (`metadata.label_customized_at`) so a later re-link of the same Mac to the
+ * same account keeps it. Stores the name normalized to NFC and trimmed. Throws
+ * ConvexError `invalid_label` for a name that is then empty, longer than 40
+ * code points, or has a control, bidi or invisible character (hostLabel.ts),
+ * and `host_not_found` unless the device is the caller's active Mac.
+ */
+export const renameHostDevice = mutation({
+  args: { userId: v.string(), deviceId: v.string(), label: v.string() },
+  returns: deviceRow,
+  handler: async (ctx, args) => {
+    const label = validHostLabel(args.label);
+    const doc = await activeHostOfUser(ctx, args.userId, args.deviceId);
+    const at = nowIso();
+    await ctx.db.patch(doc._id, {
+      label,
+      metadata: { ...metadataObject(doc.metadata), [LABEL_CUSTOMIZED_AT]: at },
+      updatedAt: at,
+    });
+    const updated = await ctx.db.get(doc._id);
+    if (!updated) throw new Error("device rename failed");
+    return deviceToRow(updated);
+  },
+});
+
+/**
+ * Removes one of the caller's Macs from the account: the device row, every
+ * pairing and approval request that points at it, and its link codes, in one
+ * transaction, after checking that the Mac is the caller's active Mac
+ * (`host_not_found` otherwise). Browser denials kept by the Worker's relay and
+ * signaling objects are not account rows and stay in place. To use the Mac
+ * again, the owner links it from the Mac, which creates a new device row.
+ * Returns the removed row.
+ */
+export const removeHostDevice = mutation({
+  args: { userId: v.string(), deviceId: v.string() },
+  returns: deviceRow,
+  handler: async (ctx, args) => {
+    const doc = await activeHostOfUser(ctx, args.userId, args.deviceId);
+    const removed = deviceToRow(doc);
+    const [pairings, approvals, linkCodes] = await Promise.all([
+      ctx.db
+        .query("devicePairings")
+        .withIndex("by_host_device_uuid", (q) => q.eq("hostDeviceUuid", doc.legacyId))
+        .take(1000),
+      ctx.db
+        .query("deviceApprovalRequests")
+        .withIndex("by_host_status_created_at", (q) => q.eq("hostDeviceUuid", doc.legacyId))
+        .take(1000),
+      ctx.db
+        .query("hostLinkCodes")
+        .withIndex("by_host_device_id", (q) => q.eq("hostDeviceId", doc.deviceId))
+        .take(1000),
+    ]);
+    for (const row of [...pairings, ...approvals, ...linkCodes]) await ctx.db.delete(row._id);
+    await ctx.db.delete(doc._id);
+    return removed;
   },
 });
 

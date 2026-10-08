@@ -12,6 +12,7 @@ import type * as accountPlane from "../accountPlane.js";
 import type * as auth from "../auth.js";
 import type * as crons from "../crons.js";
 import type * as email from "../email.js";
+import type * as hostLabel from "../hostLabel.js";
 import type * as http from "../http.js";
 
 import type {
@@ -25,6 +26,7 @@ declare const fullApi: ApiFromModules<{
   auth: typeof auth;
   crons: typeof crons;
   email: typeof email;
+  hostLabel: typeof hostLabel;
   http: typeof http;
 }>;
 

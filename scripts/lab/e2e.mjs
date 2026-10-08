@@ -20,6 +20,20 @@ const PASSWORD_RESET_PROJECT = 'local-password-reset-mobile-chromium';
 // would hit the reset account's 2-minute email throttle.
 const PASSWORD_RESET_MAC_PROJECT = 'local-password-reset-mac-mobile-chromium';
 const PASSWORD_RESET_PROJECTS = [PASSWORD_RESET_PROJECT, PASSWORD_RESET_MAC_PROJECT];
+// Renames and then removes the lab Mac from the lab account, which unlinks the
+// Swift host; no other journey in the same run could use that Mac afterwards.
+export const DEVICE_MANAGEMENT_PROJECT = 'local-device-management-mobile-chromium';
+// Journeys that claim or consume the lab host on their own, so each runs alone.
+const SOLO_PROJECTS = new Map([
+  [
+    PASSWORD_RESET_MAC_PROJECT,
+    'node scripts/lab/e2e.mjs password-reset-mac): it claims the host\'s only link code with the reset account.',
+  ],
+  [
+    DEVICE_MANAGEMENT_PROJECT,
+    'node scripts/lab/e2e.mjs device-management): it removes the lab Mac from the account.',
+  ],
+]);
 const CHROMIUM_PROJECTS = [
   'fixture-desktop-chromium',
   'fixture-mobile-chromium',
@@ -217,10 +231,10 @@ export async function runE2E({
   fetchImpl = fetch,
   newPassword = () => `Lab-Reset-${randomBytes(12).toString('base64url')}`,
 } = {}) {
-  if (projects.includes(PASSWORD_RESET_MAC_PROJECT) && projects.length > 1) {
-    throw new Error(
-      `${PASSWORD_RESET_MAC_PROJECT} runs alone (node scripts/lab/e2e.mjs password-reset-mac): it claims the host's only link code with the reset account.`,
-    );
+  for (const [project, reason] of SOLO_PROJECTS) {
+    if (projects.includes(project) && projects.length > 1) {
+      throw new Error(`${project} runs alone (${reason}`);
+    }
   }
   const sensitiveValues = [config.identity.email, config.identity.password];
   let baselineSessions = [];
@@ -389,6 +403,7 @@ export async function runE2E({
 export function projectsForMode(mode) {
   if (mode === 'retention') return ['local-retention-mobile-chromium'];
   if (mode === 'revocation') return ['local-revocation-mobile-chromium'];
+  if (mode === 'device-management') return [DEVICE_MANAGEMENT_PROJECT];
   if (mode === 'password-reset') return [PASSWORD_RESET_PROJECT];
   if (mode === 'password-reset-mac') return [PASSWORD_RESET_MAC_PROJECT];
   if (mode === 'codex-cli-chromium') return CODEX_CLI_CHROMIUM_PROJECTS;

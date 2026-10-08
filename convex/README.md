@@ -235,10 +235,62 @@ code before it links the Mac or pairs the browser, so the claim is final: if a
 later step fails (for example, the Mac already belongs to another account),
 the code stays used and the Mac has to show a new one.
 
+## Renaming and removing a Mac
+
+The Worker's `POST /account/hosts/rename` and `POST /account/hosts/remove`
+call two internal mutations. Both check, inside the mutation, that the device is
+the caller's active Mac (same account, `kind` host, not revoked) and otherwise
+throw `ConvexError({ code: "host_not_found" })`: a missing device, another
+account's Mac, a revoked row and a phone or browser get the same answer.
+
+- `accountPlane:renameHostDevice({ userId, deviceId, label })` applies the
+  name rule in `hostLabel.ts`, stores the result and sets
+  `metadata.label_customized_at` to the time of the rename. It returns the
+  updated row. The rule normalizes the name to NFC and trims it, then refuses
+  it with `invalid_label` if it is empty, longer than 40 code points, or
+  contains a control character (Cc), U+2028 or U+2029, a bidi control (U+202A
+  to U+202E, U+2066 to U+2069, U+200E, U+200F) or the invisible U+200B, U+2060
+  or U+FEFF. U+200D and U+200C (emoji sequences, Persian) are allowed. The
+  stored name is the normalized one. The Worker applies the same rule first
+  (`apps/cloudflare-signal/src/hostLabel.ts`), and its tests check that both
+  copies agree.
+- `accountPlane:removeHostDevice({ userId, deviceId })` deletes the Mac's
+  `accountDevices` row, every `devicePairings` and `deviceApprovalRequests` row
+  for it, and its `hostLinkCodes`, in one transaction. It returns the removed
+  row. Browser denials held by the Worker are not account rows and stay. The
+  Worker calls it only after `accountPlane:findDeviceByDeviceId` showed the
+  device to be the caller's active Mac, and after it stored a pending-removal
+  marker in its signaling hub. When the Worker gets no answer (a timeout or an
+  outage), it calls `accountPlane:findDeviceByDeviceId` again: if the row is
+  gone, the removal was committed and the Worker finishes its cleanup.
+  Otherwise it answers 503 and keeps the marker, and a later removal by the
+  same account or the hub's alarm finishes the cleanup once a lookup shows the
+  row gone (see `apps/cloudflare-signal/README.md`).
+
+The Mac's own Sign Out (`unlink_host` on signaling) keeps using
+`accountPlane:deleteHostLinkCodesByHostDeviceId` and
+`accountPlane:deleteDeviceByUuid`, which remove the same rows. After that the
+Worker runs the same relay and signaling cleanup as for a removal.
+
+`accountPlane:upsertUserDevice` keeps a chosen name: when the same account
+re-registers an existing device (a Mac linked again, a browser signing in
+again), metadata is merged instead of replaced, and if
+`label_customized_at` is set the stored label wins over the proposed one. Only
+`renameHostDevice` sets that marker; one in the incoming metadata is dropped.
+The label a Mac proposes reaches Convex through its link code; the Worker has
+already made it follow the name rule (`proposedHostLabel` in
+`apps/cloudflare-signal/src/hostLabel.ts`).
+A re-registration without an app version keeps the stored one.
+
+`accountPlane:touchDeviceLastSeen({ deviceId, appVersion? })` also records the
+Mac app version a Mac reports when it signs in to signaling (`app_version` in
+`client_auth`). It is stored only for hosts and only when it looks like a
+version (`0.1.10`, `0.1.11-beta.2`, at most 32 characters).
+
 ## Deploying
 
 Production deploys only through the Deploy workflow, which deploys Convex
-first, then the Worker and the web app. It refuses to run unless the deploy key
+first, then the Worker, then the web app. It refuses to run unless the deploy key
 belongs to the production deployment and the gateway secret is set.
 
 For local work, `pnpm lab:up` runs these functions on a local Convex backend

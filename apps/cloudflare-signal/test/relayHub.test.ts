@@ -1,6 +1,7 @@
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { checkHostLabel } from "../../../convex/hostLabel";
 import type { RelayHub, SignalingHub } from "../src/index";
 
 // The hubs keep their socket registries private; these views let the tests assert
@@ -14,6 +15,10 @@ interface RelayHubInternals {
 interface SignalingHubInternals {
   peers: Map<string, WebSocket>;
   sessions: Map<WebSocket, unknown>;
+  accountAuthorizationCache: Map<string, unknown>;
+  hostEnvelopeAuthorizations: Map<string, unknown>;
+  offlineQueues: Map<string, unknown[]>;
+  pendingRemovals: Map<string, { userId: string; at: number; checkAt: number }>;
 }
 
 interface DeviceIdentity {
@@ -30,7 +35,13 @@ interface HubSocket {
   messages: Record<string, unknown>[];
 }
 
-type AccountGatePoint = 'device-lookup' | 'last-seen-touch' | 'auth-user' | 'device-update';
+/**
+ * Where the fake gateway can pause. 'device-lookup' pauses before the row is
+ * read; 'device-lookup-reply' reads it and then pauses, like an answer that
+ * arrives after the row changed.
+ */
+type AccountGatePoint =
+  'device-lookup' | 'device-lookup-reply' | 'profile-lookup' | 'last-seen-touch' | 'auth-user' | 'device-update';
 
 const relayInternals = (hub: RelayHub) => hub as unknown as RelayHubInternals;
 const signalingInternals = (hub: SignalingHub) => hub as unknown as SignalingHubInternals;
@@ -159,12 +170,18 @@ function gatewayFunction(input: RequestInfo | URL, init?: RequestInit): string |
  */
 function stubAccountPlane(options: {
   gateOn?: AccountGatePoint;
+  /** Passes the gate point this many times before it pauses. */
+  gateSkip?: number;
   devices?: Record<string, unknown>[];
   pairings?: Record<string, unknown>[];
   linkCodes?: Record<string, unknown>[];
   approvals?: Record<string, unknown>[];
   failPairingWrites?: boolean;
   failAuth?: boolean;
+  /** Every gateway function called, in order. */
+  calls?: string[];
+  /** Functions that answer as an outage (HTTP 500); a test may change the set mid-way. */
+  failFunctions?: Set<string>;
 }) {
   let release: () => void = () => {};
   const released = new Promise<void>((resolve) => {
@@ -177,8 +194,13 @@ function stubAccountPlane(options: {
   const approvals = options.approvals ?? [];
   let generated = 0;
   const nextId = (prefix: string) => `${prefix}-${++generated}`;
+  let gateSkipped = 0;
   const pauseIf = async (point: AccountGatePoint) => {
     if (options.gateOn !== point || gate.reached) return;
+    if (gateSkipped < (options.gateSkip ?? 0)) {
+      gateSkipped += 1;
+      return;
+    }
     gate.reached = true;
     await gate.released;
   };
@@ -194,6 +216,16 @@ function stubAccountPlane(options: {
     rows.splice(0, rows.length, ...kept);
     return removed;
   };
+  const metadataOf = (row: Record<string, unknown>) =>
+    (row.metadata && typeof row.metadata === 'object' ? { ...(row.metadata as Record<string, unknown>) } : {}) as Record<string, unknown>;
+  // As convex/accountPlane.ts activeHostOfUser: one answer for every device outside the account.
+  const activeHostOfUser = (args: Record<string, unknown>) => {
+    const row = devices.find((device) => device.device_id === args.deviceId);
+    if (!row || row.user_id !== args.userId || row.kind !== 'host' || row.revoked_at != null) {
+      throw new GatewayRejection('host_not_found');
+    }
+    return row;
+  };
 
   const functions: Record<string, (args: Record<string, unknown>) => unknown | Promise<unknown>> = {
     async verifyBearerToken(args) {
@@ -206,10 +238,16 @@ function stubAccountPlane(options: {
     },
     async findDeviceByDeviceId(args) {
       await pauseIf('device-lookup');
-      return devices.find((row) => row.device_id === args.deviceId) ?? null;
+      // Read now: an answer held at 'device-lookup-reply' is the row as it was.
+      const row = structuredClone(devices.find((device) => device.device_id === args.deviceId) ?? null);
+      await pauseIf('device-lookup-reply');
+      return row;
     },
     findDeviceByUuid: (args) => devices.find((row) => row.id === args.id) ?? null,
-    findProfileByUserId: () => null,
+    async findProfileByUserId() {
+      await pauseIf('profile-lookup');
+      return null;
+    },
     listHostDevicesForUser: (args) =>
       devices.filter((row) => row.user_id === args.userId && row.kind === 'host' && row.revoked_at == null),
     listPairingsForRequester: (args) =>
@@ -241,17 +279,50 @@ function stubAccountPlane(options: {
           (existing.kind === 'host') !== (args.kind === 'host')) {
         throw new GatewayRejection('device_registration_not_authorized');
       }
+      // Metadata merges; a name the owner chose (label_customized_at) is kept.
+      const previous = metadataOf(existing);
+      const customizedAt = typeof previous.label_customized_at === 'string' && previous.label_customized_at
+        ? previous.label_customized_at : null;
+      const metadata: Record<string, unknown> = { ...previous, ...((args.metadata as Record<string, unknown>) ?? {}) };
+      if (customizedAt) metadata.label_customized_at = customizedAt;
+      else delete metadata.label_customized_at;
       Object.assign(existing, {
-        label: args.label, platform: args.platform ?? null, app_version: args.appVersion ?? null,
-        metadata: args.metadata ?? {}, last_seen_at: at, updated_at: at,
+        label: customizedAt ? existing.label : args.label, platform: args.platform ?? null,
+        app_version: args.appVersion ?? existing.app_version ?? null,
+        metadata, last_seen_at: at, updated_at: at,
       });
       return existing;
     },
     async touchDeviceLastSeen(args) {
       await pauseIf('last-seen-touch');
       const row = devices.find((device) => device.device_id === args.deviceId);
-      if (row) row.last_seen_at = new Date().toISOString();
+      if (row) {
+        row.last_seen_at = new Date().toISOString();
+        if (row.kind === 'host' && typeof args.appVersion === 'string' &&
+            /^[0-9A-Za-z][0-9A-Za-z.+_-]{0,31}$/.test(args.appVersion)) {
+          row.app_version = args.appVersion;
+        }
+      }
       return null;
+    },
+    renameHostDevice: (args) => {
+      // The real rule from convex/hostLabel.ts, as renameHostDevice applies it.
+      const checked = checkHostLabel(String(args.label));
+      if (!checked.ok) throw new GatewayRejection('invalid_label');
+      const row = activeHostOfUser(args);
+      const at = new Date().toISOString();
+      Object.assign(row, { label: checked.label, metadata: { ...metadataOf(row), label_customized_at: at }, updated_at: at });
+      return row;
+    },
+    // One transaction in Convex: synchronous here from the ownership check to the last delete.
+    removeHostDevice: (args) => {
+      const row = activeHostOfUser(args);
+      const removed = structuredClone(row);
+      remove(pairings, (pairing) => pairing.host_device_uuid === row.id);
+      remove(approvals, (approval) => approval.host_device_uuid === row.id);
+      remove(linkCodes, (code) => code.host_device_id === row.device_id);
+      remove(devices, (device) => device === row);
+      return removed;
     },
     insertApprovalRequest: (args) => {
       const pending = approvals.find((row) => row.host_device_uuid === args.hostDeviceUuid &&
@@ -354,6 +425,8 @@ function stubAccountPlane(options: {
     }
     expect(init?.method).toBe('POST');
     expect(new Headers(init?.headers).get('authorization')).toBe(`Bearer ${GATEWAY_SECRET}`);
+    options.calls?.push(fn);
+    if (options.failFunctions?.has(fn)) return Response.json({ ok: false, code: 'internal' }, { status: 500 });
     const handler = Object.hasOwn(functions, fn) ? functions[fn] : undefined;
     if (!handler) return Response.json({ ok: false, code: 'unknown_function' }, { status: 404 });
     const { args } = JSON.parse(String(init?.body)) as { args: Record<string, unknown> };
@@ -1609,5 +1682,1102 @@ describe('SignalingHub Mac-to-browser envelope authorization', () => {
     await runInDurableObject(stub, (hub) => hub.webSocketMessage(signalingInternals(hub).peers.get(host.deviceId)!, JSON.stringify({ ...envelope, envelopeId: 'second' })));
     await waitFor(() => phoneSocket.messages.some((m) => m.envelopeId === 'second'), 'second envelope');
     expect(deviceLookups).toBe(lookupsAfterFirst);
+  });
+});
+
+describe('Mac management: rename and remove', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  const REMOVED = { code: 4003, reason: 'mac removed from account' };
+
+  async function accountRequest(
+    stub: DurableObjectStub<SignalingHub>,
+    path: string,
+    body: unknown,
+    token = 'test-token',
+  ): Promise<{ status: number; body: Record<string, unknown> }> {
+    const response = await stub.fetch(`https://hub.test${path}`, {
+      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    return { status: response.status, body: (await response.json()) as Record<string, unknown> };
+  }
+
+  /** A Mac signed in to signaling, after the hub sent its first host_identity. */
+  async function connectSignalingHost(
+    stub: DurableObjectStub<SignalingHub>,
+    host: DeviceIdentity,
+    extra: Record<string, unknown> = {},
+  ): Promise<HubSocket> {
+    const socket = await openHubSocket(stub, '/signal');
+    socket.client.send(await signedClientAuth(host, socket.nonce, 'host', extra));
+    await expect(socket.nextMessage()).resolves.toMatchObject({ type: 'auth_ok', device_id: host.deviceId });
+    await waitFor(() => socket.messages.some((m) => m.type === 'host_identity'), 'the first host identity');
+    return socket;
+  }
+
+  async function relayAuthenticate(stub: DurableObjectStub<RelayHub>, identity: DeviceIdentity, hostDeviceId: string, role: 'host' | 'client') {
+    const socket = await openHubSocket(stub, relayPath(hostDeviceId));
+    socket.client.send(await signedClientAuth(identity, socket.nonce, role, { access_token: 'test-token' }));
+    await expect(socket.nextMessage()).resolves.toMatchObject({ type: 'auth_ok' });
+    return socket;
+  }
+
+  function hostIdentities(socket: HubSocket) {
+    return socket.messages.filter((message) => message.type === 'host_identity');
+  }
+
+  function linkCodeRow(host: DeviceIdentity, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      id: `code-${host.deviceId}`, code: 'KEEP23', host_device_id: host.deviceId, host_public_key_b64: host.publicKeyB64,
+      host_label: "Studio Mac mini", host_metadata: { signaling_url: 'wss://new.example.test/signal', turn_url: '' },
+      created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 600_000).toISOString(),
+      consumed_at: null, claimed_user_id: null, ...overrides,
+    };
+  }
+
+  it('renames a Mac, marks the name as chosen, and sends the connected Mac its new name', async () => {
+    const host = await createDeviceIdentity();
+    const phone = await createDeviceIdentity();
+    const hostRow: Record<string, unknown> = {
+      ...deviceRow(host, 'host'), label: "Studio Mac mini", created_at: '2026-08-01T10:00:00.000Z',
+      metadata: { signaling_url: 'wss://signal.example.test/signal' },
+    };
+    const phoneRow = deviceRow(phone, 'phone');
+    const pairings = [{
+      id: 'pair-1', owner_user_id: 'user-1', host_device_uuid: hostRow.id, phone_device_uuid: phoneRow.id,
+      paired_at: '2026-08-02T10:00:00.000Z', revoked_at: null, metadata: {},
+    }];
+    stubAccountPlane({ devices: [hostRow, phoneRow], pairings });
+    const stub = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`rename-${host.deviceId}`));
+    const mac = await connectSignalingHost(stub, host);
+    expect(hostIdentities(mac)[0]).toMatchObject({ linked: true, user_id: 'user-1', host_label: "Studio Mac mini" });
+
+    const reply = await accountRequest(stub, '/account/hosts/rename', {
+      deviceId: host.deviceId, label: '  Studio Mac  ', requesterDeviceId: phone.deviceId,
+    });
+
+    expect(reply.status).toBe(200);
+    expect(reply.body).toMatchObject({
+      ok: true,
+      host: {
+        deviceId: host.deviceId, label: 'Studio Mac', trusted: true,
+        pairedAtUnixMs: Date.parse('2026-08-02T10:00:00.000Z'), addedAtUnixMs: Date.parse('2026-08-01T10:00:00.000Z'),
+        signalingUrl: 'wss://signal.example.test/signal',
+      },
+    });
+    expect(hostRow.label).toBe('Studio Mac');
+    expect(hostRow.metadata).toEqual({ signaling_url: 'wss://signal.example.test/signal', label_customized_at: expect.any(String) });
+    await waitFor(() => hostIdentities(mac).some((m) => m.host_label === 'Studio Mac'), 'the renamed host identity');
+    expect(hostIdentities(mac).at(-1)).toEqual({
+      type: 'host_identity', linked: true, user_id: 'user-1', email: 'user@example.test',
+      display_name: 'user', avatar_url: '', host_label: 'Studio Mac',
+    });
+  });
+
+  // Built from code points so no tool can turn an escape into the invisible character.
+  const cp = (...codePoints: number[]) => String.fromCodePoint(...codePoints);
+  const PERSIAN_WITH_ZWNJ = `${cp(0x6a9, 0x62a, 0x627, 0x628)}${cp(0x200c)}${cp(0x62e, 0x627, 0x646, 0x647)}`;
+
+  it.each([
+    ['40 characters', 'x'.repeat(40), 'x'.repeat(40)],
+    ['40 code points that are 80 UTF-16 units', cp(0x1f5a5).repeat(40), cp(0x1f5a5).repeat(40)],
+    ['a ZWJ emoji sequence', `Dev ${cp(0x1f9d1, 0x200d, 0x1f4bb)} Mac`, `Dev ${cp(0x1f9d1, 0x200d, 0x1f4bb)} Mac`],
+    ['a Persian name with ZWNJ', PERSIAN_WITH_ZWNJ, PERSIAN_WITH_ZWNJ],
+    ['a decomposed accent, stored as NFC', `Caf${cp(0x65, 0x301)}`, `Caf${cp(0xe9)}`],
+    ['40 accents that are 80 code points before NFC', cp(0x65, 0x301).repeat(40), cp(0xe9).repeat(40)],
+  ] as const)('accepts and stores %s', async (_label, label, stored) => {
+    const host = await createDeviceIdentity();
+    const hostRow = deviceRow(host, 'host');
+    stubAccountPlane({ devices: [hostRow] });
+    const stub = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`rename-accepted-${host.deviceId}`));
+
+    const reply = await accountRequest(stub, '/account/hosts/rename', { deviceId: host.deviceId, label });
+
+    expect(reply.status).toBe(200);
+    expect(reply.body).toMatchObject({ ok: true, host: { label: stored } });
+    expect(hostRow.label).toBe(stored);
+  });
+
+  it.each([
+    ['empty', '', 'Enter a name.'],
+    ['blank', '   ', 'Enter a name.'],
+    ['not text', 42, 'Enter a name.'],
+    ['41 characters', 'x'.repeat(41), 'Use 40 characters or fewer.'],
+    ['41 code points', cp(0x1f5a5).repeat(41), 'Use 40 characters or fewer.'],
+    ['41 code points after NFC', cp(0x65, 0x301).repeat(41), 'Use 40 characters or fewer.'],
+    ['a line break', 'Studio\nMac', 'Remove hidden characters from the name.'],
+    ['a tab', 'Studio\tMac', 'Remove hidden characters from the name.'],
+    ['a NUL character', `Studio${cp(0)}Mac`, 'Remove hidden characters from the name.'],
+    ['a line separator', `Studio${cp(0x2028)}Mac`, 'Remove hidden characters from the name.'],
+    ['a right-to-left override', `Studio${cp(0x202e)}Mac`, 'Remove hidden characters from the name.'],
+    ['a directional isolate', `${cp(0x2067)}Studio${cp(0x2069)}`, 'Remove hidden characters from the name.'],
+    ['a left-to-right mark', `Studio Mac${cp(0x200e)}`, 'Remove hidden characters from the name.'],
+    ['a zero width space', `Studio Mac mini${cp(0x200b)}`, 'Remove hidden characters from the name.'],
+    ['a word joiner', `Studio${cp(0x2060)}Mac`, 'Remove hidden characters from the name.'],
+    ['a byte order mark inside', `Studio${cp(0xfeff)}Mac`, 'Remove hidden characters from the name.'],
+  ] as const)('refuses a name with %s before it reaches the account', async (_label, label, error) => {
+    const host = await createDeviceIdentity();
+    const hostRow = deviceRow(host, 'host');
+    const before = structuredClone(hostRow);
+    const calls: string[] = [];
+    stubAccountPlane({ devices: [hostRow], calls });
+    const stub = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`rename-invalid-${host.deviceId}`));
+
+    const reply = await accountRequest(stub, '/account/hosts/rename', { deviceId: host.deviceId, label });
+
+    expect(reply).toEqual({ status: 400, body: { ok: false, error } });
+    expect(calls).not.toContain('renameHostDevice');
+    expect(hostRow).toEqual(before);
+  });
+
+  it.each(['another account', 'a phone', 'a revoked Mac', 'an unknown device'] as const)(
+    'answers Mac not found for %s and changes nothing', async (scenario) => {
+      const device = await createDeviceIdentity();
+      const phone = await createDeviceIdentity();
+      const row = scenario === 'a phone' ? deviceRow(device, 'phone') : deviceRow(device, 'host');
+      if (scenario === 'another account') row.user_id = 'user-2';
+      if (scenario === 'a revoked Mac') row.revoked_at = '2026-09-01T00:00:00.000Z';
+      const phoneRow = deviceRow(phone, 'phone');
+      const devices = scenario === 'an unknown device' ? [phoneRow] : [row, phoneRow];
+      const pairings = [{
+        id: 'pair-1', owner_user_id: String(row.user_id), host_device_uuid: row.id, phone_device_uuid: phoneRow.id,
+        paired_at: '2026-08-02T10:00:00.000Z', revoked_at: null, metadata: {},
+      }];
+      const linkCodes = [linkCodeRow(device)];
+      const before = structuredClone({ devices, pairings, linkCodes });
+      const calls: string[] = [];
+      stubAccountPlane({ devices, pairings, linkCodes, calls });
+      const stub = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`notfound-${device.deviceId}`));
+
+      const renamed = await accountRequest(stub, '/account/hosts/rename', { deviceId: device.deviceId, label: 'Mine now' });
+      const removed = await accountRequest(stub, '/account/hosts/remove', { deviceId: device.deviceId });
+
+      expect(renamed).toEqual({ status: 404, body: { ok: false, error: 'Mac not found' } });
+      expect(removed).toEqual({ status: 404, body: { ok: false, error: 'Mac not found' } });
+      expect({ devices, pairings, linkCodes }).toEqual(before);
+      // The removal stops at its own lookup: Convex is never asked, and the hub keeps nothing.
+      expect(calls).not.toContain('removeHostDevice');
+      await runInDurableObject(stub, async (_hub, state) => {
+        expect([...(await state.storage.list({ prefix: 'removed-host:' })).keys()]).toEqual([]);
+        expect([...(await state.storage.list({ prefix: 'pending-removal:' })).keys()]).toEqual([]);
+      });
+    },
+  );
+
+  it('requires a signed-in account and a device id', async () => {
+    const host = await createDeviceIdentity();
+    stubAccountPlane({ devices: [deviceRow(host, 'host')] });
+    const stub = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`manage-auth-${host.deviceId}`));
+    for (const path of ['/account/hosts/rename', '/account/hosts/remove']) {
+      const unsigned = await stub.fetch(`https://hub.test${path}`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deviceId: host.deviceId, label: 'x' }),
+      });
+      expect(unsigned.status).toBe(401);
+      await unsigned.json();
+      expect(await accountRequest(stub, path, { label: 'x' })).toEqual({ status: 400, body: { ok: false, error: 'deviceId is required' } });
+      const wrongMethod = await stub.fetch(`https://hub.test${path}`, { headers: { authorization: 'Bearer test-token' } });
+      expect(wrongMethod.status).toBe(405);
+      await wrongMethod.json();
+    }
+  });
+
+  it('removes a Mac: account rows, the Mac told, browsers cut off, and cached content deleted', async () => {
+    const host = await createDeviceIdentity();
+    const phone = await createDeviceIdentity();
+    const otherHost = await createDeviceIdentity();
+    const hostRow = deviceRow(host, 'host');
+    const phoneRow = deviceRow(phone, 'phone');
+    const otherRow = deviceRow(otherHost, 'host');
+    const devices = [hostRow, phoneRow, otherRow];
+    const at = new Date().toISOString();
+    const pairings = [
+      { id: 'pair-1', owner_user_id: 'user-1', host_device_uuid: hostRow.id, phone_device_uuid: phoneRow.id, paired_at: at, revoked_at: null, metadata: {} },
+      { id: 'pair-2', owner_user_id: 'user-1', host_device_uuid: otherRow.id, phone_device_uuid: phoneRow.id, paired_at: at, revoked_at: null, metadata: {} },
+    ];
+    const approvals = [{
+      id: 'approval-1', owner_user_id: 'user-1', host_device_uuid: hostRow.id, requester_device_uuid: phoneRow.id,
+      requester_device_id: phone.deviceId, requester_public_key_b64: phone.publicKeyB64, requester_label: 'Phone',
+      status: 'pending', metadata: {}, created_at: at, updated_at: at, responded_at: null,
+    }];
+    const linkCodes = [linkCodeRow(host), linkCodeRow(otherHost, { code: 'OTHER2' })];
+    stubAccountPlane({ devices, pairings, approvals, linkCodes });
+
+    // Signaling: the Mac and a browser that already exchanged an envelope, so
+    // the hub holds a cached authorization for the pair.
+    const signaling = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`remove-${host.deviceId}`));
+    const macSignal = await connectSignalingHost(signaling, host);
+    const phoneSignal = await openHubSocket(signaling, '/signal');
+    phoneSignal.client.send(await signedClientAuth(phone, phoneSignal.nonce, 'client'));
+    await expect(phoneSignal.nextMessage()).resolves.toMatchObject({ type: 'auth_ok' });
+    const envelope = { fromDeviceId: phone.deviceId, toDeviceId: host.deviceId, payload: { kind: 'ping' } };
+    phoneSignal.client.send(JSON.stringify({ ...envelope, envelopeId: 'before' }));
+    await waitFor(() => macSignal.messages.some((m) => m.envelopeId === 'before'), 'signaling before removal');
+
+    // Relay: the Mac publishes content that the browser receives and the relay caches.
+    const relay = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
+    const macRelay = await relayAuthenticate(relay, host, host.deviceId, 'host');
+    const phoneRelay = await relayAuthenticate(relay, phone, host.deviceId, 'client');
+    macRelay.client.send(JSON.stringify({ type: 'relay_hello', hello: { deviceName: 'Studio Mac' } }));
+    macRelay.client.send(JSON.stringify({ type: 'relay_remote_apps', remoteApps: [{ id: 'terminal' }] }));
+    macRelay.client.send(JSON.stringify({ type: 'relay_agent_state', snapshot: { agentId: 'codex', marker: 'before' } }));
+    await waitFor(() => phoneRelay.messages.some((m) => m.type === 'relay_agent_state'), 'content before removal');
+    await runInDurableObject(relay, async (_hub, state) => {
+      expect(await state.storage.get('relayAgentSnapshot:codex')).toBeDefined();
+      await state.storage.put('revoked-device:gt-0000000000000000', true);
+    });
+
+    const reply = await accountRequest(signaling, '/account/hosts/remove', { deviceId: host.deviceId });
+
+    expect(reply).toEqual({ status: 200, body: { ok: true } });
+    // (1) The account rows that pointed at the Mac are gone; everything else stays.
+    expect(devices.map((row) => row.device_id)).toEqual([phone.deviceId, otherHost.deviceId]);
+    expect(pairings.map((row) => row.id)).toEqual(['pair-2']);
+    expect(approvals).toEqual([]);
+    expect(linkCodes.map((row) => row.host_device_id)).toEqual([otherHost.deviceId]);
+    // (2) The Mac is told, and keeps its signaling connection so it can be linked again.
+    await waitFor(() => hostIdentities(macSignal).some((m) => m.linked === false), 'the removal notice');
+    expect(hostIdentities(macSignal).at(-1)).toEqual({ type: 'host_identity', linked: false, reason: 'removed_from_account' });
+    await runInDurableObject(signaling, (hub) => {
+      expect(signalingInternals(hub).peers.has(host.deviceId)).toBe(true);
+    });
+    await runInDurableObject(signaling, (hub) => hub.webSocketMessage(
+      signalingInternals(hub).peers.get(phone.deviceId)!, JSON.stringify({ ...envelope, envelopeId: 'after' }),
+    ));
+    expect(macSignal.messages.some((m) => m.envelopeId === 'after')).toBe(false);
+    // (3) Every relay socket closes with the removal reason and the cache is gone.
+    await expect(phoneRelay.closed).resolves.toEqual(REMOVED);
+    await expect(macRelay.closed).resolves.toEqual(REMOVED);
+    await expect(hubHealth(relay)).resolves.toMatchObject({ hostOnline: false, clients: 0 });
+    await runInDurableObject(relay, async (hub, state) => {
+      const keys = [...(await state.storage.list()).keys()];
+      expect(keys.filter((key) => key === 'relayHello' || key === 'relayRemoteApps' || key.startsWith('relayAgentSnapshot'))).toEqual([]);
+      expect(await state.storage.get('revoked-device:gt-0000000000000000')).toBe(true);
+      expect(await state.storage.get('contentRetentionV1')).toBe(true);
+      const internals = hub as unknown as { latestHello: unknown; latestRemoteApps: unknown; latestAgentSnapshots: Map<string, unknown> };
+      expect(internals.latestHello).toBeNull();
+      expect(internals.latestRemoteApps).toBeNull();
+      expect(internals.latestAgentSnapshots.size).toBe(0);
+    });
+    // The removed Mac's relay is refused like any unlinked Mac.
+    const refused = await openHubSocket(relay, relayPath(host.deviceId));
+    refused.client.send(await signedClientAuth(host, refused.nonce, 'host'));
+    await expect(refused.closed).resolves.toMatchObject({ code: 1008 });
+
+    // Linked again later: the relay starts clean and replays only fresh content.
+    devices.push({ ...deviceRow(host, 'host'), id: 'host-relinked' });
+    const macAgain = await relayAuthenticate(relay, host, host.deviceId, 'host');
+    macAgain.client.send(JSON.stringify({ type: 'relay_agent_state', snapshot: { agentId: 'codex', marker: 'after' } }));
+    await waitFor(() => runInDurableObject(relay, async (_hub, state) => !!(await state.storage.get('relayAgentSnapshot:codex'))), 'fresh content');
+    const phoneAgain = await relayAuthenticate(relay, phone, host.deviceId, 'client');
+    await waitFor(() => phoneAgain.messages.some((m) => m.type === 'relay_agent_state'), 'fresh replay');
+    const replayed = phoneAgain.messages.filter((m) => m.type === 'relay_agent_state' || m.type === 'relay_hello' || m.type === 'relay_remote_apps');
+    expect(replayed).toEqual([expect.objectContaining({ type: 'relay_agent_state', cached: true, snapshot: expect.objectContaining({ marker: 'after' }) })]);
+    macAgain.client.close();
+    phoneAgain.client.close();
+  });
+
+  it('still answers 200 once the account removed the Mac, even if the relay cannot confirm the cleanup', async () => {
+    const host = await createDeviceIdentity();
+    const phone = await createDeviceIdentity();
+    const devices = [deviceRow(host, 'host'), deviceRow(phone, 'phone')];
+    const failFunctions = new Set<string>();
+    stubAccountPlane({ devices, failFunctions });
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const signaling = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`remove-relayfail-${host.deviceId}`));
+    const mac = await connectSignalingHost(signaling, host);
+    const relay = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
+    await relayAuthenticate(relay, host, host.deviceId, 'host');
+    await relayAuthenticate(relay, phone, host.deviceId, 'client');
+
+    // Once Convex removed the Mac, lookups fail: the relay cannot check the Mac.
+    const stubbed = globalThis.fetch;
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const response = await stubbed(input, init);
+      if (gatewayFunction(input, init) === 'removeHostDevice') failFunctions.add('findDeviceByDeviceId');
+      return response;
+    });
+    const reply = await accountRequest(signaling, '/account/hosts/remove', { deviceId: host.deviceId });
+
+    expect(reply).toEqual({ status: 200, body: { ok: true } });
+    expect(devices.map((row) => row.device_id)).toEqual([phone.deviceId]);
+    await waitFor(() => hostIdentities(mac).some((m) => m.reason === 'removed_from_account'), 'the removal notice');
+    expect(errors.mock.calls.flat().join(' ')).toContain('relay cleanup not confirmed');
+    // The removal finished: its pending marker is gone with it.
+    await runInDurableObject(signaling, async (hub, state) => {
+      expect(signalingInternals(hub).pendingRemovals.has(host.deviceId)).toBe(false);
+      expect(await state.storage.get(`pending-removal:${host.deviceId}`)).toBeUndefined();
+    });
+  });
+
+  it('refuses to clear the relay of a Mac that is still linked, or from another Mac\'s relay', async () => {
+    const host = await createDeviceIdentity();
+    const otherHost = await createDeviceIdentity();
+    const phone = await createDeviceIdentity();
+    const hostRow = deviceRow(host, 'host');
+    stubAccountPlane({ devices: [hostRow, deviceRow(phone, 'phone')] });
+    const relay = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
+    const mac = await relayAuthenticate(relay, host, host.deviceId, 'host');
+    const browser = await relayAuthenticate(relay, phone, host.deviceId, 'client');
+    mac.client.send(JSON.stringify({ type: 'relay_agent_state', snapshot: { agentId: 'codex' } }));
+    await waitFor(() => browser.messages.some((m) => m.type === 'relay_agent_state'), 'content');
+
+    const attempt = async (body: unknown) => {
+      const response = await relay.fetch('https://hub.test/internal/host-removed', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+      });
+      return { status: response.status, body: await response.json() };
+    };
+    expect(await attempt({ hostDeviceId: host.deviceId })).toMatchObject({ status: 409, body: { ok: false, closed: 0 } });
+    expect(await attempt({ hostDeviceId: otherHost.deviceId })).toMatchObject({ status: 403, body: { ok: false } });
+    expect(await attempt({})).toMatchObject({ status: 403, body: { ok: false } });
+    await expect(hubHealth(relay)).resolves.toMatchObject({ hostOnline: true, clients: 1 });
+    await runInDurableObject(relay, async (_hub, state) => {
+      expect(await state.storage.get('relayAgentSnapshot:codex')).toBeDefined();
+    });
+
+    // Linked to another account before the removal reached the relay: the
+    // Mac and its content stay, but the old account's browser is cut off now.
+    hostRow.user_id = 'user-2';
+    expect(await attempt({ hostDeviceId: host.deviceId })).toMatchObject({ status: 409, body: { ok: false, closed: 1 } });
+    await expect(browser.closed).resolves.toEqual(REMOVED);
+    await expect(hubHealth(relay)).resolves.toMatchObject({ hostOnline: true, clients: 0 });
+    mac.client.close();
+  });
+
+  it.each([
+    ['keeps a name the owner chose', '2026-10-01T00:00:00.000Z', 'Studio Mac'],
+    ['takes the Mac\'s name when the owner never chose one', null, "Studio Mac mini"],
+  ] as const)('re-linking the same Mac to the same account %s', async (_label, customizedAt, expectedLabel) => {
+    const host = await createDeviceIdentity();
+    const phone = await createDeviceIdentity();
+    const hostRow = {
+      ...deviceRow(host, 'host'), label: 'Studio Mac',
+      metadata: {
+        signaling_url: 'wss://old.example.test/signal', note: 'kept',
+        ...(customizedAt ? { label_customized_at: customizedAt } : {}),
+      },
+    };
+    const linkCodes = [linkCodeRow(host)];
+    stubAccountPlane({ devices: [hostRow, deviceRow(phone, 'phone')], linkCodes });
+    const signaling = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`relink-label-${host.deviceId}`));
+    const mac = await connectSignalingHost(signaling, host);
+
+    const reply = await accountRequest(signaling, '/account/claim-host-code', { code: 'KEEP23', requesterDeviceId: phone.deviceId });
+
+    expect(reply.status).toBe(200);
+    expect(reply.body).toMatchObject({ ok: true, host: { deviceId: host.deviceId, label: expectedLabel } });
+    expect(hostRow.label).toBe(expectedLabel);
+    expect(hostRow.metadata).toEqual({
+      signaling_url: 'wss://new.example.test/signal', turn_url: '', note: 'kept',
+      ...(customizedAt ? { label_customized_at: customizedAt } : {}),
+    });
+    await waitFor(() => hostIdentities(mac).length >= 2, 'the link notice');
+    expect(hostIdentities(mac).at(-1)).toMatchObject({ linked: true, host_label: expectedLabel });
+  });
+
+  it('records the Mac app version a Mac reports and lists it with the date the Mac was added', async () => {
+    const host = await createDeviceIdentity();
+    const otherHost = await createDeviceIdentity();
+    const phone = await createDeviceIdentity();
+    const hostRow: Record<string, unknown> = { ...deviceRow(host, 'host'), created_at: '2026-08-01T10:00:00.000Z' };
+    const otherRow = deviceRow(otherHost, 'host');
+    stubAccountPlane({ devices: [hostRow, otherRow, deviceRow(phone, 'phone')] });
+    const signaling = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`app-version-${host.deviceId}`));
+    await connectSignalingHost(signaling, host, { app_version: '0.1.11' });
+    await connectSignalingHost(signaling, otherHost, { app_version: '<script>' });
+    expect(hostRow.app_version).toBe('0.1.11');
+    expect(otherRow.app_version).toBeNull();
+
+    const response = await signaling.fetch(`https://hub.test/account/hosts?device_id=${phone.deviceId}`, {
+      headers: { authorization: 'Bearer test-token' },
+    });
+    const { hosts } = (await response.json()) as { hosts: Record<string, unknown>[] };
+    expect(hosts.find((h) => h.deviceId === host.deviceId)).toMatchObject({
+      appVersion: '0.1.11', addedAtUnixMs: Date.parse('2026-08-01T10:00:00.000Z'),
+    });
+    expect(hosts.find((h) => h.deviceId === otherHost.deviceId)).not.toHaveProperty('appVersion');
+  });
+
+  /** Resolves once every message the hub sent this socket before a ping has arrived. */
+  async function roundTrip(socket: HubSocket): Promise<void> {
+    const pongs = () => socket.messages.filter((message) => message.type === 'pong').length;
+    const before = pongs();
+    socket.client.send(JSON.stringify({ type: 'ping' }));
+    await waitFor(() => pongs() > before, 'a pong');
+  }
+
+  const DAY_MS = 24 * 60 * 60_000;
+  const removalKey = (deviceId: string) => `removed-host:${deviceId}`;
+
+  const MINUTE_MS = 60_000;
+  const HOUR_MS = 60 * MINUTE_MS;
+  const pendingKey = (deviceId: string) => `pending-removal:${deviceId}`;
+
+  /**
+   * From here on, Convex commits a removal and the connection drops before its
+   * answer arrives. Given `failFunctions`, the account service also stops
+   * answering lookups at that moment, until the test deletes that entry.
+   */
+  function loseRemovalAnswer(failFunctions?: Set<string>): void {
+    const stubbed = globalThis.fetch;
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const response = await stubbed(input, init);
+      if (gatewayFunction(input, init) !== 'removeHostDevice') return response;
+      failFunctions?.add('findDeviceByDeviceId');
+      throw new TypeError('Network connection lost.');
+    });
+  }
+
+  /** A Mac on signaling and on its relay with a browser and cached content, for the removal tests. */
+  async function removableMac(name: string, options: { failFunctions?: Set<string>; calls?: string[] } = {}) {
+    const host = await createDeviceIdentity();
+    const phone = await createDeviceIdentity();
+    const devices = [deviceRow(host, 'host'), deviceRow(phone, 'phone')];
+    stubAccountPlane({ devices, ...options });
+    const signaling = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`${name}-${host.deviceId}`));
+    const mac = await connectSignalingHost(signaling, host);
+    const relay = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
+    const macRelay = await relayAuthenticate(relay, host, host.deviceId, 'host');
+    const phoneRelay = await relayAuthenticate(relay, phone, host.deviceId, 'client');
+    macRelay.client.send(JSON.stringify({ type: 'relay_agent_state', snapshot: { agentId: 'codex', marker: 'before' } }));
+    await waitFor(() => phoneRelay.messages.some((m) => m.type === 'relay_agent_state'), 'cached content');
+    return { host, phone, devices, signaling, mac, relay, macRelay, phoneRelay };
+  }
+
+  /** Nothing of a removal happened yet: the Mac is linked on signaling and its relay serves the browser. */
+  async function expectMacUntouched(setup: Awaited<ReturnType<typeof removableMac>>) {
+    await roundTrip(setup.mac);
+    expect(hostIdentities(setup.mac)).toEqual([expect.objectContaining({ linked: true })]);
+    await expect(hubHealth(setup.relay)).resolves.toMatchObject({ hostOnline: true, clients: 1 });
+    await runInDurableObject(setup.relay, async (_hub, state) => {
+      expect(await state.storage.get('relayAgentSnapshot:codex')).toBeDefined();
+    });
+    await runInDurableObject(setup.signaling, async (_hub, state) => {
+      expect(await state.storage.get(removalKey(setup.host.deviceId))).toBeUndefined();
+    });
+  }
+
+  /** The removal's cleanup ran: the Mac told why, every relay socket closed, the record kept and the marker gone. */
+  async function expectRemovalFinished(setup: Awaited<ReturnType<typeof removableMac>>) {
+    await waitFor(() => hostIdentities(setup.mac).some((m) => m.reason === 'removed_from_account'), 'the removal notice');
+    await expect(setup.phoneRelay.closed).resolves.toEqual(REMOVED);
+    await expect(setup.macRelay.closed).resolves.toEqual(REMOVED);
+    await runInDurableObject(setup.relay, async (_hub, state) => {
+      expect(await state.storage.get('relayAgentSnapshot:codex')).toBeUndefined();
+    });
+    await runInDurableObject(setup.signaling, async (hub, state) => {
+      expect(typeof (await state.storage.get(removalKey(setup.host.deviceId)))).toBe('number');
+      expect(signalingInternals(hub).pendingRemovals.has(setup.host.deviceId)).toBe(false);
+      expect(await state.storage.get(pendingKey(setup.host.deviceId))).toBeUndefined();
+    });
+  }
+
+  it('finishes a removal whose answer from the account service was lost', async () => {
+    const calls: string[] = [];
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const setup = await removableMac('remove-lost', { calls });
+    loseRemovalAnswer();
+    calls.length = 0;
+
+    const reply = await accountRequest(setup.signaling, '/account/hosts/remove', { deviceId: setup.host.deviceId });
+
+    expect(reply).toEqual({ status: 200, body: { ok: true } });
+    expect(setup.devices.map((row) => row.device_id)).toEqual([setup.phone.deviceId]);
+    // Looked up first (the caller's Mac), removed, and looked up again after the lost answer.
+    expect(calls.slice(0, 4)).toEqual(['verifyBearerToken', 'findDeviceByDeviceId', 'removeHostDevice', 'findDeviceByDeviceId']);
+    await expectRemovalFinished(setup);
+    const logged = errors.mock.calls.flat().join(' ');
+    expect(logged).toContain("the account service's answer was lost after the Mac was removed");
+    expect(logged).not.toContain(setup.host.deviceId);
+    expect(logged).not.toContain('user@example.test');
+  });
+
+  it.each([
+    ['did not remove the Mac', ['removeHostDevice'], 'the Mac is still in an account', true],
+    ['cannot be reached at all', ['findDeviceByDeviceId'], 'account plane findDeviceByDeviceId failed', false],
+  ] as const)('answers 503 and changes nothing when the account service %s', async (_label, failing, logged, keepsMarker) => {
+    const failFunctions = new Set<string>();
+    const calls: string[] = [];
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const setup = await removableMac('remove-unavailable', { failFunctions, calls });
+    for (const fn of failing) failFunctions.add(fn);
+
+    const reply = await accountRequest(setup.signaling, '/account/hosts/remove', { deviceId: setup.host.deviceId });
+
+    expect(reply).toEqual({ status: 503, body: { ok: false, error: 'Account service is temporarily unavailable. Try again.' } });
+    expect(setup.devices.map((row) => row.device_id)).toEqual([setup.host.deviceId, setup.phone.deviceId]);
+    await expectMacUntouched(setup);
+    // Asked, but without an answer: the hub keeps a marker for its alarm. Not
+    // even looked up: Convex was never asked, and there is nothing to remember.
+    expect(calls.includes('removeHostDevice')).toBe(keepsMarker);
+    await runInDurableObject(setup.signaling, async (_hub, state) => {
+      const marker = await state.storage.get(pendingKey(setup.host.deviceId));
+      if (keepsMarker) expect(marker).toEqual({ userId: 'user-1', at: expect.any(Number) });
+      else expect(marker).toBeUndefined();
+    });
+    expect(errors.mock.calls.flat().join(' ')).toContain(logged);
+    setup.macRelay.client.close();
+  });
+
+  it('keeps a removal whose answer was lost while lookups fail, and finishes it when the same account asks again', async () => {
+    const failFunctions = new Set<string>();
+    const calls: string[] = [];
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const setup = await removableMac('remove-retry', { failFunctions, calls });
+    loseRemovalAnswer(failFunctions);
+    const before = Date.now();
+
+    const first = await accountRequest(setup.signaling, '/account/hosts/remove', { deviceId: setup.host.deviceId });
+
+    // Convex removed the Mac, but neither its answer nor a second lookup came back.
+    expect(first).toEqual({ status: 503, body: { ok: false, error: 'Account service is temporarily unavailable. Try again.' } });
+    expect(setup.devices.map((row) => row.device_id)).toEqual([setup.phone.deviceId]);
+    expect(errors.mock.calls.flat().join(' ')).toContain('the Mac could not be looked up again');
+    await runInDurableObject(setup.signaling, async (_hub, state) => {
+      const marker = await state.storage.get<{ userId: string; at: number }>(pendingKey(setup.host.deviceId));
+      expect(marker).toEqual({ userId: 'user-1', at: expect.any(Number) });
+      expect(marker!.at).toBeGreaterThanOrEqual(before);
+    });
+    // The account service answers again. Another account asking learns nothing and changes nothing.
+    failFunctions.delete('findDeviceByDeviceId');
+    expect(await accountRequest(setup.signaling, '/account/hosts/remove', { deviceId: setup.host.deviceId }, SECOND_ACCOUNT_TOKEN))
+      .toEqual({ status: 404, body: { ok: false, error: 'Mac not found' } });
+    await expectMacUntouched(setup);
+
+    // The same account asks again: the Mac is gone and its removal is pending, so it happened.
+    calls.length = 0;
+    const retry = await accountRequest(setup.signaling, '/account/hosts/remove', { deviceId: setup.host.deviceId });
+
+    expect(retry).toEqual({ status: 200, body: { ok: true } });
+    expect(calls).not.toContain('removeHostDevice');
+    await expectRemovalFinished(setup);
+    expect(errors.mock.calls.flat().join(' ')).toContain("finishing an earlier removal whose answer was lost");
+    // Finished: asking once more is a plain "Mac not found".
+    expect(await accountRequest(setup.signaling, '/account/hosts/remove', { deviceId: setup.host.deviceId }))
+      .toEqual({ status: 404, body: { ok: false, error: 'Mac not found' } });
+    const logged = errors.mock.calls.flat().join(' ');
+    expect(logged).not.toContain(setup.host.deviceId);
+    expect(logged).not.toContain('user@example.test');
+  });
+
+  it("finishes a removal whose answer was lost from the hub's alarm once Convex answers again", async () => {
+    const failFunctions = new Set<string>();
+    const calls: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const setup = await removableMac('remove-alarm', { failFunctions, calls });
+    loseRemovalAnswer(failFunctions);
+    const reply = await accountRequest(setup.signaling, '/account/hosts/remove', { deviceId: setup.host.deviceId });
+    expect(reply.status).toBe(503);
+
+    await runInDurableObject(setup.signaling, async (hub, state) => {
+      const marker = signalingInternals(hub).pendingRemovals.get(setup.host.deviceId)!;
+      expect(marker).toMatchObject({ userId: 'user-1', checkAt: marker.at + MINUTE_MS });
+      // The hub's alarm is set for the marker's first check, a minute after it was written.
+      expect(await state.storage.getAlarm()).toBe(marker.at + MINUTE_MS);
+
+      // Younger than a minute: a request may still be finishing it, so the alarm leaves it alone.
+      calls.length = 0;
+      await hub.alarm();
+      expect(calls).toEqual([]);
+
+      // Due, but Convex still does not answer: kept, and checked again a minute later.
+      marker.checkAt = Date.now() - 1;
+      await hub.alarm();
+      expect(calls).toEqual(['findDeviceByDeviceId']);
+      expect(signalingInternals(hub).pendingRemovals.get(setup.host.deviceId)).toBe(marker);
+      expect(marker.checkAt).toBeGreaterThan(Date.now());
+      expect(await state.storage.getAlarm()).toBe(marker.checkAt);
+      expect(await state.storage.get(removalKey(setup.host.deviceId))).toBeUndefined();
+
+      // Convex answers: the Mac's row is gone, so the removal happened, and the alarm finishes it.
+      failFunctions.delete('findDeviceByDeviceId');
+      marker.checkAt = Date.now() - 1;
+      await hub.alarm();
+      const removedAt = await state.storage.get<number>(removalKey(setup.host.deviceId));
+      expect(await state.storage.getAlarm()).toBe(removedAt! + 90 * DAY_MS);
+    });
+    expect(calls).not.toContain('removeHostDevice');
+    await expectRemovalFinished(setup);
+  });
+
+  it('drops a pending removal after an hour while Convex still lists the Mac, and cleans up nothing', async () => {
+    const failFunctions = new Set<string>();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const setup = await removableMac('remove-stale', { failFunctions });
+    // Convex fails before it commits: the Mac stays in the account.
+    failFunctions.add('removeHostDevice');
+    expect((await accountRequest(setup.signaling, '/account/hosts/remove', { deviceId: setup.host.deviceId })).status).toBe(503);
+
+    await runInDurableObject(setup.signaling, async (hub, state) => {
+      const marker = signalingInternals(hub).pendingRemovals.get(setup.host.deviceId)!;
+      // Still listed two minutes later: kept for now.
+      marker.at -= 2 * MINUTE_MS;
+      marker.checkAt = Date.now() - 1;
+      await hub.alarm();
+      expect(signalingInternals(hub).pendingRemovals.get(setup.host.deviceId)).toBe(marker);
+      expect(await state.storage.get(pendingKey(setup.host.deviceId))).toBeDefined();
+
+      // Still listed an hour later: the removal never happened, so the marker goes and nothing else.
+      marker.at -= HOUR_MS;
+      marker.checkAt = Date.now() - 1;
+      await hub.alarm();
+      expect(signalingInternals(hub).pendingRemovals.has(setup.host.deviceId)).toBe(false);
+      expect(await state.storage.get(pendingKey(setup.host.deviceId))).toBeUndefined();
+      expect(await state.storage.getAlarm()).toBeNull();
+    });
+    await expectMacUntouched(setup);
+    setup.macRelay.client.close();
+  });
+
+  it('keeps pending removals across eviction, checks them at the alarm, and drops unreadable markers', async () => {
+    const host = await createDeviceIdentity();
+    stubAccountPlane({ devices: [] });
+    const signaling = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`remove-load-${host.deviceId}`));
+    const at = Date.now();
+    await runInDurableObject(signaling, async (_hub, state) => {
+      await state.storage.put(pendingKey(host.deviceId), { userId: 'user-1', at });
+      await state.storage.put(pendingKey('gt-unreadable'), 'not a marker');
+      await state.storage.put(pendingKey('gt-no-account'), { at });
+    });
+    await evictDurableObject(signaling);
+
+    await runInDurableObject(signaling, async (hub, state) => {
+      expect([...signalingInternals(hub).pendingRemovals]).toEqual([[host.deviceId, { userId: 'user-1', at, checkAt: at + MINUTE_MS }]]);
+      expect([...(await state.storage.list({ prefix: 'pending-removal:' })).keys()]).toEqual([pendingKey(host.deviceId)]);
+      expect(await state.storage.getAlarm()).toBe(at + MINUTE_MS);
+    });
+  });
+
+  it("never runs a removal's cleanup for another account's Mac or an unlinked device", async () => {
+    const otherAccountMac = await createDeviceIdentity();
+    const unlinked = await createDeviceIdentity();
+    const calls: string[] = [];
+    // A removal that reached Convex now would lose its answer and look the device up again.
+    const failFunctions = new Set(['removeHostDevice']);
+    stubAccountPlane({ devices: [{ ...deviceRow(otherAccountMac, 'host'), user_id: 'user-2' }], calls, failFunctions });
+    const signaling = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`remove-foreign-${otherAccountMac.deviceId}`));
+    const otherMac = await connectSignalingHost(signaling, otherAccountMac);
+    const otherRelay = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(otherAccountMac.deviceId));
+    const otherMacRelay = await relayAuthenticate(otherRelay, otherAccountMac, otherAccountMac.deviceId, 'host');
+    otherMacRelay.client.send(JSON.stringify({ type: 'relay_agent_state', snapshot: { agentId: 'codex' } }));
+    await waitFor(
+      () => runInDurableObject(otherRelay, async (_hub, state) => !!(await state.storage.get('relayAgentSnapshot:codex'))),
+      "the other account's cached content",
+    );
+    const unlinkedRelay = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(unlinked.deviceId));
+    await runInDurableObject(unlinkedRelay, (_hub, state) => state.storage.put('relayAgentSnapshot:sentinel', 'kept'));
+    // Another account's removal of the unlinked device is still pending.
+    const othersMarker = { userId: 'user-2', at: Date.now() };
+    await runInDurableObject(signaling, async (hub, state) => {
+      signalingInternals(hub).pendingRemovals.set(unlinked.deviceId, { ...othersMarker, checkAt: othersMarker.at + MINUTE_MS });
+      await state.storage.put(pendingKey(unlinked.deviceId), othersMarker);
+    });
+
+    for (const deviceId of [otherAccountMac.deviceId, unlinked.deviceId]) {
+      expect(await accountRequest(signaling, '/account/hosts/remove', { deviceId }))
+        .toEqual({ status: 404, body: { ok: false, error: 'Mac not found' } });
+    }
+
+    expect(calls).not.toContain('removeHostDevice');
+    await runInDurableObject(signaling, async (_hub, state) => {
+      expect([...(await state.storage.list({ prefix: 'removed-host:' })).keys()]).toEqual([]);
+      expect(Object.fromEntries(await state.storage.list({ prefix: 'pending-removal:' }))).toEqual({
+        [pendingKey(unlinked.deviceId)]: othersMarker,
+      });
+    });
+    await roundTrip(otherMac);
+    expect(hostIdentities(otherMac)).toEqual([expect.objectContaining({ linked: true, user_id: 'user-2' })]);
+    await expect(hubHealth(otherRelay)).resolves.toMatchObject({ hostOnline: true });
+    await runInDurableObject(otherRelay, async (_hub, state) => {
+      expect(await state.storage.get('relayAgentSnapshot:codex')).toBeDefined();
+    });
+    await runInDurableObject(unlinkedRelay, async (_hub, state) => {
+      expect(await state.storage.get('relayAgentSnapshot:sentinel')).toBe('kept');
+    });
+    otherMacRelay.client.close();
+  });
+
+  it('tells a Mac that was offline when it was removed why it is unlinked, until it is linked again', async () => {
+    const host = await createDeviceIdentity();
+    const phone = await createDeviceIdentity();
+    const devices: Record<string, unknown>[] = [
+      { ...deviceRow(host, 'host'), created_at: '2026-08-01T10:00:00.000Z' },
+      deviceRow(phone, 'phone'),
+    ];
+    stubAccountPlane({ devices });
+    const signaling = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`remember-${host.deviceId}`));
+
+    const before = Date.now();
+    const removed = await accountRequest(signaling, '/account/hosts/remove', { deviceId: host.deviceId });
+    expect(removed).toEqual({ status: 200, body: { ok: true } });
+    await runInDurableObject(signaling, async (_hub, state) => {
+      const removedAt = await state.storage.get<number>(removalKey(host.deviceId));
+      expect(removedAt).toBeGreaterThanOrEqual(before);
+      // Kept 90 days; the hub's cleanup alarm is set for that moment.
+      expect(await state.storage.getAlarm()).toBe(removedAt! + 90 * DAY_MS);
+    });
+
+    // Remembered across eviction: the Mac learns the reason when it comes back.
+    await evictDurableObject(signaling);
+    const mac = await connectSignalingHost(signaling, host);
+    await roundTrip(mac);
+    expect(hostIdentities(mac)).toEqual([{ type: 'host_identity', linked: false, reason: 'removed_from_account' }]);
+
+    // Linked again with a new code from the Mac: the record is deleted, and
+    // so is a removal still pending for the Mac.
+    await runInDurableObject(signaling, async (hub, state) => {
+      const at = Date.now();
+      signalingInternals(hub).pendingRemovals.set(host.deviceId, { userId: 'user-1', at, checkAt: at + 60_000 });
+      await state.storage.put(`pending-removal:${host.deviceId}`, { userId: 'user-1', at });
+    });
+    mac.client.send(JSON.stringify({ type: 'create_link_code', host_label: 'Studio Mac mini' }));
+    await waitFor(() => mac.messages.some((m) => m.type === 'link_code_created'), 'a link code');
+    const code = String(mac.messages.find((m) => m.type === 'link_code_created')?.code);
+    const claimed = await accountRequest(signaling, '/account/claim-host-code', { code, requesterDeviceId: phone.deviceId });
+    expect(claimed.status).toBe(200);
+    await waitFor(() => hostIdentities(mac).some((m) => m.linked === true), 'the link notice');
+    expect(hostIdentities(mac).at(-1)).toMatchObject({ linked: true, user_id: 'user-1', host_label: 'Studio Mac mini' });
+    await runInDurableObject(signaling, async (hub, state) => {
+      expect(await state.storage.get(removalKey(host.deviceId))).toBeUndefined();
+      expect(signalingInternals(hub).pendingRemovals.has(host.deviceId)).toBe(false);
+      expect(await state.storage.get(`pending-removal:${host.deviceId}`)).toBeUndefined();
+    });
+    const reconnected = await connectSignalingHost(signaling, host);
+    await roundTrip(reconnected);
+    expect(hostIdentities(reconnected)).toEqual([
+      expect.objectContaining({ linked: true, user_id: 'user-1', host_label: 'Studio Mac mini' }),
+    ]);
+  });
+
+  it('links a Mac under its proposed name made to follow the name rule', async () => {
+    const host = await createDeviceIdentity();
+    const phone = await createDeviceIdentity();
+    const devices: Record<string, unknown>[] = [deviceRow(phone, 'phone')];
+    const linkCodes: Record<string, unknown>[] = [];
+    stubAccountPlane({ devices, linkCodes });
+    const signaling = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`proposed-${host.deviceId}`));
+    const mac = await connectSignalingHost(signaling, host);
+    expect(hostIdentities(mac)).toEqual([{ type: 'host_identity', linked: false }]);
+
+    // A computer name with a direction override, a zero width space and a line break.
+    const proposed = `Studio${String.fromCodePoint(0x202e)} Mac${String.fromCodePoint(0x200b)}\nmini`;
+    mac.client.send(JSON.stringify({ type: 'create_link_code', host_label: proposed }));
+    await waitFor(() => mac.messages.some((m) => m.type === 'link_code_created'), 'a link code');
+    expect(linkCodes).toEqual([expect.objectContaining({ host_label: 'Studio Mac mini' })]);
+
+    const code = String(mac.messages.find((m) => m.type === 'link_code_created')?.code);
+    const claimed = await accountRequest(signaling, '/account/claim-host-code', { code, requesterDeviceId: phone.deviceId });
+    expect(claimed.status).toBe(200);
+    expect(devices.find((row) => row.device_id === host.deviceId)).toMatchObject({ label: 'Studio Mac mini' });
+    await waitFor(() => hostIdentities(mac).some((m) => m.linked === true), 'the link notice');
+    expect(hostIdentities(mac).at(-1)).toMatchObject({ linked: true, host_label: 'Studio Mac mini' });
+  });
+
+  it.each([
+    ['ignores a removal record older than the Mac\'s current account row', -DAY_MS, { linked: true }],
+    ['applies a removal record to an account row older than it', DAY_MS, { linked: false, reason: 'removed_from_account' }],
+  ] as const)('%s', async (_label, removedAfterCreationMs, expected) => {
+    const host = await createDeviceIdentity();
+    const createdAt = Date.now() - 2 * DAY_MS;
+    // A stale read can still return the removed row; a later link creates a newer one.
+    stubAccountPlane({ devices: [{ ...deviceRow(host, 'host'), created_at: new Date(createdAt).toISOString() }] });
+    const signaling = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`remember-stale-${host.deviceId}`));
+    await runInDurableObject(signaling, async (_hub, state) => {
+      await state.storage.put(removalKey(host.deviceId), createdAt + removedAfterCreationMs);
+    });
+    await evictDurableObject(signaling);
+
+    const mac = await connectSignalingHost(signaling, host);
+
+    expect(hostIdentities(mac)).toEqual([expect.objectContaining(expected)]);
+  });
+
+  it('forgets a removal after 90 days, on load and from the cleanup alarm', async () => {
+    const host = await createDeviceIdentity();
+    const recentHost = await createDeviceIdentity();
+    stubAccountPlane({ devices: [] });
+    const signaling = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`remember-expiry-${host.deviceId}`));
+    const recentAt = Date.now() - DAY_MS;
+    await runInDurableObject(signaling, async (_hub, state) => {
+      await state.storage.put(removalKey(host.deviceId), Date.now() - 91 * DAY_MS);
+      await state.storage.put(removalKey(recentHost.deviceId), recentAt);
+    });
+    await evictDurableObject(signaling);
+
+    const mac = await connectSignalingHost(signaling, host);
+    const recent = await connectSignalingHost(signaling, recentHost);
+
+    expect(hostIdentities(mac)).toEqual([{ type: 'host_identity', linked: false }]);
+    expect(hostIdentities(recent)).toEqual([{ type: 'host_identity', linked: false, reason: 'removed_from_account' }]);
+    await runInDurableObject(signaling, async (hub, state) => {
+      expect(await state.storage.get(removalKey(host.deviceId))).toBeUndefined();
+      expect(await state.storage.get(removalKey(recentHost.deviceId))).toBe(recentAt);
+      expect(await state.storage.getAlarm()).toBe(recentAt + 90 * DAY_MS);
+
+      // A record that expires while the hub stays loaded goes at its alarm.
+      const removedHosts = (hub as unknown as { removedHosts: Map<string, number> }).removedHosts;
+      removedHosts.set(recentHost.deviceId, Date.now() - 90 * DAY_MS);
+      await hub.alarm();
+      expect(removedHosts.has(recentHost.deviceId)).toBe(false);
+      expect(await state.storage.get(removalKey(recentHost.deviceId))).toBeUndefined();
+      expect(await state.storage.getAlarm()).toBeNull();
+    });
+  });
+
+  it('signs a Mac out from the Mac: browsers cut off and caches cleared at once, without the removal reason', async () => {
+    const host = await createDeviceIdentity();
+    const phone = await createDeviceIdentity();
+    const hostRow = deviceRow(host, 'host');
+    const phoneRow = deviceRow(phone, 'phone');
+    const devices = [hostRow, phoneRow];
+    const pairings = [{
+      id: 'pair-1', owner_user_id: 'user-1', host_device_uuid: hostRow.id, phone_device_uuid: phoneRow.id,
+      paired_at: new Date().toISOString(), revoked_at: null, metadata: {},
+    }];
+    stubAccountPlane({ devices, pairings });
+
+    // Signaling in both directions, so the hub caches both authorizations.
+    const signaling = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`signout-${host.deviceId}`));
+    const macSignal = await connectSignalingHost(signaling, host);
+    const phoneSignal = await openHubSocket(signaling, '/signal');
+    phoneSignal.client.send(await signedClientAuth(phone, phoneSignal.nonce, 'client'));
+    await expect(phoneSignal.nextMessage()).resolves.toMatchObject({ type: 'auth_ok' });
+    phoneSignal.client.send(JSON.stringify({ fromDeviceId: phone.deviceId, toDeviceId: host.deviceId, payload: { kind: 'ping' }, envelopeId: 'offer' }));
+    await waitFor(() => macSignal.messages.some((m) => m.envelopeId === 'offer'), 'browser signaling');
+    await runInDurableObject(signaling, (hub) => hub.webSocketMessage(
+      signalingInternals(hub).peers.get(host.deviceId)!,
+      JSON.stringify({ fromDeviceId: host.deviceId, toDeviceId: phone.deviceId, payload: { kind: 'ping' }, envelopeId: 'answer' }),
+    ));
+    await waitFor(() => phoneSignal.messages.some((m) => m.envelopeId === 'answer'), 'Mac signaling');
+    const pair = `${phone.deviceId}->${host.deviceId}`;
+    await runInDurableObject(signaling, (hub) => {
+      expect(signalingInternals(hub).accountAuthorizationCache.has(pair)).toBe(true);
+      expect(signalingInternals(hub).hostEnvelopeAuthorizations.has(pair)).toBe(true);
+    });
+    const relay = env.RELAY_HUB.get(env.RELAY_HUB.idFromName(host.deviceId));
+    const macRelay = await relayAuthenticate(relay, host, host.deviceId, 'host');
+    const phoneRelay = await relayAuthenticate(relay, phone, host.deviceId, 'client');
+    macRelay.client.send(JSON.stringify({ type: 'relay_agent_state', snapshot: { agentId: 'codex', marker: 'before' } }));
+    await waitFor(() => phoneRelay.messages.some((m) => m.type === 'relay_agent_state'), 'content before sign-out');
+
+    // An earlier removal of this Mac is still pending (its answer was lost).
+    await runInDurableObject(signaling, async (hub, state) => {
+      const at = Date.now();
+      signalingInternals(hub).pendingRemovals.set(host.deviceId, { userId: 'user-1', at, checkAt: at + 60_000 });
+      await state.storage.put(`pending-removal:${host.deviceId}`, { userId: 'user-1', at });
+    });
+
+    macSignal.client.send(JSON.stringify({ type: 'unlink_host' }));
+
+    await waitFor(() => macSignal.messages.some((m) => m.type === 'host_unlinked'), 'the sign-out answer');
+    expect(macSignal.messages.find((m) => m.type === 'host_unlinked')).toMatchObject({ ok: true, linked: false });
+    expect(devices.map((row) => row.device_id)).toEqual([phone.deviceId]);
+    expect(pairings).toEqual([]);
+    // The account's browsers lose relay access now, and the relay's copies are deleted.
+    await expect(phoneRelay.closed).resolves.toEqual(REMOVED);
+    await expect(macRelay.closed).resolves.toEqual(REMOVED);
+    await waitFor(
+      () => runInDurableObject(relay, async (_hub, state) => (await state.storage.get('relayAgentSnapshot:codex')) === undefined),
+      'the relay cache deletion',
+    );
+    // The Sign Out ran the cleanup: the pending removal has nothing left to finish.
+    await waitFor(
+      () => runInDurableObject(signaling, (hub) => !signalingInternals(hub).pendingRemovals.has(host.deviceId)),
+      'the pending removal to be dropped',
+    );
+    await runInDurableObject(signaling, async (hub, state) => {
+      expect(signalingInternals(hub).accountAuthorizationCache.has(pair)).toBe(false);
+      expect(signalingInternals(hub).hostEnvelopeAuthorizations.has(pair)).toBe(false);
+      expect([...(await state.storage.list({ prefix: 'removed-host:' })).keys()]).toEqual([]);
+      expect([...(await state.storage.list({ prefix: 'pending-removal:' })).keys()]).toEqual([]);
+    });
+    // Signed out, not removed: no removal reason now or at the next connection.
+    expect(hostIdentities(macSignal).at(-1)).toEqual({ type: 'host_identity', linked: false });
+    expect(hostIdentities(macSignal).some((m) => 'reason' in m)).toBe(false);
+    const reconnected = await connectSignalingHost(signaling, host);
+    expect(hostIdentities(reconnected)).toEqual([{ type: 'host_identity', linked: false }]);
+  });
+
+  it('never sends linked:true for a rename that loses a race with the Mac\'s removal', async () => {
+    const host = await createDeviceIdentity();
+    const devices = [deviceRow(host, 'host')];
+    stubAccountPlane({ devices });
+    const signaling = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`race-remove-${host.deviceId}`));
+    const mac = await connectSignalingHost(signaling, host);
+    // The rename commits and then waits for the profile while the removal lands.
+    const gate = stubAccountPlane({ devices, gateOn: 'profile-lookup' });
+    const renaming = accountRequest(signaling, '/account/hosts/rename', { deviceId: host.deviceId, label: 'Renamed Mac' });
+    await waitFor(() => gate.reached, 'the rename to wait for the profile');
+
+    const removed = await accountRequest(signaling, '/account/hosts/remove', { deviceId: host.deviceId });
+    gate.release();
+
+    expect(removed).toEqual({ status: 200, body: { ok: true } });
+    expect((await renaming).status).toBe(200);
+    await roundTrip(mac);
+    expect(hostIdentities(mac).slice(1)).toEqual([{ type: 'host_identity', linked: false, reason: 'removed_from_account' }]);
+  });
+
+  // Where the rename's own lookups wait while the Mac's account changes:
+  // before its device lookup, before its profile lookup (the device lookup
+  // follows it), or with a device lookup that read the row before the change.
+  it.each([
+    ['is signed out on the Mac', 'device-lookup', 1],
+    ['is signed out on the Mac', 'profile-lookup', 1],
+    ['is signed out on the Mac', 'device-lookup-reply', 1],
+    ['is linked to another account', 'device-lookup', 0],
+    ['is linked to another account', 'profile-lookup', 0],
+    ['is revoked', 'device-lookup', 0],
+    ['is revoked', 'profile-lookup', 0],
+  ] as const)('never sends linked:true for a rename while the Mac %s (rename waiting at %s)', async (scenario, gateOn, unlinkedNotices) => {
+    const host = await createDeviceIdentity();
+    const hostRow = deviceRow(host, 'host');
+    const devices = [hostRow];
+    stubAccountPlane({ devices });
+    const signaling = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`race-rename-${gateOn}-${host.deviceId}`));
+    const mac = await connectSignalingHost(signaling, host);
+    // The rename commits and then loads the profile and looks the Mac up again; one of those waits.
+    const gate = stubAccountPlane({ devices, gateOn });
+    const renaming = accountRequest(signaling, '/account/hosts/rename', { deviceId: host.deviceId, label: 'Renamed Mac' });
+    await waitFor(() => gate.reached, 'the rename to wait for the account service');
+
+    if (scenario === 'is signed out on the Mac') {
+      mac.client.send(JSON.stringify({ type: 'unlink_host' }));
+      await waitFor(() => mac.messages.some((m) => m.type === 'host_unlinked'), 'the sign-out answer');
+    } else if (scenario === 'is linked to another account') {
+      hostRow.user_id = 'user-2';
+    } else {
+      hostRow.revoked_at = new Date().toISOString();
+    }
+    gate.release();
+
+    expect((await renaming).status).toBe(200);
+    await roundTrip(mac);
+    const later = hostIdentities(mac).slice(1);
+    expect(later.some((m) => m.linked === true)).toBe(false);
+    expect(later).toHaveLength(unlinkedNotices);
+  });
+
+  it('never sends linked:true for a rename that runs while a Sign Out on the Mac is still deleting its rows', async () => {
+    const host = await createDeviceIdentity();
+    const devices = [deviceRow(host, 'host')];
+    stubAccountPlane({ devices });
+    const signaling = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`race-signout-first-${host.deviceId}`));
+    const mac = await connectSignalingHost(signaling, host);
+    // The Sign Out starts first and waits at its own device lookup; the rename
+    // then runs start to finish while the Mac's rows still exist.
+    const gate = stubAccountPlane({ devices, gateOn: 'device-lookup' });
+    mac.client.send(JSON.stringify({ type: 'unlink_host' }));
+    await waitFor(() => gate.reached, 'the Sign Out to wait for its device lookup');
+
+    const renamed = await accountRequest(signaling, '/account/hosts/rename', { deviceId: host.deviceId, label: 'Renamed Mac' });
+    expect(renamed.status).toBe(200);
+    await roundTrip(mac);
+    expect(hostIdentities(mac).slice(1).some((m) => m.linked === true)).toBe(false);
+
+    gate.release();
+    await waitFor(() => mac.messages.some((m) => m.type === 'host_unlinked'), 'the sign-out answer');
+    await roundTrip(mac);
+    const later = hostIdentities(mac).slice(1);
+    expect(later.some((m) => m.linked === true)).toBe(false);
+    expect(later.at(-1)).toEqual({ type: 'host_identity', linked: false });
+  });
+
+  it('never sends linked:true to a Mac whose identity lookup read its row before it signed out', async () => {
+    const host = await createDeviceIdentity();
+    const devices = [deviceRow(host, 'host')];
+    // The Mac's second lookup at sign-in reads its linked row, then answers only after the Sign Out.
+    const gate = stubAccountPlane({ devices, gateOn: 'device-lookup-reply', gateSkip: 1 });
+    const signaling = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`race-signout-connect-${host.deviceId}`));
+    const socket = await openHubSocket(signaling, '/signal');
+    socket.client.send(await signedClientAuth(host, socket.nonce, 'host'));
+    await waitFor(() => gate.reached, "the Mac's identity lookup to hold a linked row");
+
+    socket.client.send(JSON.stringify({ type: 'unlink_host' }));
+    await waitFor(() => socket.messages.some((m) => m.type === 'host_unlinked'), 'the sign-out answer');
+    expect(devices).toEqual([]);
+    gate.release();
+
+    await waitFor(() => hostIdentities(socket).length >= 2, 'both identities');
+    await roundTrip(socket);
+    expect(hostIdentities(socket)).toEqual([
+      { type: 'host_identity', linked: false },
+      { type: 'host_identity', linked: false },
+    ]);
+  });
+
+  it.each([
+    // The new account's link tells the Mac itself; this sign-in sends nothing.
+    ['is linked to another account', []],
+    ['is revoked', [{ type: 'host_identity', linked: false }]],
+  ] as const)('never sends linked:true to a Mac that signs in while it %s', async (scenario, expected) => {
+    const host = await createDeviceIdentity();
+    const hostRow = deviceRow(host, 'host');
+    // The Mac's sign-in waits for the profile; its device lookup again comes after it.
+    const gate = stubAccountPlane({ devices: [hostRow], gateOn: 'profile-lookup' });
+    const signaling = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`race-signin-${host.deviceId}`));
+    const socket = await openHubSocket(signaling, '/signal');
+    socket.client.send(await signedClientAuth(host, socket.nonce, 'host'));
+    await waitFor(() => gate.reached, "the Mac's identity to wait for the profile");
+
+    if (scenario === 'is linked to another account') hostRow.user_id = 'user-2';
+    else hostRow.revoked_at = new Date().toISOString();
+    gate.release();
+
+    await roundTrip(socket);
+    expect(hostIdentities(socket)).toEqual(expected);
+  });
+
+  it('never sends linked:true to a Mac that reconnects while it is being removed', async () => {
+    const host = await createDeviceIdentity();
+    const devices = [deviceRow(host, 'host')];
+    const gate = stubAccountPlane({ devices, gateOn: 'profile-lookup' });
+    const signaling = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`race-reconnect-${host.deviceId}`));
+    const socket = await openHubSocket(signaling, '/signal');
+    socket.client.send(await signedClientAuth(host, socket.nonce, 'host'));
+    await waitFor(() => gate.reached, "the Mac's identity to wait for the profile");
+
+    const removed = await accountRequest(signaling, '/account/hosts/remove', { deviceId: host.deviceId });
+    gate.release();
+
+    expect(removed).toEqual({ status: 200, body: { ok: true } });
+    await waitFor(() => hostIdentities(socket).length >= 2, 'both identities');
+    await roundTrip(socket);
+    expect(hostIdentities(socket)).toEqual([
+      { type: 'host_identity', linked: false, reason: 'removed_from_account' },
+      { type: 'host_identity', linked: false, reason: 'removed_from_account' },
+    ]);
+  });
+
+  it('answers 200 with the renamed Mac when the reply\'s other details cannot be loaded', async () => {
+    const host = await createDeviceIdentity();
+    const phone = await createDeviceIdentity();
+    const hostRow: Record<string, unknown> = { ...deviceRow(host, 'host'), created_at: '2026-08-01T10:00:00.000Z' };
+    const failFunctions = new Set<string>();
+    stubAccountPlane({ devices: [hostRow, deviceRow(phone, 'phone')], failFunctions });
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const signaling = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`rename-degraded-${host.deviceId}`));
+    const mac = await connectSignalingHost(signaling, host);
+    failFunctions.add('findActivePairing');
+
+    const reply = await accountRequest(signaling, '/account/hosts/rename', {
+      deviceId: host.deviceId, label: 'Studio Mac', requesterDeviceId: phone.deviceId,
+    });
+
+    expect(reply.status).toBe(200);
+    expect(reply.body).toMatchObject({
+      ok: true,
+      host: {
+        deviceId: host.deviceId, label: 'Studio Mac', trusted: true, online: false,
+        pairedAtUnixMs: Date.parse('2026-08-01T10:00:00.000Z'), addedAtUnixMs: Date.parse('2026-08-01T10:00:00.000Z'),
+      },
+    });
+    expect(hostRow.label).toBe('Studio Mac');
+    await waitFor(() => hostIdentities(mac).some((m) => m.host_label === 'Studio Mac'), 'the renamed host identity');
+    expect(errors.mock.calls.flat().join(' ')).toContain('host record details unavailable');
   });
 });

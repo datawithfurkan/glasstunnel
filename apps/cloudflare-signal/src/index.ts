@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { cacheRecord, validCacheRecord, type CacheRecord } from './contentRetention';
+import { hostLabelFromInput, proposedHostLabel } from "./hostLabel";
 import {
   compactRelayAgentSnapshot,
   type CacheJsonValue,
@@ -36,6 +37,8 @@ interface SessionAttachment {
   deviceId?: string;
   publicKeyB64?: string;
   role?: string;
+  /** The Mac app version a host reported in client_auth, when it is a version string. */
+  appVersion?: string;
   issuedAt: number;
   nonceB64: string;
 }
@@ -199,6 +202,24 @@ interface DeviceApprovalRequestRow {
   responded_at: string | null;
 }
 
+/** A removal the signaling hub started and has not finished (see PENDING_REMOVAL_KEY_PREFIX). */
+interface PendingRemoval {
+  /** The account that asked for the removal. */
+  userId: string;
+  /** When the hub wrote the marker, just before it asked Convex. */
+  at: number;
+  /** When the hub's alarm next checks on it. Kept in memory only. */
+  checkAt: number;
+}
+
+/** A stored pending-removal marker, or null when it is not one the hub wrote. */
+function pendingRemovalFromStorage(value: unknown): PendingRemoval | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const { userId, at } = value as Record<string, unknown>;
+  if (typeof userId !== "string" || !userId || typeof at !== "number" || !Number.isFinite(at)) return null;
+  return { userId, at, checkAt: at + PENDING_REMOVAL_CHECK_INTERVAL_MS };
+}
+
 interface PublicHostRecord {
   deviceId: string;
   publicKeyB64: string;
@@ -211,6 +232,10 @@ interface PublicHostRecord {
   trusted: boolean;
   pairedAtUnixMs: number;
   lastSeenAtUnixMs?: number;
+  /** When this Mac was added to the account (its account record was created). */
+  addedAtUnixMs?: number;
+  /** The Mac app version the Mac last reported; omitted when the server has none. */
+  appVersion?: string;
 }
 
 /** A typed handle for one account-plane function behind the Convex gateway. */
@@ -237,6 +262,14 @@ class AccountPlaneUnavailable extends Error {
   constructor(readonly code: string) {
     super("account service is temporarily unavailable");
     this.name = "AccountPlaneUnavailable";
+  }
+}
+
+/** An account request refused with a specific status and a message the app can show. */
+class AccountRequestError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+    this.name = "AccountRequestError";
   }
 }
 
@@ -297,7 +330,13 @@ const convexAccountPlane = {
     },
     DeviceRow
   >("upsertUserDevice"),
-  touchDeviceLastSeen: gatewayRef<"mutation", { deviceId: string }, null>("touchDeviceLastSeen"),
+  touchDeviceLastSeen: gatewayRef<"mutation", { deviceId: string; appVersion?: string }, null>("touchDeviceLastSeen"),
+  renameHostDevice: gatewayRef<
+    "mutation",
+    { userId: string; deviceId: string; label: string },
+    DeviceRow
+  >("renameHostDevice"),
+  removeHostDevice: gatewayRef<"mutation", { userId: string; deviceId: string }, DeviceRow>("removeHostDevice"),
   insertApprovalRequest: gatewayRef<
     "mutation",
     {
@@ -402,6 +441,36 @@ const RELAY_ALARM_REFRESH_MIN_INTERVAL_MS = 5_000;
 const MAX_RELAY_HOST_HEALTH_CHECKS = 24;
 const LINK_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const RATE_LIMIT_RETRY_SECONDS = 60;
+/** The one answer for a Mac outside the caller's account, whatever the reason. */
+const MAC_NOT_FOUND_MESSAGE = "Mac not found";
+/** A Mac app version as the Mac reports it, for example `0.1.10` or `0.1.11-beta.2`. */
+const APP_VERSION_PATTERN = /^[0-9A-Za-z][0-9A-Za-z.+_-]{0,31}$/;
+/** host_identity reason when the account owner removed the Mac from another device. */
+const HOST_REMOVED_IDENTITY_REASON = "removed_from_account";
+/** Relay close for every socket of a Mac removed from its account. */
+const HOST_REMOVED_CLOSE_CODE = 4003;
+const HOST_REMOVED_CLOSE_REASON = "mac removed from account";
+/**
+ * The signaling hub remembers each Mac the account removed under this key
+ * (value: the removal time), so a Mac that was offline at the time still
+ * learns why it is unlinked. A link code claim of the Mac deletes the record.
+ */
+const REMOVED_HOST_KEY_PREFIX = "removed-host:";
+const REMOVED_HOST_RETENTION_MS = 90 * 24 * 60 * 60_000;
+/**
+ * A removal whose outcome may still be unknown: the signaling hub writes
+ * `pending-removal:<device id>` = {userId, at} before it asks Convex to remove
+ * the Mac, and deletes it once the cleanup ran or the removal is known not to
+ * have happened. If Convex's answer is lost, a retry by the same account or the
+ * hub's alarm finishes the cleanup.
+ */
+const PENDING_REMOVAL_KEY_PREFIX = "pending-removal:";
+/** The alarm checks a pending removal once it is this old, and again this long after each check. */
+const PENDING_REMOVAL_CHECK_INTERVAL_MS = 60_000;
+/** A pending removal whose Mac is still in an account after this long never happened; its marker goes. */
+const PENDING_REMOVAL_MAX_AGE_MS = 60 * 60_000;
+/** storage.delete accepts at most 128 keys per call. */
+const STORAGE_DELETE_BATCH = 128;
 
 function configuredBrowserOrigins(env: Env): Set<string> {
   const configured = env.ALLOWED_ORIGINS ?? env.PUBLIC_APP_URL;
@@ -624,6 +693,42 @@ function normalizeCode(raw: string): string {
   return raw.toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
 
+/**
+ * Maps a rename or removal refusal from the account plane to the reply the
+ * app gets. `host_not_found` covers a missing Mac, another account's Mac, a
+ * revoked row and a phone or browser alike, so the reply reveals nothing about
+ * devices outside the caller's account. Outages pass through (503).
+ */
+function hostManagementError(error: unknown): unknown {
+  if (!(error instanceof AccountPlaneRejection)) return error;
+  if (error.code === "host_not_found") return new AccountRequestError(404, MAC_NOT_FOUND_MESSAGE);
+  if (error.code === "invalid_label") return new AccountRequestError(400, "That name can't be used. Try a different one.");
+  return new AccountRequestError(409, "Could not change this Mac. Refresh and try again.");
+}
+
+function appVersionFromInput(value: unknown): string | undefined {
+  return typeof value === "string" && APP_VERSION_PATTERN.test(value) ? value : undefined;
+}
+
+/** A request body as an object; anything else (null, an array, a number) reads as empty. */
+async function readJsonObject(request: Request): Promise<Record<string, unknown>> {
+  const body: unknown = await request.json();
+  return body && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>) : {};
+}
+
+/** The host_identity a linked Mac receives: its account and the account's name for the Mac. */
+function linkedHostIdentity(host: DeviceRow, profile: ProfileRow | null, user?: AccountUser): Record<string, unknown> {
+  return {
+    type: "host_identity",
+    linked: true,
+    user_id: host.user_id,
+    email: profile?.email ?? user?.email ?? "",
+    display_name: profile?.display_name ?? (user ? userDisplayName(user) : ""),
+    avatar_url: profile?.avatar_url ?? "",
+    host_label: host.label,
+  };
+}
+
 function convexSiteUrl(env: Env): string {
   const explicit = (env.CONVEX_SITE_URL ?? "").trim();
   if (explicit) return explicit.replace(/\/+$/, "");
@@ -779,9 +884,12 @@ async function claimHostLinkCode(env: Env, code: string, claimedUserId: string):
   }
 }
 
-async function touchDeviceLastSeen(env: Env, deviceId: string): Promise<void> {
+async function touchDeviceLastSeen(env: Env, deviceId: string, appVersion?: string): Promise<void> {
   try {
-    await convexMutation(env, convexAccountPlane.touchDeviceLastSeen, { deviceId });
+    await convexMutation(env, convexAccountPlane.touchDeviceLastSeen, {
+      deviceId,
+      ...(appVersion ? { appVersion } : {}),
+    });
   } catch {
     // Unlinked devices are expected before account claim. Ignore.
   }
@@ -800,6 +908,7 @@ function publicHostRecord(
   lastSeenAtOverrideUnixMs?: number,
 ): PublicHostRecord {
   const rowLastSeenAtUnixMs = intFromIso(row.last_seen_at);
+  const addedAtUnixMs = intFromIso(row.created_at);
   const lastSeenAtUnixMs = Math.max(
     rowLastSeenAtUnixMs ?? 0,
     lastSeenAtOverrideUnixMs ?? 0,
@@ -814,8 +923,10 @@ function publicHostRecord(
     turnPassword: hostMetadataString(row, "turn_password") || undefined,
     online,
     trusted,
-    pairedAtUnixMs: intFromIso(pairedAt) ?? intFromIso(row.created_at) ?? Date.now(),
+    pairedAtUnixMs: intFromIso(pairedAt) ?? addedAtUnixMs ?? Date.now(),
     ...(lastSeenAtUnixMs > 0 ? { lastSeenAtUnixMs } : {}),
+    ...(addedAtUnixMs !== undefined ? { addedAtUnixMs } : {}),
+    ...(row.app_version ? { appVersion: row.app_version } : {}),
   };
 }
 
@@ -1017,6 +1128,30 @@ export class SignalingHub extends DurableObject<Env> {
   /** Positive Mac→browser envelope decisions; revocation clears the pair's entry. */
   private readonly hostEnvelopeAuthorizations = new Map<string, HostEnvelopeAuthorization>();
   private readonly revokedPairs = new Set<string>();
+  /** Macs the account removed: device id -> removal time (removed-host:<id>, kept 90 days). */
+  private readonly removedHosts = new Map<string, number>();
+  /** Removals not finished yet: device id -> marker (pending-removal:<id>). */
+  private readonly pendingRemovals = new Map<string, PendingRemoval>();
+  /**
+   * Orders a Mac's Sign Out against the host identity lookups that may tell it
+   * it is linked. A counter, because a Worker's Date.now() stands still between
+   * I/O events, so two events can share one millisecond.
+   */
+  private hostLinkClock = 0;
+  /**
+   * Macs signed out on the Mac (unlink_host): device id -> the clock tick when
+   * the Sign Out started, moved on when its account rows are deleted. A host
+   * identity lookup that started before that tick sends no linked:true. A link
+   * code claim that links the Mac again clears it. In memory only: it matters
+   * only while such a lookup is running.
+   */
+  private readonly hostUnlinkedSince = new Map<string, number>();
+  /**
+   * Sign Outs on the Mac still running, per device id. While one runs, no host
+   * identity lookup sends linked:true, whenever that lookup started: the Sign
+   * Out may delete the rows the lookup read, and its own linked:false follows.
+   */
+  private readonly hostUnlinksInProgress = new Map<string, number>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -1148,7 +1283,7 @@ export class SignalingHub extends DurableObject<Env> {
     const previous = this.lastSeenTouchAt.get(session.deviceId) ?? 0;
     if (!force && now - previous < LAST_SEEN_TOUCH_MIN_INTERVAL_MS) return;
     this.lastSeenTouchAt.set(session.deviceId, now);
-    await touchDeviceLastSeen(this.env, session.deviceId);
+    await touchDeviceLastSeen(this.env, session.deviceId, session.role === "host" ? session.appVersion : undefined);
   }
 
   private async handleClientAuth(ws: WebSocket, parsed: unknown): Promise<void> {
@@ -1206,11 +1341,13 @@ export class SignalingHub extends DurableObject<Env> {
       return;
     }
 
+    const appVersion = role === "host" ? appVersionFromInput(parsed.app_version) : undefined;
     const updated: SessionAttachment = {
       authenticated: true,
       deviceId,
       publicKeyB64,
       role,
+      ...(appVersion ? { appVersion } : {}),
       issuedAt: session.issuedAt,
       nonceB64: session.nonceB64,
     };
@@ -1250,6 +1387,10 @@ export class SignalingHub extends DurableObject<Env> {
           return await this.handleRegisterDeviceRequest(request);
         case "/account/hosts":
           return await this.handleListHostsRequest(request, url);
+        case "/account/hosts/rename":
+          return await this.handleRenameHostRequest(request);
+        case "/account/hosts/remove":
+          return await this.handleRemoveHostRequest(request);
         case "/account/claim-host-code":
           return await this.handleClaimHostCodeRequest(request);
         case "/account/request-approval":
@@ -1261,6 +1402,9 @@ export class SignalingHub extends DurableObject<Env> {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "unknown error";
+      if (error instanceof AccountRequestError) {
+        return json({ ok: false, error: error.message }, { status: error.status });
+      }
       if (error instanceof ClaimedLinkCodeUnavailable) {
         return json({ ok: false, error: CLAIMED_LINK_CODE_UNAVAILABLE_MESSAGE }, { status: 503 });
       }
@@ -1341,6 +1485,416 @@ export class SignalingHub extends DurableObject<Env> {
     return json({ ok: true, hosts });
   }
 
+  /**
+   * POST /account/hosts/rename {deviceId, label[, requesterDeviceId]}: names one
+   * of the caller's Macs for every phone and browser of the account. The
+   * ownership check runs inside the Convex mutation. A connected Mac receives
+   * a fresh host_identity with the new host_label.
+   */
+  private async handleRenameHostRequest(request: Request): Promise<Response> {
+    if (request.method !== "POST") {
+      return json({ ok: false, error: "method not allowed" }, { status: 405 });
+    }
+
+    const user = await resolveAuthenticatedUser(this.env, request);
+    const body = await readJsonObject(request);
+    const deviceId = stringField(body.deviceId);
+    if (!deviceId) throw new AccountRequestError(400, "deviceId is required");
+    // Convex's renameHostDevice applies the same rule (convex/hostLabel.ts);
+    // this copy answers first with the message the app shows.
+    const checked = hostLabelFromInput(body.label);
+    if (!checked.ok) throw new AccountRequestError(400, checked.error);
+
+    let host: DeviceRow;
+    try {
+      host = await convexMutation(this.env, convexAccountPlane.renameHostDevice, {
+        userId: user.id,
+        deviceId,
+        label: checked.label,
+      });
+    } catch (error) {
+      throw hostManagementError(error);
+    }
+
+    // The rename is committed: from here on nothing turns it into a failure.
+    await this.pushLinkedHostIdentity(host, user);
+    let record: PublicHostRecord;
+    try {
+      record = await this.hostRecordForAccount(user.id, host, stringField(body.requesterDeviceId));
+    } catch {
+      console.error("Mac rename: host record details unavailable; answering with the renamed record");
+      record = publicHostRecord(host, true, null, false);
+    }
+    return json({ ok: true, host: record });
+  }
+
+  /**
+   * POST /account/hosts/remove {deviceId}: removes one of the caller's Macs
+   * from the account.
+   *
+   * First the Mac is looked up: unless it is the caller's active Mac (a host,
+   * not revoked, in the caller's account) the answer is 404 "Mac not found"
+   * and nothing else runs, so no other device can reach the cleanup below.
+   * Then the hub stores a pending-removal marker and, in order: (1) Convex
+   * deletes the Mac's device row, pairings, approval requests and link codes
+   * in one mutation that checks ownership again; (2) this hub remembers the
+   * removal for 90 days, tells a connected Mac it is no longer linked (reason
+   * removed_from_account) and forgets the Mac's cached authorizations and
+   * queued signaling; (3) the Mac's relay closes every socket and deletes its
+   * cached content; then the marker goes. Once (1) succeeded the request
+   * succeeds; a failure in (2) or (3) is logged.
+   *
+   * If the account plane does not answer (1), the Mac is looked up again: the
+   * mutation may have committed and only its reply been lost. When the Mac's
+   * row is gone, (2) and (3) run and the request succeeds. Otherwise it fails
+   * with 503 and the marker stays: a later removal by the same account that
+   * finds no row, or the hub's alarm (finishPendingRemovals), finishes it.
+   */
+  private async handleRemoveHostRequest(request: Request): Promise<Response> {
+    if (request.method !== "POST") {
+      return json({ ok: false, error: "method not allowed" }, { status: 405 });
+    }
+
+    const user = await resolveAuthenticatedUser(this.env, request);
+    const body = await readJsonObject(request);
+    const deviceId = stringField(body.deviceId);
+    if (!deviceId) throw new AccountRequestError(400, "deviceId is required");
+
+    let host: DeviceRow | null;
+    try {
+      host = await findDeviceByDeviceId(this.env, deviceId);
+    } catch (error) {
+      throw hostManagementError(error);
+    }
+    if (!host) {
+      // This account removed the Mac earlier and the answer was lost: its row
+      // is gone, so that removal happened. Finish it instead of answering 404.
+      const pending = this.pendingRemovals.get(deviceId);
+      if (pending?.userId !== user.id) throw new AccountRequestError(404, MAC_NOT_FOUND_MESSAGE);
+      console.error("Mac removal: finishing an earlier removal whose answer was lost");
+      await this.finishHostRemoval(deviceId, pending);
+      return json({ ok: true });
+    }
+    if (host.user_id !== user.id || host.kind !== "host" || host.revoked_at) {
+      throw new AccountRequestError(404, MAC_NOT_FOUND_MESSAGE);
+    }
+
+    // Stored before Convex is asked, so a lost answer can still be finished.
+    const pending = await this.rememberPendingRemoval(deviceId, user.id);
+    try {
+      await convexMutation(this.env, convexAccountPlane.removeHostDevice, { userId: user.id, deviceId });
+    } catch (error) {
+      if (!(error instanceof AccountPlaneUnavailable)) {
+        // Refused (for example the Mac changed account meanwhile): nothing was removed.
+        await this.forgetPendingRemoval(deviceId, pending);
+        throw hostManagementError(error);
+      }
+      let current: DeviceRow | null;
+      try {
+        current = await findDeviceByDeviceId(this.env, deviceId);
+      } catch {
+        console.error("Mac removal: no answer from the account service, and the Mac could not be looked up again");
+        throw error;
+      }
+      if (current) {
+        console.error("Mac removal: no answer from the account service, and the Mac is still in an account");
+        throw error;
+      }
+      // Committed, reply lost: a retry would find no Mac to remove.
+      console.error("Mac removal: the account service's answer was lost after the Mac was removed; finishing the cleanup");
+    }
+
+    await this.finishHostRemoval(deviceId, pending);
+    return json({ ok: true });
+  }
+
+  /**
+   * Steps (2) and (3) of a removal Convex committed: the removal record, the
+   * Mac told, signaling and relay cleanup. Then the removal's pending marker
+   * goes (only `pending`, not a newer removal's marker).
+   */
+  private async finishHostRemoval(hostDeviceId: string, pending: PendingRemoval): Promise<void> {
+    try {
+      await this.forgetRemovedHost(hostDeviceId);
+    } catch {
+      console.error("Mac removal: signaling cleanup failed");
+    }
+    await this.clearHostRelay(hostDeviceId, "Mac removal");
+    await this.forgetPendingRemoval(hostDeviceId, pending);
+  }
+
+  /** Stores a pending-removal marker, in memory at once and then in storage. */
+  private async rememberPendingRemoval(hostDeviceId: string, userId: string): Promise<PendingRemoval> {
+    const at = Date.now();
+    const pending: PendingRemoval = { userId, at, checkAt: at + PENDING_REMOVAL_CHECK_INTERVAL_MS };
+    this.pendingRemovals.set(hostDeviceId, pending);
+    try {
+      await this.ctx.storage.put(`${PENDING_REMOVAL_KEY_PREFIX}${hostDeviceId}`, { userId, at });
+      await this.scheduleQueueCleanup();
+    } catch {
+      // The removal still runs; only a lost answer could not be finished later.
+      console.error("Mac removal: pending removal not saved");
+    }
+    return pending;
+  }
+
+  /**
+   * Deletes a Mac's pending-removal marker: `pending` only when it is still
+   * the current one, or whichever marker there is when `pending` is omitted.
+   */
+  private async forgetPendingRemoval(hostDeviceId: string, pending?: PendingRemoval): Promise<void> {
+    const current = this.pendingRemovals.get(hostDeviceId);
+    if (!current || (pending && current !== pending)) return;
+    this.pendingRemovals.delete(hostDeviceId);
+    try {
+      await this.ctx.storage.delete(`${PENDING_REMOVAL_KEY_PREFIX}${hostDeviceId}`);
+      await this.scheduleQueueCleanup();
+    } catch {
+      // A marker left in storage returns on load and is checked again; a Mac
+      // still in an account is never cleaned up by it.
+      console.error("Mac removal: pending removal not cleared");
+    }
+  }
+
+  /**
+   * The alarm's part of a removal whose answer was lost. Each marker at least a
+   * minute old is checked against Convex: no row means the removal committed,
+   * so its cleanup runs and the marker goes; a row means it has not, and after
+   * an hour the marker goes without cleanup; a failed lookup keeps the marker
+   * for the next check a minute later. Never throws.
+   */
+  private async finishPendingRemovals(): Promise<void> {
+    for (const [hostDeviceId, pending] of [...this.pendingRemovals]) {
+      if (pending.checkAt > Date.now()) continue;
+      // The next check, unless this one ends the marker. Set first, so an
+      // alarm scheduled while this check runs does not come back at once.
+      pending.checkAt = Date.now() + PENDING_REMOVAL_CHECK_INTERVAL_MS;
+      try {
+        let row: DeviceRow | null;
+        try {
+          row = await findDeviceByDeviceId(this.env, hostDeviceId);
+        } catch {
+          console.error("Mac removal: a pending removal could not be checked; trying again later");
+          continue;
+        }
+        // Finished or replaced by a request while the lookup ran.
+        if (this.pendingRemovals.get(hostDeviceId) !== pending) continue;
+        if (!row) {
+          console.error("Mac removal: finishing a removal whose answer was lost");
+          await this.finishHostRemoval(hostDeviceId, pending);
+        } else if (Date.now() - pending.at >= PENDING_REMOVAL_MAX_AGE_MS) {
+          // Still in an account an hour later: Convex never removed it.
+          await this.forgetPendingRemoval(hostDeviceId, pending);
+        }
+      } catch {
+        console.error("Mac removal: a pending removal could not be finished; trying again later");
+      }
+    }
+  }
+
+  /**
+   * The rename reply's host record, as the hosts list would show it to the
+   * requesting browser. Without a requester the record follows the
+   * account-first rule: the signed-in account can open its own Macs.
+   */
+  private async hostRecordForAccount(
+    userId: string,
+    host: DeviceRow,
+    requesterDeviceId: string,
+  ): Promise<PublicHostRecord> {
+    let trusted = true;
+    let pairedAt: string | null = null;
+    if (requesterDeviceId) {
+      const requester = await findDeviceByDeviceId(this.env, requesterDeviceId);
+      if (!requester || requester.user_id !== userId || requester.kind === "host" || requester.revoked_at) {
+        trusted = false;
+      } else {
+        const [pairing, revoked] = await Promise.all([
+          findActivePairing(this.env, userId, host.id, requester.id),
+          hasRevokedPairing(this.env, host, requester),
+        ]);
+        trusted = !revoked;
+        pairedAt = pairing?.paired_at ?? null;
+      }
+    }
+    const relayPresence = await relayPresenceForHost(this.env, host.device_id);
+    return publicHostRecord(host, trusted, pairedAt, relayPresence?.online === true, relayPresence?.lastSeenAtUnixMs);
+  }
+
+  /**
+   * Sends a connected Mac its current account identity and name. Never reports
+   * it unlinked, and sends nothing unless the Mac is still this account's
+   * linked Mac once the profile has loaded: the device is looked up again
+   * after the profile, a removal remembered meanwhile wins, and so does a Sign
+   * Out on the Mac that started or finished after this lookup began. So a
+   * rename that races a removal, a Sign Out on the Mac or a re-link to another
+   * account cannot leave the Mac believing it is linked.
+   */
+  private async pushLinkedHostIdentity(host: DeviceRow, user?: AccountUser): Promise<void> {
+    if (!this.peers.has(host.device_id)) return;
+    const lookupStartedAt = this.tickHostLinkClock();
+    try {
+      // In this order: the device lookup is the newest read when it answers.
+      const profile = await findProfileByUserId(this.env, host.user_id);
+      const current = await findDeviceByDeviceId(this.env, host.device_id);
+      if (this.signedOutSince(host.device_id, lookupStartedAt)) return;
+      if (!this.isLinkedHostRow(current) || current.user_id !== host.user_id) return;
+      // Looked up again: the Mac may have reconnected while these loaded.
+      const hostSocket = this.peers.get(host.device_id);
+      if (!hostSocket || this.getSession(hostSocket)?.role !== "host") return;
+      if (!sendJsonToOpenSocket(hostSocket, linkedHostIdentity(current, profile, user))) this.unregisterPeer(hostSocket);
+    } catch {
+      // The Mac shows the new name on its next connection.
+      console.error("Mac rename: host identity update not delivered");
+    }
+  }
+
+  /**
+   * Step (2) of an account removal: remembers the removal (removed-host:<id>,
+   * 90 days, so a Mac that was offline learns the reason when it reconnects),
+   * tells a connected Mac it is no longer linked (reason removed_from_account),
+   * and clears this hub's signaling state for it.
+   */
+  private async forgetRemovedHost(hostDeviceId: string): Promise<void> {
+    // Remembered in memory before any await: a rename or a Mac reconnect that
+    // is still waiting on the account plane sees it and sends no linked:true.
+    const remembered = this.rememberRemovedHost(hostDeviceId);
+
+    const hostSocket = this.peers.get(hostDeviceId);
+    if (hostSocket && this.getSession(hostSocket)?.role === "host") {
+      const notified = sendJsonToOpenSocket(hostSocket, {
+        type: "host_identity",
+        linked: false,
+        reason: HOST_REMOVED_IDENTITY_REASON,
+      });
+      if (!notified) this.unregisterPeer(hostSocket);
+    }
+
+    try {
+      await remembered;
+    } catch {
+      console.error("Mac removal: removal record not saved");
+    }
+    await this.forgetHostSignaling(hostDeviceId);
+  }
+
+  /**
+   * Drops this hub's signaling state for a Mac that left its account (removed
+   * by the account, or signed out on the Mac): cached envelope authorizations
+   * between it and the account's browsers, and queued signaling to or from it,
+   * so WebRTC signaling stops now rather than when the two-minute authorization
+   * cache expires. Browser denials (revoked-pair:*) stay; they are not account
+   * rows.
+   */
+  private async forgetHostSignaling(hostDeviceId: string): Promise<void> {
+    const pairSuffix = `->${hostDeviceId}`;
+    for (const key of [...this.accountAuthorizationCache.keys()]) {
+      if (key.endsWith(pairSuffix)) this.accountAuthorizationCache.delete(key);
+    }
+    for (const key of [...this.hostEnvelopeAuthorizations.keys()]) {
+      if (key.endsWith(pairSuffix)) this.hostEnvelopeAuthorizations.delete(key);
+    }
+
+    let queuesChanged = this.offlineQueues.delete(hostDeviceId);
+    for (const [destination, queue] of this.offlineQueues) {
+      const kept = queue.filter((entry) => entry.source?.deviceId !== hostDeviceId);
+      if (kept.length === queue.length) continue;
+      queuesChanged = true;
+      if (kept.length) this.offlineQueues.set(destination, kept);
+      else this.offlineQueues.delete(destination);
+    }
+    if (queuesChanged) await this.persistOfflineQueues();
+  }
+
+  /**
+   * Step (3): asks the Mac's relay to close every socket with 4003 "mac removed
+   * from account" and delete its cached content. The relay checks with Convex
+   * first and refuses while the Mac is still linked, so a repeated or late
+   * call is safe. Failures are logged without device or account details.
+   */
+  private async clearHostRelay(hostDeviceId: string, context: string): Promise<void> {
+    try {
+      const relay = this.env.RELAY_HUB.get(this.env.RELAY_HUB.idFromName(hostDeviceId));
+      const response = await relay.fetch("https://relay.glasstunnel.internal/internal/host-removed", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ hostDeviceId }),
+      });
+      const result = (await response.json().catch(() => null)) as { ok?: boolean } | null;
+      if (!response.ok || result?.ok !== true) {
+        console.error(`${context}: relay cleanup not confirmed (HTTP ${response.status})`);
+      }
+    } catch {
+      console.error(`${context}: relay cleanup unreachable`);
+    }
+  }
+
+  /** Records, in memory at once and then in storage, that the account removed this Mac. */
+  private async rememberRemovedHost(hostDeviceId: string): Promise<void> {
+    const removedAt = Date.now();
+    this.removedHosts.set(hostDeviceId, removedAt);
+    await this.ctx.storage.put(`${REMOVED_HOST_KEY_PREFIX}${hostDeviceId}`, removedAt);
+    await this.scheduleQueueCleanup();
+  }
+
+  /** A link code claim linked this Mac again, so its removal is no longer the reason it is unlinked. */
+  private async forgetRemovalRecord(hostDeviceId: string): Promise<void> {
+    if (!this.removedHosts.delete(hostDeviceId)) return;
+    try {
+      await this.ctx.storage.delete(`${REMOVED_HOST_KEY_PREFIX}${hostDeviceId}`);
+      await this.scheduleQueueCleanup();
+    } catch {
+      // isLinkedHostRow ignores a record older than the Mac's new account row.
+      console.error("Mac link: removal record not cleared");
+    }
+  }
+
+  /**
+   * Whether a remembered removal explains why this Mac is unlinked. A record
+   * older than 90 days does not count, and neither does one older than the
+   * Mac's current account row (`row`), which a later link created.
+   */
+  private removalRecordApplies(hostDeviceId: string, row?: DeviceRow | null): boolean {
+    const removedAt = this.removedHosts.get(hostDeviceId);
+    if (removedAt === undefined || Date.now() - removedAt >= REMOVED_HOST_RETENTION_MS) return false;
+    const createdAt = row ? Date.parse(row.created_at) : NaN;
+    return !(Number.isFinite(createdAt) && createdAt > removedAt);
+  }
+
+  private tickHostLinkClock(): number {
+    this.hostLinkClock += 1;
+    return this.hostLinkClock;
+  }
+
+  /** Marks a Sign Out on the Mac as starting, or as having deleted the Mac's account rows. */
+  private markHostUnlinked(hostDeviceId: string): void {
+    this.hostUnlinkedSince.set(hostDeviceId, this.tickHostLinkClock());
+  }
+
+  /**
+   * Whether a Sign Out on the Mac started or deleted its rows after a host
+   * identity lookup that began at `lookupStartedAt`: that lookup may have read
+   * the Mac's rows before they were deleted, so it must not say linked:true.
+   */
+  private signedOutSince(hostDeviceId: string, lookupStartedAt: number): boolean {
+    if ((this.hostUnlinksInProgress.get(hostDeviceId) ?? 0) > 0) return true;
+    return (this.hostUnlinkedSince.get(hostDeviceId) ?? 0) > lookupStartedAt;
+  }
+
+  /** An active Mac row (a host, not revoked) that no remembered removal covers. */
+  private isLinkedHostRow(row: DeviceRow | null | undefined): row is DeviceRow {
+    return !!row && row.kind === "host" && !row.revoked_at && !this.removalRecordApplies(row.device_id, row);
+  }
+
+  /** host_identity for a Mac in no account, with the reason while its removal is remembered. */
+  private unlinkedHostIdentity(hostDeviceId: string): Record<string, unknown> {
+    return {
+      type: "host_identity",
+      linked: false,
+      ...(this.removalRecordApplies(hostDeviceId) ? { reason: HOST_REMOVED_IDENTITY_REASON } : {}),
+    };
+  }
+
   private async handleClaimHostCodeRequest(request: Request): Promise<Response> {
     if (request.method !== "POST") {
       return json({ ok: false, error: "method not allowed" }, { status: 405 });
@@ -1389,6 +1943,11 @@ export class SignalingHub extends DurableObject<Env> {
       platform: "macOS",
       metadata: linkCode.host_metadata ?? {},
     });
+    // The Mac is linked again: an earlier removal or Sign Out no longer
+    // explains anything, and a removal still pending has nothing to finish.
+    this.hostUnlinkedSince.delete(hostDevice.device_id);
+    await this.forgetRemovalRecord(hostDevice.device_id);
+    await this.forgetPendingRemoval(hostDevice.device_id);
     let pairing: DevicePairingRow | null = null;
     if (requesterDeviceId) {
       const requester = await findDeviceByDeviceId(this.env, requesterDeviceId);
@@ -1418,14 +1977,9 @@ export class SignalingHub extends DurableObject<Env> {
 
     const hostSocket = this.peers.get(linkCode.host_device_id);
     if (hostSocket) {
-      const notified = sendJsonToOpenSocket(hostSocket, {
-        type: "host_identity",
-        linked: true,
-        user_id: user.id,
-        email: profile?.email ?? user.email ?? "",
-        display_name: profile?.display_name ?? userDisplayName(user),
-        avatar_url: profile?.avatar_url ?? "",
-      });
+      // host_label is the account's name for the Mac: a name the owner chose
+      // earlier survives this re-link (convex upsertUserDevice keeps it).
+      const notified = sendJsonToOpenSocket(hostSocket, linkedHostIdentity(hostDevice, profile, user));
       if (!notified) this.unregisterPeer(hostSocket);
     }
 
@@ -1661,7 +2215,9 @@ export class SignalingHub extends DurableObject<Env> {
     const publicKeyB64 = session.publicKeyB64;
     if (!deviceId || !publicKeyB64) return;
 
-    const hostLabel = stringField(message.host_label) || "This Mac";
+    // The Mac proposes its computer name; it is made to follow the account's
+    // name rule here, so a newly linked Mac never lists hidden characters.
+    const hostLabel = proposedHostLabel(message.host_label);
     const hostMetadata = {
       signaling_url: stringField(message.signaling_url),
       turn_url: stringField(message.turn_url),
@@ -1751,21 +2307,27 @@ export class SignalingHub extends DurableObject<Env> {
   ): Promise<void> {
     const deviceId = session.deviceId;
     if (!deviceId) return;
+    // Before the first await: a rename or connect whose host identity lookup
+    // is already running sees it and does not tell the Mac it is linked, and
+    // none that starts while this Sign Out runs does either.
+    this.markHostUnlinked(deviceId);
+    this.hostUnlinksInProgress.set(deviceId, (this.hostUnlinksInProgress.get(deviceId) ?? 0) + 1);
 
     try {
       const host = await findDeviceByDeviceId(this.env, deviceId);
-      if (!host || host.kind !== "host" || host.revoked_at) {
-        sendJsonToOpenSocket(ws, { type: "host_unlinked", ok: true, linked: false });
-        sendJsonToOpenSocket(ws, { type: "host_identity", linked: false });
-        return;
+      // Already in no account (for example a retry after a lost reply): the
+      // cleanup below still runs, and the relay checks with Convex first.
+      if (host && host.kind === "host" && !host.revoked_at) {
+        await convexMutation(this.env, convexAccountPlane.deleteHostLinkCodesByHostDeviceId, {
+          hostDeviceId: deviceId,
+          limit: 500,
+        });
+        // Also removes the Mac's pairings and approval requests.
+        await convexMutation(this.env, convexAccountPlane.deleteDeviceByUuid, { id: host.id });
       }
-
-      await convexMutation(this.env, convexAccountPlane.deleteHostLinkCodesByHostDeviceId, {
-        hostDeviceId: deviceId,
-        limit: 500,
-      });
-      // Also removes the Mac's pairings and approval requests.
-      await convexMutation(this.env, convexAccountPlane.deleteDeviceByUuid, { id: host.id });
+      // Again now that the rows are gone: a lookup that began while they were
+      // being deleted may still have read them.
+      this.markHostUnlinked(deviceId);
       sendJsonToOpenSocket(ws, { type: "host_unlinked", ok: true, linked: false });
       sendJsonToOpenSocket(ws, { type: "host_identity", linked: false });
     } catch (error) {
@@ -1774,7 +2336,25 @@ export class SignalingHub extends DurableObject<Env> {
         ok: false,
         reason: error instanceof Error ? error.message : "could not unlink host",
       });
+      return;
+    } finally {
+      const running = (this.hostUnlinksInProgress.get(deviceId) ?? 1) - 1;
+      if (running > 0) this.hostUnlinksInProgress.set(deviceId, running);
+      else this.hostUnlinksInProgress.delete(deviceId);
     }
+
+    // The same signaling and relay cleanup as a removal from the account, so
+    // the account's browsers lose access now and the relay's cached content is
+    // deleted. Not the removal record or reason: the Mac's owner signed out here.
+    try {
+      await this.forgetHostSignaling(deviceId);
+    } catch {
+      console.error("Mac sign-out: signaling cleanup failed");
+    }
+    await this.clearHostRelay(deviceId, "Mac sign-out");
+    // The Mac is in no account because it signed out, and the cleanup ran: a
+    // removal still pending for it has nothing left to finish.
+    await this.forgetPendingRemoval(deviceId);
   }
 
   private async handleEnvelope(ws: WebSocket, raw: string, parsed: unknown): Promise<void> {
@@ -1988,24 +2568,36 @@ export class SignalingHub extends DurableObject<Env> {
   }
 
   private async sendHostIdentity(ws: WebSocket, deviceId: string): Promise<void> {
+    let identity: Record<string, unknown> | null;
     try {
-      const host = await findDeviceByDeviceId(this.env, deviceId);
-      if (!host || host.kind !== "host" || host.revoked_at) {
-        sendJsonToOpenSocket(ws, { type: "host_identity", linked: false });
-        return;
-      }
-      const profile = await findProfileByUserId(this.env, host.user_id);
-      sendJsonToOpenSocket(ws, {
-        type: "host_identity",
-        linked: true,
-        user_id: host.user_id,
-        email: profile?.email ?? "",
-        display_name: profile?.display_name ?? "",
-        avatar_url: profile?.avatar_url ?? "",
-      });
+      identity = await this.currentHostIdentity(deviceId);
     } catch {
-      sendJsonToOpenSocket(ws, { type: "host_identity", linked: false });
+      identity = this.unlinkedHostIdentity(deviceId);
     }
+    if (identity) sendJsonToOpenSocket(ws, identity);
+  }
+
+  /**
+   * The host_identity a Mac that just signed in to signaling should get: linked
+   * with its account and name, or unlinked (with reason removed_from_account
+   * while the hub remembers that the account removed it). The device is looked
+   * up again after the profile, so a removal, a Sign Out or a re-link that
+   * lands meanwhile is never answered with linked:true for the old account. A
+   * Sign Out on the Mac that started or finished after this lookup began is
+   * answered unlinked, as the Mac asked. Null when a re-link to another
+   * account already told the Mac.
+   */
+  private async currentHostIdentity(deviceId: string): Promise<Record<string, unknown> | null> {
+    const lookupStartedAt = this.tickHostLinkClock();
+    const host = await findDeviceByDeviceId(this.env, deviceId);
+    if (!this.isLinkedHostRow(host)) return this.unlinkedHostIdentity(deviceId);
+    // In this order: the second device lookup is the newest read when it answers.
+    const profile = await findProfileByUserId(this.env, host.user_id);
+    const current = await findDeviceByDeviceId(this.env, deviceId);
+    if (this.signedOutSince(deviceId, lookupStartedAt)) return this.unlinkedHostIdentity(deviceId);
+    if (!this.isLinkedHostRow(current)) return this.unlinkedHostIdentity(deviceId);
+    if (current.user_id !== host.user_id) return null;
+    return linkedHostIdentity(current, profile);
   }
 
   private async pushPendingApprovals(ws: WebSocket, hostDeviceId: string): Promise<void> {
@@ -2055,6 +2647,23 @@ export class SignalingHub extends DurableObject<Env> {
   private async loadState(): Promise<void> {
     const denied = await this.ctx.storage.list<boolean>({ prefix: "revoked-pair:" });
     for (const key of denied.keys()) this.revokedPairs.add(key.slice("revoked-pair:".length));
+    const removed = await this.ctx.storage.list<unknown>({ prefix: REMOVED_HOST_KEY_PREFIX });
+    for (const [key, removedAt] of removed) {
+      // An unreadable record counts as expired, so the next eviction deletes it.
+      const at = typeof removedAt === "number" && Number.isFinite(removedAt) ? removedAt : 0;
+      this.removedHosts.set(key.slice(REMOVED_HOST_KEY_PREFIX.length), at);
+    }
+    const pending = await this.ctx.storage.list<unknown>({ prefix: PENDING_REMOVAL_KEY_PREFIX });
+    const unreadable: string[] = [];
+    for (const [key, value] of pending) {
+      const marker = pendingRemovalFromStorage(value);
+      if (marker) this.pendingRemovals.set(key.slice(PENDING_REMOVAL_KEY_PREFIX.length), marker);
+      else unreadable.push(key);
+    }
+    // Not a marker this hub wrote: it names no account, so nothing can finish it.
+    for (let start = 0; start < unreadable.length; start += STORAGE_DELETE_BATCH) {
+      await this.ctx.storage.delete(unreadable.slice(start, start + STORAGE_DELETE_BATCH));
+    }
     const queues =
       (await this.ctx.storage.get<Record<string, QueuedEnvelope[]>>(STORAGE_OFFLINE_QUEUES_KEY)) ??
       {};
@@ -2091,16 +2700,25 @@ export class SignalingHub extends DurableObject<Env> {
       entry.enqueuedAt <= now && now - entry.enqueuedAt < OFFLINE_QUEUE_TTL_MS;
   }
 
+  /**
+   * Sets the alarm for the next queued envelope or removal record to expire,
+   * or the next pending removal to check, whichever comes first.
+   */
   private async scheduleQueueCleanup(): Promise<void> {
     let at = Infinity;
     for (const queue of this.offlineQueues.values()) {
       for (const entry of queue) at = Math.min(at, this.freshEnvelope(entry) ? entry.enqueuedAt + OFFLINE_QUEUE_TTL_MS : Date.now());
     }
+    for (const removedAt of this.removedHosts.values()) at = Math.min(at, removedAt + REMOVED_HOST_RETENTION_MS);
+    for (const pending of this.pendingRemovals.values()) at = Math.min(at, pending.checkAt);
     if (Number.isFinite(at)) await this.ctx.storage.setAlarm(at);
     else await this.ctx.storage.deleteAlarm();
   }
 
   async alarm(): Promise<void> {
+    // Removals whose answer was lost. Their failures are not cache-cleanup
+    // failures: each marker stays and is checked again a minute later.
+    await this.finishPendingRemovals();
     try {
       await this.evictExpiredState();
       // A prior failed write may already have pruned memory. Persist even when
@@ -2134,6 +2752,16 @@ export class SignalingHub extends DurableObject<Env> {
       if (authorization.expiresAt <= now) {
         this.accountAuthorizationCache.delete(key);
       }
+    }
+
+    const expiredRemovals: string[] = [];
+    for (const [hostDeviceId, removedAt] of this.removedHosts) {
+      if (now - removedAt >= REMOVED_HOST_RETENTION_MS) expiredRemovals.push(hostDeviceId);
+    }
+    for (let start = 0; start < expiredRemovals.length; start += STORAGE_DELETE_BATCH) {
+      const batch = expiredRemovals.slice(start, start + STORAGE_DELETE_BATCH);
+      await this.ctx.storage.delete(batch.map((hostDeviceId) => `${REMOVED_HOST_KEY_PREFIX}${hostDeviceId}`));
+      for (const hostDeviceId of batch) this.removedHosts.delete(hostDeviceId);
     }
 
     if (queuesChanged) await this.persistOfflineQueues();
@@ -2195,6 +2823,9 @@ export class RelayHub extends DurableObject<Env> {
     }
     if (url.pathname === "/internal/restore-device" && request.method === "POST") {
       return this.restoreDevice(request);
+    }
+    if (url.pathname === "/internal/host-removed" && request.method === "POST") {
+      return this.hostRemoved(request);
     }
     if (url.pathname === "/health") {
       return json({
@@ -2824,6 +3455,88 @@ export class RelayHub extends DurableObject<Env> {
     } catch {
       return json({ ok: false, error: "Could not restore relay access." }, { status: 503 });
     }
+  }
+
+  /**
+   * Internal binding only: the account owner removed this Mac from the
+   * account. Refused unless this object is that Mac's relay and the account
+   * plane no longer lists the Mac as an active host, so it can never wipe the
+   * relay of a linked Mac (including one re-linked in the meantime).
+   *
+   * Closes every socket, browsers first and then the Mac, with 4003
+   * "mac removed from account". The Mac reconnects like any unlinked Mac and
+   * is refused until it is linked again. Then deletes the cached hello, apps
+   * and agent snapshots. Browser denials (revoked-device:*) and the retention
+   * marker stay, so a re-linked Mac starts clean and publishes fresh content.
+   */
+  private async hostRemoved(request: Request): Promise<Response> {
+    try {
+      const body = await readJsonObject(request);
+      const hostDeviceId = stringField(body.hostDeviceId);
+      if (!hostDeviceId || !this.ctx.id.equals(this.env.RELAY_HUB.idFromName(hostDeviceId))) {
+        return json({ ok: false, error: "removal is not authorized" }, { status: 403 });
+      }
+      const host = await findDeviceByDeviceId(this.env, hostDeviceId);
+      if (host && host.kind === "host" && !host.revoked_at) {
+        // Linked again before this ran. Browsers signed in to an account that
+        // no longer has the Mac lose access now, not at their next renewal.
+        const closed = await this.closeRelaySockets(
+          (session) => session?.role === "client" && session.authenticated && session.userId !== host.user_id,
+        );
+        return json({ ok: false, error: "this Mac is still linked", closed }, { status: 409 });
+      }
+
+      const closed = await this.closeRelaySockets(() => true);
+      const deleted = await this.deleteCachedContent();
+      return json({ ok: true, closed, deleted });
+    } catch {
+      return json({ ok: false, error: "Could not clear this Mac's relay." }, { status: 503 });
+    }
+  }
+
+  /**
+   * Closes the matching sockets (authenticated or still authenticating) with
+   * the removal close, browsers before the Mac so none sees a presence change
+   * first, and forgets them. Returns how many were open.
+   */
+  private async closeRelaySockets(matches: (session: RelaySessionAttachment | null) => boolean): Promise<number> {
+    const sockets = this.ctx.getWebSockets().filter((ws) => matches(this.getRelaySession(ws)));
+    const isHost = (ws: WebSocket) => this.getRelaySession(ws)?.role === "host";
+    let closed = 0;
+    for (const ws of [...sockets.filter((ws) => !isHost(ws)), ...sockets.filter(isHost)]) {
+      if (isSocketOpen(ws)) {
+        try {
+          ws.close(HOST_REMOVED_CLOSE_CODE, HOST_REMOVED_CLOSE_REASON);
+          closed += 1;
+        } catch {
+          // Already closing.
+        }
+      }
+      await this.unregisterRelaySocket(ws);
+    }
+    return closed;
+  }
+
+  /** Deletes every cache record this relay keeps for replay, in memory and in storage. */
+  private async deleteCachedContent(): Promise<number> {
+    this.latestHello = null;
+    this.latestRemoteApps = null;
+    this.latestAgentSnapshots.clear();
+    let deleted = await this.ctx.storage.delete([
+      STORAGE_RELAY_HELLO_KEY,
+      STORAGE_RELAY_REMOTE_APPS_KEY,
+      STORAGE_RELAY_AGENT_SNAPSHOTS_KEY,
+    ]);
+    for (;;) {
+      const page = await this.ctx.storage.list({ prefix: STORAGE_RELAY_AGENT_SNAPSHOT_PREFIX, limit: CACHE_CLEANUP_BATCH });
+      if (page.size === 0) break;
+      const removed = await this.ctx.storage.delete([...page.keys()]);
+      if (removed === 0) throw new Error("relay cache deletion made no progress");
+      deleted += removed;
+    }
+    this.cleanupAt = Infinity;
+    this.cleanupCursor = undefined;
+    return deleted;
   }
 
   private async unregisterRelaySocket(ws: WebSocket): Promise<void> {

@@ -50,6 +50,7 @@
     "lab:e2e": "node scripts/lab/e2e.mjs chromium",
     "lab:e2e:password-reset": "node scripts/lab/e2e.mjs password-reset",
     "lab:e2e:password-reset:mac": "node scripts/lab/e2e.mjs password-reset-mac",
+    "lab:e2e:device-management": "node scripts/lab/e2e.mjs device-management",
     "lab:e2e:codex-cli": "node scripts/lab/e2e.mjs codex-cli-chromium",
     "lab:e2e:cursor-agent": "node scripts/lab/e2e.mjs cursor-agent-chromium",
     "lab:e2e:cursor-agent:safari": "node scripts/lab/e2e.mjs cursor-agent-webkit",

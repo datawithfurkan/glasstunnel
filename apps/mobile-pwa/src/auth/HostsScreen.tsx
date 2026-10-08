@@ -1,6 +1,30 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import type { AccountHost } from '../lib/accountApi';
+import { currentHostsFixtureDialog } from '../dev/workspaceFixture';
+import {
+  deviceFingerprint,
+  duplicateHostLabels,
+  hostLabelKey,
+  removedStatus,
+  renamedStatus,
+} from '../lib/hostManagement';
 import { useAppStore, type HostListStatus } from '../lib/store';
+import {
+  HostActionsMenu,
+  MacDetailsDialog,
+  RemoveMacDialog,
+  RenameMacDialog,
+  formatHostTimestamp,
+  hostMenuButtonSelector,
+  type HostMenuAction,
+} from './HostManagement';
+
+/** A dialog opened from a Mac's "⋯" menu. `snapshot` keeps it whole if the Mac leaves the list meanwhile. */
+interface HostDialogState {
+  kind: HostMenuAction;
+  deviceId: string;
+  snapshot?: AccountHost;
+}
 
 export function HostsScreen() {
   const user = useAppStore((s) => s.user);
@@ -10,6 +34,8 @@ export function HostsScreen() {
   const chooseHost = useAppStore((s) => s.chooseHost);
   const refreshHosts = useAppStore((s) => s.refreshHosts);
   const claimHostLinkCode = useAppStore((s) => s.claimHostLinkCode);
+  const renameHost = useAppStore((s) => s.renameHost);
+  const removeHost = useAppStore((s) => s.removeHost);
   const [linkCode, setLinkCode] = useState('');
   // A Mac opened this page with its one-time code: the add flow shows at once,
   // as it always has, even while the account's Macs are still loading, and
@@ -30,6 +56,24 @@ export function HostsScreen() {
   const retryFocusPending = useRef(false);
   const autoClaimedCodeRef = useRef<string | null>(null);
   const lastAutoRefreshAtRef = useRef(0);
+  // A device-management fixture may open the menu or a dialog at once.
+  const [menuHostId, setMenuHostId] = useState<string | null>(() => {
+    const fixture = currentHostsFixtureDialog();
+    return fixture?.kind === 'menu' ? fixture.deviceId : null;
+  });
+  const [hostDialog, setHostDialog] = useState<HostDialogState | null>(() => {
+    const fixture = currentHostsFixtureDialog();
+    return fixture && fixture.kind !== 'menu' ? { kind: fixture.kind, deviceId: fixture.deviceId } : null;
+  });
+
+  const openHostDialog = (host: AccountHost, kind: HostMenuAction) => {
+    setMenuHostId(null);
+    setHostDialog({ kind, deviceId: host.deviceId, snapshot: host });
+  };
+
+  // Focus goes back to the Mac's "⋯" button, or to the list when the Mac is gone.
+  const returnFocusFor = (deviceId: string) => () =>
+    document.querySelector<HTMLElement>(hostMenuButtonSelector(deviceId)) ?? listRef.current;
 
   const refreshHostsVisible = useCallback(
     async (options?: { force?: boolean }) => {
@@ -181,6 +225,11 @@ export function HostsScreen() {
   const announcement = announcing
     ? hostListAnnouncement({ view: listView, hostCount: availableHosts.length, hostsStatus, macClaimPending })
     : '';
+  const duplicateLabels = duplicateHostLabels(availableHosts);
+  const dialogHost = hostDialog
+    ? (availableHosts.find((host) => host.deviceId === hostDialog.deviceId) ?? hostDialog.snapshot ?? null)
+    : null;
+  const banner = error ?? accessRevocationNotice ?? status;
 
   return (
     <div className="h-full overflow-y-auto safe-pad-x safe-pad-bottom">
@@ -204,18 +253,20 @@ export function HostsScreen() {
           </button>
         </section>
 
-        {(status || error || accessRevocationNotice) && (
-          <section
-            aria-live="polite"
-            className={`rounded-[6px] border px-5 py-4 text-sm ${
-              error || accessRevocationNotice
-                ? 'border-err/30 bg-err/10 text-err'
-                : 'border-accent/30 bg-accent/10 text-accent'
-            }`}
-          >
-            {error ?? accessRevocationNotice ?? status}
-          </section>
-        )}
+        {/* Always in the page (taking no room while empty), so a message that appears later is announced. */}
+        <section aria-live="polite" className={banner ? undefined : '-mt-5'}>
+          {banner && (
+            <div
+              className={`rounded-[6px] border px-5 py-4 text-sm [overflow-wrap:anywhere] ${
+                error || accessRevocationNotice
+                  ? 'border-err/30 bg-err/10 text-err'
+                  : 'border-accent/30 bg-accent/10 text-accent'
+              }`}
+            >
+              {banner}
+            </div>
+          )}
+        </section>
 
         {/* Persistent, so "Loading your Macs…" and then the outcome are announced. */}
         <p role="status" aria-live="polite" className="sr-only">
@@ -251,34 +302,49 @@ export function HostsScreen() {
           ) : (
             <>
               <section className="space-y-3">
-                <div className="grid gap-3">
+                {/* One column that never grows past the screen: a long name truncates. */}
+                <div className="grid grid-cols-1 gap-3">
                   {availableHosts.map((host) => {
                     const busy = busyHostId === host.deviceId;
                     const available = hostActionAvailable(host, busy);
                     return (
-                      <article key={host.deviceId} className="gt-panel px-5 py-5">
-                        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                          <div className="min-w-0">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <h2 className="truncate text-xl font-semibold">{host.label}</h2>
-                              <HostStatusBadge host={host} />
-                            </div>
-                            {host.lastSeenAtUnixMs && (
-                              <div className="gt-dim mt-2 text-sm">
-                                Last seen {formatTimestamp(host.lastSeenAtUnixMs)}
+                      <article key={host.deviceId} className="gt-panel min-w-0 py-4 pl-5 pr-3 md:py-5">
+                        <div className="flex items-start gap-2 md:items-center">
+                          <div className="flex min-w-0 flex-1 flex-col gap-4 pt-2 md:flex-row md:items-center md:justify-between md:pt-0">
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <h2 className="max-w-full truncate text-xl font-semibold">{host.label}</h2>
+                                <HostStatusBadge host={host} />
                               </div>
-                            )}
+                              {host.lastSeenAtUnixMs && (
+                                <div className="gt-dim mt-2 text-sm">
+                                  Last seen {formatHostTimestamp(host.lastSeenAtUnixMs)}
+                                </div>
+                              )}
+                              {duplicateLabels.has(hostLabelKey(host.label)) && (
+                                // Two Macs with one name: the device ID tells them apart.
+                                <div className="gt-dim mt-1 text-sm">
+                                  Device ID <span className="font-mono">{deviceFingerprint(host.deviceId)}</span>
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => void openHost(host)}
+                                disabled={!available}
+                                className="gt-button gt-button-primary"
+                              >
+                                {hostActionLabel(host, busy)}
+                              </button>
+                            </div>
                           </div>
-                          <div className="flex gap-2">
-                            <button
-                              type="button"
-                              onClick={() => void openHost(host)}
-                              disabled={!available}
-                              className="gt-button gt-button-primary"
-                            >
-                              {hostActionLabel(host, busy)}
-                            </button>
-                          </div>
+                          <HostActionsMenu
+                            host={host}
+                            open={menuHostId === host.deviceId}
+                            onOpenChange={(open) => setMenuHostId(open ? host.deviceId : null)}
+                            onSelect={(action) => openHostDialog(host, action)}
+                          />
                         </div>
                       </article>
                     );
@@ -299,6 +365,40 @@ export function HostsScreen() {
           )}
         </div>
       </div>
+
+      {hostDialog && dialogHost && hostDialog.kind === 'rename' && (
+        <RenameMacDialog
+          host={dialogHost}
+          rename={renameHost}
+          onRenamed={(label) => {
+            setHostDialog(null);
+            setError(null);
+            setStatus(renamedStatus(label));
+          }}
+          onClose={() => setHostDialog(null)}
+          returnFocus={returnFocusFor(dialogHost.deviceId)}
+        />
+      )}
+      {hostDialog && dialogHost && hostDialog.kind === 'details' && (
+        <MacDetailsDialog
+          host={dialogHost}
+          onClose={() => setHostDialog(null)}
+          returnFocus={returnFocusFor(dialogHost.deviceId)}
+        />
+      )}
+      {hostDialog && dialogHost && hostDialog.kind === 'remove' && (
+        <RemoveMacDialog
+          host={dialogHost}
+          remove={removeHost}
+          onRemoved={() => {
+            setHostDialog(null);
+            setError(null);
+            setStatus(removedStatus(dialogHost.label));
+          }}
+          onClose={() => setHostDialog(null)}
+          returnFocus={returnFocusFor(dialogHost.deviceId)}
+        />
+      )}
     </div>
   );
 }
@@ -587,15 +687,4 @@ function normalizeCode(value: string): string {
 function linkCodeInAddressBar(): string {
   if (typeof window === 'undefined') return '';
   return normalizeCode(new URLSearchParams(window.location.search).get('linkCode') ?? '');
-}
-
-function formatTimestamp(unixMs: number): string {
-  try {
-    return new Intl.DateTimeFormat(undefined, {
-      dateStyle: 'medium',
-      timeStyle: 'short',
-    }).format(new Date(unixMs));
-  } catch {
-    return new Date(unixMs).toLocaleString();
-  }
 }

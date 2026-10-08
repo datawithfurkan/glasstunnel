@@ -27,6 +27,8 @@ describe('Glasstunnel signaling Worker', () => {
 
   it('does not expose internal revocation or access checks through the public Worker', async () => {
     expect((await fetchWorker('/internal/revoke-device', { method: 'POST', body: '{}' })).status).toBe(404);
+    expect((await fetchWorker('/internal/host-removed', { method: 'POST', body: '{"hostDeviceId":"gt-0000000000000000"}' })).status).toBe(404);
+    expect((await fetchWorker('/relay/internal/host-removed?host_device_id=gt-0000000000000000', { method: 'POST', body: '{}' })).status).toBe(404);
     expect((await fetchWorker('/internal/device-access?device_id=example')).status).toBe(404);
   });
 
