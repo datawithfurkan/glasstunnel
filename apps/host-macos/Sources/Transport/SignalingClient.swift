@@ -23,6 +23,9 @@ public final class SignalingClient: NSObject, URLSessionWebSocketDelegate, @unch
     private let deviceKey: DeviceKey
     private let role: String
     private let deviceLabel: String
+    /// The Mac app version a host reports in `client_auth`, so the account
+    /// can show it in a Mac's details. Nil outside an app bundle.
+    private let appVersion: String?
 
     private var session: URLSession?
     private var task: URLSessionWebSocketTask?
@@ -45,12 +48,53 @@ public final class SignalingClient: NSObject, URLSessionWebSocketDelegate, @unch
     }
     private var intentionallyClosed = false
 
-    public init(url: URL, deviceKey: DeviceKey, role: String = "host", deviceLabel: String? = nil) {
+    public init(
+        url: URL,
+        deviceKey: DeviceKey,
+        role: String = "host",
+        deviceLabel: String? = nil,
+        appVersion: String? = SignalingClient.bundleAppVersion()
+    ) {
         self.url = url
         self.deviceKey = deviceKey
         self.role = role
         self.deviceLabel = deviceLabel ?? defaultHostDeviceLabel()
+        self.appVersion = appVersion
         super.init()
+    }
+
+    /// The app's marketing version (`CFBundleShortVersionString`), or nil
+    /// when the process has none (the lab harness, a bare executable).
+    public static func bundleAppVersion(_ bundle: Bundle = .main) -> String? {
+        guard let value = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String else {
+            return nil
+        }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// The `client_auth` message. A host adds `app_version` when it knows
+    /// it; servers that predate the field ignore it.
+    static func clientAuthMessage(
+        deviceID: String,
+        publicKeyB64: String,
+        signatureB64: String,
+        role: String,
+        deviceInfo: String,
+        appVersion: String?
+    ) -> [String: Any] {
+        var message: [String: Any] = [
+            "type": "client_auth",
+            "device_id": deviceID,
+            "public_key": publicKeyB64,
+            "signature": signatureB64,
+            "role": role,
+            "device_info": deviceInfo,
+        ]
+        if role == "host", let appVersion, !appVersion.isEmpty {
+            message["app_version"] = appVersion
+        }
+        return message
     }
 
     public func connect() async throws {
@@ -72,14 +116,14 @@ public final class SignalingClient: NSObject, URLSessionWebSocketDelegate, @unch
             throw SignalingError.protocolMismatch("expected server_hello with nonce")
         }
         let sig = try deviceKey.sign(nonce)
-        let authMsg: [String: Any] = [
-            "type": "client_auth",
-            "device_id": deviceKey.deviceId,
-            "public_key": deviceKey.publicKeyRaw.base64EncodedString(),
-            "signature": sig.base64EncodedString(),
-            "role": role,
-            "device_info": deviceLabel,
-        ]
+        let authMsg = Self.clientAuthMessage(
+            deviceID: deviceKey.deviceId,
+            publicKeyB64: deviceKey.publicKeyRaw.base64EncodedString(),
+            signatureB64: sig.base64EncodedString(),
+            role: role,
+            deviceInfo: deviceLabel,
+            appVersion: appVersion
+        )
         try await sendJSON(authMsg)
 
         let ack = try await receiveJSON()

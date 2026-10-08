@@ -302,6 +302,15 @@ private struct AccountLinkGateView: View {
                         .multilineTextAlignment(.center)
                 }
 
+                if appState.showsRemovedFromAccountNotice {
+                    GlasstunnelNotice(
+                        message: AccountLinkController.removedFromAccountNotice,
+                        systemImage: "person.crop.circle.badge.xmark",
+                        onDismiss: { appState.dismissRemovedFromAccountNotice() }
+                    )
+                    .frame(width: 360)
+                }
+
                 VStack(spacing: 10) {
                     HostedAuthButton(
                         title: "Continue with Google",
@@ -600,6 +609,13 @@ private struct ProfilePopoverView: View {
                         .font(.caption)
                         .foregroundStyle(GlasstunnelDesign.muted)
                 }
+            }
+
+            if let accountNameLine = appState.accountNameLine {
+                Label(accountNameLine, systemImage: "desktopcomputer")
+                    .font(.caption)
+                    .foregroundStyle(GlasstunnelDesign.muted)
+                    .lineLimit(2)
             }
 
             Divider()

@@ -1,7 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { AgentStatus, type RemoteApp } from '@glasstunnel/protocol';
 import { appFiltersForAvailableApps } from '../agents/AgentCarousel';
-import { workspaceFixtureInitialAppId, workspaceFixtureState } from './workspaceFixture';
+import { useAppStore } from '../lib/store';
+import {
+  hostsFixtureDialog,
+  workspaceFixtureInitialAppId,
+  workspaceFixtureState,
+  type HostDeviceFixtureId,
+} from './workspaceFixture';
 
 describe('workspace mobile fixtures', () => {
   it('models a signed-in account with no Macs yet', () => {
@@ -34,6 +40,64 @@ describe('workspace mobile fixtures', () => {
     ]);
     expect(typeof state.refreshHosts).toBe('function');
     expect(typeof state.chooseHost).toBe('function');
+  });
+
+  it('models Your Macs with two Macs of the same name for the device menu', () => {
+    const state = workspaceFixtureState('hosts-device-actions');
+
+    expect(state.route).toBe('hosts');
+    expect(state.availableHosts?.map((host) => [host.label, host.online, host.appVersion ?? null])).toEqual([
+      ['Studio Mac mini', true, '0.1.10'],
+      ['Studio Mac mini', false, null],
+      ['MacBook Pro', false, null],
+    ]);
+    expect(state.availableHosts?.[0].deviceId).toBe('gt-4a1b7e3ac0d2f915');
+    expect(typeof state.renameHost).toBe('function');
+    expect(typeof state.removeHost).toBe('function');
+  });
+
+  it('opens the menu or one dialog for the first Mac in each device fixture', () => {
+    const cases: Array<[HostDeviceFixtureId, string | null]> = [
+      ['hosts-device-actions', null],
+      ['hosts-device-menu', 'menu'],
+      ['hosts-device-rename', 'rename'],
+      ['hosts-device-details', 'details'],
+      ['hosts-device-remove', 'remove'],
+    ];
+    for (const [fixtureId, kind] of cases) {
+      const dialog = hostsFixtureDialog(fixtureId);
+      expect(dialog?.kind ?? null).toBe(kind);
+      if (dialog) expect(dialog.deviceId).toBe('gt-4a1b7e3ac0d2f915');
+      // Every device fixture shows the same list.
+      expect(workspaceFixtureState(fixtureId).availableHosts).toEqual(
+        workspaceFixtureState('hosts-device-actions').availableHosts,
+      );
+    }
+  });
+
+  it('renames and removes in the device fixture without a network, with the real name rules', async () => {
+    vi.useFakeTimers();
+    try {
+      useAppStore.setState(workspaceFixtureState('hosts-device-actions'));
+      const { renameHost, removeHost } = useAppStore.getState();
+
+      await expect(renameHost('gt-4a1b7e3ac0d2f915', '   ')).rejects.toMatchObject({ status: 400, message: 'Enter a name.' });
+      const renaming = renameHost('gt-4a1b7e3ac0d2f915', ' Desk Mac ');
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(renaming).resolves.toBe('Desk Mac');
+      expect(useAppStore.getState().availableHosts[0].label).toBe('Desk Mac');
+
+      const removing = removeHost('gt-9c03d5e81b7a4f20');
+      await vi.advanceTimersByTimeAsync(1_000);
+      await removing;
+      expect(useAppStore.getState().availableHosts.map((host) => host.label)).toEqual(['Desk Mac', 'MacBook Pro']);
+
+      const missing = expect(removeHost('gt-9c03d5e81b7a4f20')).rejects.toMatchObject({ status: 404 });
+      await vi.advanceTimersByTimeAsync(1_000);
+      await missing;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('models a connected workspace with no synced projects or chats', () => {

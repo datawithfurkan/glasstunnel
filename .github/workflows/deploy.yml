@@ -29,7 +29,9 @@ env:
   CONVEX_SITE_URL: https://adorable-perch-596.convex.site
 
 jobs:
-  # Convex first: the Worker and the web app call functions that must exist.
+  # Order: Convex, then the Worker, then the web app. The Worker and the web
+  # app call Convex functions that must exist; the web app calls Worker
+  # endpoints that must exist.
   deploy-convex:
     name: Deploy Convex functions
     runs-on: ubuntu-latest
@@ -71,9 +73,11 @@ jobs:
           status="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$CONVEX_SITE_URL/worker/account-plane")"
           test "$status" = "401" || { echo "Gateway without credentials returned $status, expected 401 (503 = secret missing, 404 = route missing)"; exit 1; }
 
+  # Web last: a new PWA must never call a Worker that lacks its endpoints, so
+  # it waits for the Worker job (and does not deploy if that job fails).
   deploy-web:
     name: Deploy web surfaces
-    needs: deploy-convex
+    needs: [deploy-convex, deploy-signal]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production

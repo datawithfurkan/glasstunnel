@@ -150,6 +150,16 @@ not cover them; the reset email throttles above are enforced in Convex.
   client is connected, with content-free failure counters and backoff. The
   healthy-service cleanup target is 15 minutes after expiry, not an outage-proof
   guarantee. See `ops/cache-retention/README.md` for activation and sweep evidence.
+  Removing a Mac from the account, or Sign Out on the Mac, deletes that Mac's
+  relay copies right away (see Renaming And Removing A Mac). For each Mac
+  removed from its account, the signaling hub keeps the Mac's device id and the
+  removal time for 90 days, so the Mac can be told why it is unlinked when it
+  next connects. Linking the Mac again deletes that record, and the hub's cleanup
+  alarm deletes it after 90 days. While a removal runs, the hub also keeps a
+  pending-removal marker (the Mac's device id, the account id and the time). It
+  is deleted when the removal finishes, after an hour when the removal never
+  happened, or when the Mac signs out or is linked again; while the account
+  service cannot be reached, it stays until a check succeeds.
 - **Relay frames/detail:** the current Worker forwards JPEG frames and expanded
   message-detail replies without explicitly persisting those payloads. Recent
   transcript snapshots can still contain portions of the same text.
@@ -259,6 +269,164 @@ For an urgent loss of trust, stop the Mac host or disable its network access, th
 review account sessions and device authorization. Revocation cannot retract content
 already received by a browser or operator.
 
+## Renaming And Removing A Mac
+
+Reviewed against source on 2026-10-08. Each Mac in **Your Macs** has a menu with
+Rename, Details and Remove from account. The account is the trust unit for
+these actions: any signed-in session of the account can rename or remove any of
+its Macs, including a browser that one of those Macs revoked. This is an
+accepted product decision: a Mac's revocation ends that browser's access to the
+Mac, it does not sign the browser out of the account. Nothing here can reach
+another account's Mac. The Worker sends the account and the device id to one
+Convex mutation, which checks that the device is this account's active Mac
+inside the same transaction as the change. A removal also looks the device up
+first and goes no further unless it is this account's active Mac. A missing
+device, another account's Mac, a revoked row and a phone or browser all get the
+same `404 Mac not found`, so the reply reveals nothing about devices outside
+the account.
+
+**Rename** changes the name every phone and browser of the account lists the Mac
+as, and the Mac shows it as its account name. The name rule is the same in the
+PWA, the Worker and Convex: the name is normalized to Unicode NFC and trimmed,
+then it must be 1 to 40 code points with no control characters, no line or
+paragraph separators (U+2028, U+2029), no bidi controls (U+202A to U+202E,
+U+2066 to U+2069, U+200E, U+200F) and none of the invisible U+200B, U+2060 and
+U+FEFF. So two names cannot look the same while differing only in hidden
+characters, and a name cannot reorder the text around it. The zero width joiner
+and non-joiner (U+200D, U+200C) are allowed for emoji sequences and for scripts
+such as Persian. Convex stores the normalized name. A connected Mac receives the
+new name at once. Before sending it, the Worker loads the account profile and
+then looks the Mac up again, and it sends nothing when a Sign Out on the Mac
+started or finished after those lookups began. So a rename that overlaps a
+removal, a Sign Out on the Mac or a link to another account never tells the Mac
+it is linked. Once the name is
+stored the rename succeeds, even if the details the reply adds (pairing date,
+online state) cannot be loaded. A renamed Mac keeps its name when the same
+account links it again. When it is linked to another account it starts with the
+name the Mac proposes (its computer name). The Worker makes that name follow the
+same rule when the Mac asks for a link code: it normalizes it to NFC, turns line
+breaks and tabs into spaces, removes the other forbidden characters, cuts it to
+40 code points without splitting a character, and uses "This Mac" when nothing
+is left. A name stored before this rule existed is shown as it is; the web app
+ignores hidden characters when it looks for duplicate names and leaves them out
+of the Rename field. Names are account metadata: Convex stores them, and
+every device of the account and the hosted service can read them.
+
+**Remove from account** first looks the Mac up. Unless it is the caller's
+active Mac (a host device, not revoked, in the caller's account), the Worker
+answers `404 Mac not found` and does nothing else, so no request can run the
+cleanup below for another account's Mac, a phone or browser, or a device in no
+account.
+Then the signaling hub stores a pending-removal marker,
+`pending-removal:<device id>` with the account id and the time, and the removal
+takes effect in this order:
+
+1. Convex deletes the Mac's device row, every pairing and approval request that
+   points at it, and its link codes, in one transaction that checks again that
+   the Mac is the caller's active Mac.
+2. The signaling hub records the removal: the Mac's device id and the time,
+   under `removed-host:<device id>`, kept for 90 days. It tells a connected Mac
+   that it was removed (`host_identity` with `linked: false` and
+   `reason: removed_from_account`), and it drops its cached envelope
+   authorizations and queued signaling for the Mac, so WebRTC signaling between
+   the Mac and the account's browsers stops at once instead of within the
+   two-minute authorization cache. The Mac signs out of the account, shows that
+   it was removed, and ends its live phone sessions.
+3. The Mac's relay closes every socket, browsers first and then the Mac, with
+   close code 4003 and reason `mac removed from account`, and deletes its
+   cached hello, app list and agent snapshots. A browser that reconnects, and
+   the Mac's own relay connection, are refused while the Mac is in no account.
+   The relay checks with Convex first and refuses to clear a Mac that is still
+   linked. If the Mac was already linked to another account by then, browsers
+   of the old account are still closed.
+
+Then the hub deletes the pending-removal marker.
+
+A Mac that is offline or reconnecting during the removal gets the same
+`host_identity` with `reason: removed_from_account` when it next connects to
+signaling, as long as the hub's record exists. It then behaves as if it had
+been told at once: it ends its phone sessions, signs out of the account and
+shows the removal notice, also after a relaunch. Once the owner dismisses the
+notice, it stays hidden when the hub reports the same removal again on a later
+connection, until the Mac is linked again. The record lasts 90 days, until the hub's cleanup alarm
+deletes it, or until a link code claim links the Mac again. A link removes the
+record right away, and a record older than the Mac's current account row is
+ignored. A Mac reconnecting while a removal is in progress is never told it is
+linked: the Worker loads the account profile and then looks the Mac up again,
+and the removal record wins.
+
+The request succeeds once step 1 succeeded. If Convex refuses step 1 (for
+example because the Mac left the account in the meantime), nothing was removed:
+the marker is deleted and the answer is the refusal, such as `404 Mac not
+found`. If Convex does not answer step 1 (a timeout or an outage), the Worker
+looks the Mac up again. If the Mac's row is gone, the removal was committed and
+only the answer was lost: the Worker runs steps 2 and 3, deletes the marker and
+answers 200. Otherwise, when the row is still there or the second lookup fails
+as well, it answers 503, changes nothing else and keeps the marker. A kept
+marker is finished in one of two ways:
+
+- A later removal of the same Mac by the same account that finds no row
+  answers 200 and runs steps 2 and 3, because the earlier removal happened. A
+  removal by any other account gets `404 Mac not found` and runs no cleanup.
+- The hub's alarm checks each marker once it is a minute old (a younger one may
+  still belong to a running request), and again every minute. If Convex no
+  longer lists the Mac, the alarm runs steps 2 and 3 and deletes the marker. If
+  Convex still lists the Mac an hour after the marker was written, the removal
+  never happened: the marker is deleted and nothing else changes. If Convex
+  cannot be reached, the marker stays for the next check.
+
+A Sign Out on the Mac and a link code claim that links the Mac again also
+delete the marker: the Mac's state is then explained by them, and Sign Out runs
+the cleanup itself. A removal that is repeated after it finished answers 404
+and runs no cleanup. Failures in steps 2 and 3 are logged without device or
+account details, and the request still succeeds. Then the Mac learns it was
+removed at its next signaling connection if the record was saved, and otherwise
+only that it is in no account. Browsers lose relay access at their next renewal (within
+five minutes, close code 4001), and the relay's cached content stays until its
+24-hour deadline. No one can read it in that time unless the Mac is linked
+again, in which case the new account's browsers can be sent it.
+
+**Sign Out on the Mac** deletes the same account rows in Convex. Then the Worker
+runs the same signaling cleanup and relay step as a removal: the hub drops its
+cached authorizations and queued signaling for the Mac, and the relay closes
+every socket with 4003 `mac removed from account` and deletes its cached
+content. So the account's browsers lose access at once, not at their next
+renewal. Sign Out does not write a removal record and sends no removal reason,
+because the person at the Mac chose it. A Sign Out that is retried after a lost
+answer, when the Mac is already in no account, still runs this cleanup.
+Browsers get the same relay close as for a removal, so a browser that had the
+Mac open also says "This Mac was removed from your account." after a Sign Out
+on the Mac. While a Sign Out runs, the hub remembers in memory when it started,
+and again when the Mac's account rows are deleted. A rename, or a connection of
+the Mac to signaling, whose host identity lookup began before the later of
+those moments, or that finishes while the Sign Out is still running, does not
+tell the Mac it is linked: the rename sends nothing and the connection is told
+the Mac is not linked. The Sign Out sends its own "not linked" when it ends. A link code claim that links the
+Mac again clears this.
+
+The web app waits up to 45 seconds for a rename or removal to answer (the
+Worker gives each account-service call up to 15 seconds, and a removal makes
+several in a row). When a removal gets no answer in that time, or the
+connection drops, it loads the list of Macs again, waiting up to 15 seconds for
+that list (no answer counts as not confirmed). If the Mac is no longer
+listed, the removal happened: the web app finishes it as usual and shows
+"Removed <name> from your account." Otherwise it shows the connection error,
+and trying again is safe.
+
+To use a removed Mac again, link it from the Mac with a new link code. Removal
+does not lift browser denials. The relay's and signaling hub's denials and the
+Mac's own tombstones stay. Because removal deletes the revoked pairing rows, a
+link code claimed later no longer finds a denial to lift, so a browser that the
+Mac revoked stays refused after the Mac is linked again. It needs a new browser
+identity, which appears as a new device. Mac binaries without the removal
+notice keep an established WebRTC session open until it ends. Relay and
+signaling access end regardless of the Mac version.
+
+**Details** shows the Mac's status, last seen time, when it was added to the
+account, the Mac app version when the Mac reported one at signaling sign-in,
+and the first 12 characters of the device id (a value derived from the Mac's
+public key, not a secret) with a copy button for the whole id.
+
 ## Logging And Telemetry
 
 The Mac uses Apple's unified logging for operational events. The PWA can write
@@ -281,6 +449,11 @@ request logs. Provider retention and access controls require operational review.
   `apps/host-macos/Sources/Transport/RemoteAppController.swift`.
 - Browser sessions, offline snapshots and expanded detail:
   `apps/mobile-pwa/src/lib/store.ts`, `UnlockScreen.tsx`.
+- Renaming and removing a Mac: `convex/accountPlane.ts` (`renameHostDevice`,
+  `removeHostDevice`), the name rule in `convex/hostLabel.ts` and
+  `apps/cloudflare-signal/src/hostLabel.ts`, and the Worker's
+  `/account/hosts/rename`, `/account/hosts/remove` and `unlink_host` handling in
+  `apps/cloudflare-signal/src/index.ts`.
 - Focused reconciliation status: [security-reconciliation.md](security-reconciliation.md).
 
 Self-hosting changes who operates the service; it does not add encryption or fix

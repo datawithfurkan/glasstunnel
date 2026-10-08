@@ -31,12 +31,44 @@ public final class SessionManager {
         case error(String)
     }
 
-    public struct HostIdentity: Sendable {
+    public struct HostIdentity: Sendable, Equatable {
+        /// The `reason` the server sends when the account owner removed this
+        /// Mac from another device.
+        public static let removedFromAccountReason = "removed_from_account"
+
         public let linked: Bool
         public let userID: String?
         public let email: String?
         public let displayName: String?
         public let avatarURL: String?
+        /// The account's name for this Mac (what phones list it as).
+        public let hostLabel: String?
+        /// Why the server sent this identity, when it says. Unknown values are
+        /// kept so callers can ignore them.
+        public let reason: String?
+
+        public init(
+            linked: Bool,
+            userID: String?,
+            email: String?,
+            displayName: String?,
+            avatarURL: String?,
+            hostLabel: String? = nil,
+            reason: String? = nil
+        ) {
+            self.linked = linked
+            self.userID = userID
+            self.email = email
+            self.displayName = displayName
+            self.avatarURL = avatarURL
+            self.hostLabel = hostLabel
+            self.reason = reason
+        }
+
+        /// True only for an unlink the account owner made from another device.
+        public var wasRemovedFromAccount: Bool {
+            !linked && reason == Self.removedFromAccountReason
+        }
     }
 
     public struct LinkCode: Sendable {
@@ -79,7 +111,9 @@ public final class SessionManager {
 
     private var signaling: SignalingClient?
     private var relay: RelayClient?
-    private var sessions: [DeviceID: Session] = [:]
+    /// Live phone sessions by phone device ID. Internal only so tests can
+    /// install a session; production code outside this class never touches it.
+    var sessions: [DeviceID: Session] = [:]
     private var currentRemoteApps: [RemoteApp] = []
     private struct RelayTransferKey: Hashable {
         let deviceID: DeviceID
@@ -1829,11 +1863,16 @@ public final class SessionManager {
         try? await signaling.send(env)
     }
 
-    private func handleControlMessage(_ msg: [String: Any]) {
+    func handleControlMessage(_ msg: [String: Any]) {
         guard let type = msg["type"] as? String else { return }
         switch type {
         case "host_identity":
             if let identity = Self.hostIdentity(fromControlMessage: msg) {
+                if identity.wasRemovedFromAccount {
+                    // The account no longer includes this Mac, so the phones it
+                    // authorized lose access now, not when their peers time out.
+                    endPhoneSessions(reason: "removed from account")
+                }
                 onHostIdentity?(identity)
                 if identity.linked && relay == nil && shouldReconnect {
                     relayReconnectTask?.cancel()
@@ -1923,8 +1962,62 @@ public final class SessionManager {
             userID: msg["user_id"] as? String,
             email: Self.nonEmpty(msg["email"] as? String),
             displayName: Self.nonEmpty(msg["display_name"] as? String),
-            avatarURL: Self.nonEmpty(msg["avatar_url"] as? String)
+            avatarURL: Self.nonEmpty(msg["avatar_url"] as? String),
+            hostLabel: Self.displayLabel(msg["host_label"] as? String),
+            reason: Self.nonEmpty(msg["reason"] as? String)
         )
+    }
+
+    /// A server-provided Mac name made safe for one line of UI. This is the
+    /// display side of the account's name rule: it drops only characters that
+    /// break a line or reorder or hide text (see `isHiddenInDisplayLabel`),
+    /// then trims surrounding whitespace; a blank result is nil. Characters
+    /// the server accepts in a name stay, including the zero-width joiner of
+    /// emoji sequences and the zero-width non-joiner Persian spelling needs.
+    nonisolated static func displayLabel(_ value: String?) -> String? {
+        guard let value else { return nil }
+        var visible = String.UnicodeScalarView()
+        visible.append(contentsOf: value.unicodeScalars.lazy.filter { !Self.isHiddenInDisplayLabel($0) })
+        return nonEmpty(String(visible))
+    }
+
+    /// The scalars a displayed Mac name leaves out: control characters (Cc),
+    /// the line and paragraph separators, bidi embeddings, overrides,
+    /// isolates and marks, and the invisible zero-width space, word joiner
+    /// and byte order mark. Other format characters (Cf) are kept.
+    nonisolated static func isHiddenInDisplayLabel(_ scalar: Unicode.Scalar) -> Bool {
+        if scalar.properties.generalCategory == .control { return true }
+        switch scalar.value {
+        case 0x2028, 0x2029, // line separator, paragraph separator
+             0x202A...0x202E, // LRE, RLE, PDF, LRO, RLO
+             0x2066...0x2069, // LRI, RLI, FSI, PDI
+             0x200E, 0x200F, // left-to-right mark, right-to-left mark
+             0x200B, 0x2060, 0xFEFF: // zero width space, word joiner, byte order mark
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Ends every live phone session (WebRTC peers and relay screen sharing).
+    /// The relay and signaling sockets stay up so the Mac can be linked again.
+    private func endPhoneSessions(reason: String) {
+        let ended = sessions
+        sessions.removeAll()
+        for (phoneDeviceID, session) in ended {
+            #if os(macOS)
+            sessionRemoteAppLogger.notice("peer ended phone=\(Self.shortDeviceID(phoneDeviceID), privacy: .public) reason=\(reason, privacy: .public)")
+            #endif
+            session.stop()
+            session.peer.close()
+            onPeerDisconnected?(phoneDeviceID)
+        }
+        relayImageTransfers.removeAll()
+        relayFileAttachmentBatches.removeAll()
+        #if os(macOS)
+        phonesWithLiveVideo.removeAll()
+        #endif
+        stopRelayScreenCapture()
     }
 
     private func authorizeAccountDevice(_ msg: [String: Any]) {

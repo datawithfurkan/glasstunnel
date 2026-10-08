@@ -91,6 +91,12 @@ final class AppState: ObservableObject {
     let launchAtLogin = LaunchAtLoginController()
 
     @Published var linkedAccount: AccountLinkController.LinkedAccountSummary? = AccountLinkController.loadCachedLinkedAccountSummary()
+    /// Shown after the owner removed this Mac from another device, until the
+    /// Mac is linked again or the owner dismisses it.
+    @Published private(set) var showsRemovedFromAccountNotice: Bool = AccountLinkController.loadRemovedFromAccountNotice()
+    /// The owner dismissed the notice for the current removal; a repeated
+    /// removal report on reconnect does not show it again.
+    private var removedFromAccountNoticeDismissed: Bool = AccountLinkController.loadRemovedFromAccountNoticeDismissed()
     @Published var accountLinkCode: String? = nil
     @Published var accountLinkCodeExpiresAt: Date? = nil
     @Published var activeApproval: ApprovalController.PendingDeviceApproval? = nil
@@ -217,6 +223,10 @@ final class AppState: ObservableObject {
     }
     var accountStatusSummary: String {
         AccountLinkController.accountStatusSummary(for: linkedAccount)
+    }
+    /// "Shown in your account as <name>" once the server has sent the name.
+    var accountNameLine: String? {
+        AccountLinkController.accountNameLine(for: linkedAccount)
     }
     var keepAwakeStatusSummary: String {
         if keepAwakeActive { return "Keeping Mac awake" }
@@ -513,10 +523,7 @@ final class AppState: ObservableObject {
             guard let appState = self else { return }
             Task { @MainActor [appState, manager] in
                 guard appState.sessionManager === manager else { return }
-                let summary = AccountLinkController.summary(from: identity)
-                appState.linkedAccount = summary
-                AccountLinkController.cacheLinkedAccountSummary(summary)
-                appState.accountIdentityChecked = true
+                appState.applyHostIdentity(identity)
             }
         }
         manager.onLinkCode = { [weak self] linkCode in
@@ -559,6 +566,40 @@ final class AppState: ObservableObject {
             try await manager.start()
         } catch {
             throw AppStateError.signalingUnreachable(signalingURL, error)
+        }
+    }
+
+    /// Applies the server's view of this Mac's account link: the account and
+    /// the account's name for this Mac, or no account (with a notice when the
+    /// owner removed the Mac from another device).
+    func applyHostIdentity(_ identity: SessionManager.HostIdentity) {
+        let next = AccountLinkController.identityState(after: identity, from: identityState)
+        linkedAccount = next.linkedAccount
+        AccountLinkController.cacheLinkedAccountSummary(next.linkedAccount)
+        applyRemovedFromAccountNotice(next)
+        accountIdentityChecked = true
+    }
+
+    func dismissRemovedFromAccountNotice() {
+        applyRemovedFromAccountNotice(AccountLinkController.dismissingRemovedFromAccountNotice(identityState))
+    }
+
+    private var identityState: AccountLinkController.IdentityState {
+        .init(
+            linkedAccount: linkedAccount,
+            showsRemovedFromAccountNotice: showsRemovedFromAccountNotice,
+            removedFromAccountNoticeDismissed: removedFromAccountNoticeDismissed
+        )
+    }
+
+    private func applyRemovedFromAccountNotice(_ state: AccountLinkController.IdentityState) {
+        if showsRemovedFromAccountNotice != state.showsRemovedFromAccountNotice {
+            showsRemovedFromAccountNotice = state.showsRemovedFromAccountNotice
+            AccountLinkController.cacheRemovedFromAccountNotice(state.showsRemovedFromAccountNotice)
+        }
+        if removedFromAccountNoticeDismissed != state.removedFromAccountNoticeDismissed {
+            removedFromAccountNoticeDismissed = state.removedFromAccountNoticeDismissed
+            AccountLinkController.cacheRemovedFromAccountNoticeDismissed(state.removedFromAccountNoticeDismissed)
         }
     }
 

@@ -9,7 +9,8 @@ import {
   type Hello,
   type RemoteApp,
 } from '@glasstunnel/protocol';
-import type { AccountHost } from '../lib/accountApi';
+import { AccountApiError, type AccountHost } from '../lib/accountApi';
+import { validateHostLabel } from '../lib/hostManagement';
 import { useAppStore, type AppState, type AuthenticatedUser, type PairedHost } from '../lib/store';
 
 export type WorkspaceFixtureId =
@@ -17,6 +18,7 @@ export type WorkspaceFixtureId =
   | 'hosts-mixed'
   | 'hosts-loading'
   | 'hosts-error'
+  | HostDeviceFixtureId
   | 'workspace-empty'
   | 'workspace-single-app'
   | 'workspace-multi-app'
@@ -37,6 +39,28 @@ export type WorkspaceFixtureId =
   | 'workspace-claude-code-trust'
   | 'workspace-offline-cached';
 
+/**
+ * Your Macs with two Macs of the same name (one online, one offline), for the
+ * "⋯" menu. `-actions` starts with nothing open; the others open the menu or
+ * one of its dialogs for the first Mac, so screenshots need no clicks.
+ */
+export type HostDeviceFixtureId =
+  | 'hosts-device-actions'
+  | 'hosts-device-menu'
+  | 'hosts-device-rename'
+  | 'hosts-device-details'
+  | 'hosts-device-remove';
+
+export type HostsFixtureDialog = { kind: 'menu' | 'rename' | 'details' | 'remove'; deviceId: string };
+
+const HOST_DEVICE_FIXTURE_IDS: readonly HostDeviceFixtureId[] = [
+  'hosts-device-actions',
+  'hosts-device-menu',
+  'hosts-device-rename',
+  'hosts-device-details',
+  'hosts-device-remove',
+];
+
 const FIXTURE_PARAM = 'gtFixture';
 const ENABLED = import.meta.env.DEV || import.meta.env.MODE === 'test';
 
@@ -44,6 +68,30 @@ export function currentWorkspaceFixtureId(): WorkspaceFixtureId | null {
   if (!ENABLED || typeof window === 'undefined') return null;
   const value = new URL(window.location.href).searchParams.get(FIXTURE_PARAM);
   return isWorkspaceFixtureId(value) ? value : null;
+}
+
+/**
+ * The menu or dialog a device-management fixture opens on Your Macs. Reads only
+ * the query string, so it is safe wherever the page has no full URL.
+ */
+export function currentHostsFixtureDialog(): HostsFixtureDialog | null {
+  if (!ENABLED || typeof window === 'undefined') return null;
+  let value: string | null = null;
+  try {
+    value = new URLSearchParams(window.location?.search ?? '').get(FIXTURE_PARAM);
+  } catch {
+    return null;
+  }
+  return isHostDeviceFixtureId(value) ? hostsFixtureDialog(value) : null;
+}
+
+export function hostsFixtureDialog(fixtureId: HostDeviceFixtureId): HostsFixtureDialog | null {
+  const deviceId = DEVICE_FIXTURE_ONLINE_ID;
+  if (fixtureId === 'hosts-device-menu') return { kind: 'menu', deviceId };
+  if (fixtureId === 'hosts-device-rename') return { kind: 'rename', deviceId };
+  if (fixtureId === 'hosts-device-details') return { kind: 'details', deviceId };
+  if (fixtureId === 'hosts-device-remove') return { kind: 'remove', deviceId };
+  return null;
 }
 
 export function isWorkspaceFixtureEnabled(): boolean {
@@ -82,6 +130,7 @@ export function workspaceFixtureState(fixtureId: WorkspaceFixtureId): Partial<Ap
   ) {
     return hostSelectionFixtureState(fixtureId);
   }
+  if (isHostDeviceFixtureId(fixtureId)) return hostDeviceFixtureState();
 
   const remoteApps =
     fixtureId === 'workspace-all-apps'
@@ -379,6 +428,7 @@ function isWorkspaceFixtureId(value: string | null): value is WorkspaceFixtureId
     value === 'hosts-mixed' ||
     value === 'hosts-loading' ||
     value === 'hosts-error' ||
+    isHostDeviceFixtureId(value) ||
     value === 'workspace-empty' ||
     value === 'workspace-single-app' ||
     value === 'workspace-multi-app' ||
@@ -431,9 +481,11 @@ function hostSelectionFixtureState(
         ? 'Signed in, but Mac sync could not reach Glasstunnel. Check your connection and refresh.'
         : null,
     refreshHosts: async () => undefined,
+    ...fixtureHostManagement(),
     claimHostLinkCode: async () => hosts[0] ?? fixtureAccountHost('fixture-new-mac', 'New Mac', true, true),
     chooseHost: async (hostDeviceId: string) => {
-      const selected = hosts.find((host) => host.deviceId === hostDeviceId);
+      // The list on screen, which the device-management fixtures rename and trim.
+      const selected = useAppStore.getState().availableHosts.find((host) => host.deviceId === hostDeviceId);
       if (!selected) return;
       useAppStore.setState({
         pairedHost: {
@@ -450,6 +502,71 @@ function hostSelectionFixtureState(
         relayHostOnline: selected.online,
         route: 'workspace',
       });
+    },
+  };
+}
+
+function isHostDeviceFixtureId(value: string | null): value is HostDeviceFixtureId {
+  return (HOST_DEVICE_FIXTURE_IDS as readonly string[]).includes(value ?? '');
+}
+
+const DEVICE_FIXTURE_ONLINE_ID = 'gt-4a1b7e3ac0d2f915';
+const DEVICE_FIXTURE_LABEL = 'Studio Mac mini';
+/** Long enough to see the fixture's busy labels ("Saving…", "Removing…"). */
+const DEVICE_FIXTURE_LATENCY_MS = 300;
+
+/**
+ * Two Macs called "Studio Mac mini" (the online one with a known app
+ * version, the offline one last seen weeks ago without one) and a MacBook Pro.
+ * Rename and Remove act on this list locally: the same validation, no network.
+ */
+function hostDeviceFixtureState(): Partial<AppState> {
+  const hosts: AccountHost[] = [
+    {
+      ...fixtureAccountHost(DEVICE_FIXTURE_ONLINE_ID, DEVICE_FIXTURE_LABEL, true, true, 1_781_312_200_000),
+      addedAtUnixMs: 1_781_000_000_000,
+      appVersion: '0.1.10',
+    },
+    {
+      ...fixtureAccountHost('gt-9c03d5e81b7a4f20', DEVICE_FIXTURE_LABEL, false, true, 1_778_400_000_000),
+      addedAtUnixMs: 1_772_000_000_000,
+    },
+    fixtureAccountHost('gt-17e2b9f04c6a3d58', 'MacBook Pro', false, true, 1_781_300_000_000),
+  ];
+  return {
+    ...hostSelectionFixtureState('hosts-mixed'),
+    availableHosts: hosts,
+  };
+}
+
+/** Rename and Remove for the Your Macs fixtures: the store's validation, the list on screen, no network. */
+function fixtureHostManagement(): Pick<AppState, 'renameHost' | 'removeHost'> {
+  const settle = () => new Promise((resolve) => setTimeout(resolve, DEVICE_FIXTURE_LATENCY_MS));
+  const listed = (deviceId: string) => {
+    if (!useAppStore.getState().availableHosts.some((host) => host.deviceId === deviceId)) {
+      throw new AccountApiError('This Mac is no longer in your account.', 404);
+    }
+  };
+  return {
+    renameHost: async (deviceId: string, label: string) => {
+      const validation = validateHostLabel(label);
+      if (!validation.ok) throw new AccountApiError(validation.error, 400);
+      await settle();
+      listed(deviceId);
+      useAppStore.setState((state) => ({
+        availableHosts: state.availableHosts.map((host) =>
+          host.deviceId === deviceId ? { ...host, label: validation.label } : host,
+        ),
+      }));
+      return validation.label;
+    },
+    removeHost: async (deviceId: string) => {
+      await settle();
+      listed(deviceId);
+      useAppStore.setState((state) => ({
+        availableHosts: state.availableHosts.filter((host) => host.deviceId !== deviceId),
+        pairedHost: state.pairedHost?.deviceId === deviceId ? null : state.pairedHost,
+      }));
     },
   };
 }

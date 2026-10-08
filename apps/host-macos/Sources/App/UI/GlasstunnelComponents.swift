@@ -126,6 +126,52 @@ struct GlasstunnelRowDivider: View {
     }
 }
 
+/// A tinted, dismissible message for a state change the owner should notice.
+struct GlasstunnelNotice: View {
+    let message: String
+    let systemImage: String
+    var tint: Color = GlasstunnelDesign.warning
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: systemImage)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(tint)
+                .accessibilityHidden(true)
+
+            Text(message)
+                .font(.system(size: 13))
+                .foregroundStyle(GlasstunnelDesign.text)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(GlasstunnelDesign.muted)
+                    .frame(width: 20, height: 20)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .pointingHandCursor()
+            .help("Dismiss")
+            .accessibilityLabel("Dismiss")
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: GlasstunnelDesign.microRadius, style: .continuous)
+                .fill(tint.opacity(0.12))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: GlasstunnelDesign.microRadius, style: .continuous)
+                .stroke(tint.opacity(0.35), lineWidth: 1)
+        )
+        .accessibilityElement(children: .contain)
+    }
+}
+
 struct GlasstunnelStatusLabel: View {
     let title: String
     let systemImage: String

@@ -86,6 +86,15 @@ links the Mac with exactly one claim across both tabs. It runs alone, because
 the account journey in `pnpm lab:e2e` claims the host's only link code for the
 lab user.
 
+`pnpm lab:e2e:device-management` (`node scripts/lab/e2e.mjs device-management`)
+covers Mac management from Your Macs. It starts the Swift host, links it with
+the lab account from one phone while a second phone opens it, renames the Mac
+(including the empty-name error) and checks the name after a reload, opens
+Details and checks the short device ID, then removes the Mac. The second phone
+must show "This Mac was removed from your account." and the relay must send the
+removed Mac's content to nobody. It runs alone, because removing the Mac
+unlinks the lab host for the rest of the run.
+
 During a reset the app keeps the Mac's link code in `localStorage`
 (`gt.pending-link-code`) for 10 minutes, the link code's own lifetime. "Forgot
 password?" stores it with the email typed at that moment, and sending the
@@ -105,21 +114,23 @@ or GitHub sign-in.
 
 ## Commands
 
-| Command                       | Purpose                                                                    |
-| ----------------------------- | -------------------------------------------------------------------------- |
-| `pnpm lab:doctor`             | Inspect prerequisites and stale state without changing anything            |
-| `pnpm lab:up`                 | Start the local Convex backend, Worker, and PWA                            |
-| `pnpm lab:up:host`            | Start the core lab plus an isolated Swift host                             |
-| `pnpm lab:status`             | Show owned services, health, URLs, and host metadata                       |
-| `pnpm lab:reset -- --yes`     | Stop owned services and reset disposable local data                        |
-| `pnpm lab:down`               | Stop only services owned by the current lab manifest                       |
-| `pnpm lab:mac`                | Launch the signed development Mac app against a running lab                |
-| `pnpm lab:test`               | Run lab unit contracts plus Worker type and runtime tests                  |
-| `pnpm lab:e2e`                | Run fixtures, the real mobile account/Terminal journey, and password reset |
-| `pnpm lab:e2e:password-reset` | Run only the password reset journey (local backend, no Mac host)           |
-| `pnpm lab:e2e:safari`         | Run responsive fixture coverage in Playwright WebKit                       |
+| Command                          | Purpose                                                                    |
+| -------------------------------- | -------------------------------------------------------------------------- |
+| `pnpm lab:doctor`                | Inspect prerequisites and stale state without changing anything            |
+| `pnpm lab:up`                    | Start the local Convex backend, Worker, and PWA                            |
+| `pnpm lab:up:host`               | Start the core lab plus an isolated Swift host                             |
+| `pnpm lab:status`                | Show owned services, health, URLs, and host metadata                       |
+| `pnpm lab:reset -- --yes`        | Stop owned services and reset disposable local data                        |
+| `pnpm lab:down`                  | Stop only services owned by the current lab manifest                       |
+| `pnpm lab:mac`                   | Launch the signed development Mac app against a running lab                |
+| `pnpm lab:test`                  | Run lab unit contracts plus Worker type and runtime tests                  |
+| `pnpm lab:e2e`                   | Run fixtures, the real mobile account/Terminal journey, and password reset |
+| `pnpm lab:e2e:password-reset`    | Run only the password reset journey (local backend, no Mac host)           |
+| `pnpm lab:e2e:device-management` | Run only the rename, details and remove journey for a linked Mac (alone)   |
+| `pnpm lab:e2e:safari`            | Run responsive fixture coverage in Playwright WebKit                       |
 
-The same commands, except the `lab:e2e:password-reset` ones, are available as
+The same commands, except the `lab:e2e:password-reset` and
+`lab:e2e:device-management` ones, are available as
 `make lab-*` aliases. `make dev-stack` is
 an alias for the account-first `pnpm lab:up`. The Go server on port `18080` is
 an explicit legacy compatibility path, not the default stack.

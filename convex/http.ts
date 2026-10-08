@@ -53,6 +53,8 @@ const MUTATIONS = {
   deleteDeviceByUuid: internal.accountPlane.deleteDeviceByUuid,
   deleteRevokedPairings: internal.accountPlane.deleteRevokedPairings,
   revokePairing: internal.accountPlane.revokePairing,
+  renameHostDevice: internal.accountPlane.renameHostDevice,
+  removeHostDevice: internal.accountPlane.removeHostDevice,
 } as const;
 
 const encoder = new TextEncoder();

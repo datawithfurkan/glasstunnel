@@ -71,6 +71,19 @@ body {
     border-color: var(--gt-border);
   }
 
+  /* Dialogs: a bottom sheet on phones (clear of the home indicator), a panel on wider screens. */
+  .gt-dialog {
+    border-radius: 14px 14px 0 0;
+    padding-bottom: max(env(safe-area-inset-bottom), 20px);
+  }
+
+  @media (min-width: 640px) {
+    .gt-dialog {
+      border-radius: 10px;
+      padding-bottom: 20px;
+    }
+  }
+
   .gt-panel-muted {
     @apply border bg-surface-2;
     border-radius: 6px;
@@ -148,6 +161,36 @@ body {
     background: rgba(255, 59, 48, 0.08);
     border-color: rgba(255, 59, 48, 0.28);
     color: #ff7a72;
+  }
+
+  /* The confirming button of an action that cannot be undone. */
+  .gt-button-destructive {
+    background: #ff3b30;
+    border-color: rgba(255, 59, 48, 0.9);
+    color: white;
+  }
+
+  .gt-button-destructive:hover:not(:disabled) {
+    background: #d70015;
+  }
+
+  .gt-button-destructive:active:not(:disabled) {
+    background: #a50011;
+  }
+
+  /* Rows of a "⋯" menu: full width, 44px tall, focus visible. */
+  .gt-menu-item {
+    @apply flex min-h-11 w-full items-center rounded-[10px] px-3 py-2 text-left text-sm font-medium transition;
+  }
+
+  .gt-menu-item:hover,
+  .gt-menu-item:focus-visible {
+    background: var(--gt-surface-alt);
+    outline: none;
+  }
+
+  .gt-menu-item:focus-visible {
+    box-shadow: inset 0 0 0 2px var(--gt-accent);
   }
 
   .gt-input {

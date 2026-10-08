@@ -27,12 +27,24 @@ import {
 import type { MessageDetail } from '@glasstunnel/protocol';
 import {
   AccountApiError,
+  HOST_MANAGEMENT_TIMEOUT_MS,
   claimHostCode,
   fetchAccountHosts,
   isAccountApiAuthFailure,
   registerBrowserDevice,
+  removeAccountHost,
+  renameAccountHost,
   type AccountHost,
 } from './accountApi';
+import {
+  HOST_MANAGEMENT_COPY,
+  HOST_REMOVED_RELAY_REASON,
+  hostActionErrorCopy,
+  isHostNotInAccount,
+  isNetworkFailure,
+  validateHostLabel,
+  type HostAction,
+} from './hostManagement';
 import { createClientId } from './id';
 import { platformConfig } from './platform';
 import { registerPushSubscription } from '../notifications/push';
@@ -221,6 +233,22 @@ export interface AppState {
   refreshHosts: (options?: { force?: boolean; userInitiated?: boolean }) => Promise<void>;
   claimHostLinkCode: (code: string) => Promise<AccountHost>;
   chooseHost: (hostDeviceId: string) => Promise<void>;
+  /**
+   * Renames a Mac in the account. The list shows the new name once the server
+   * stored it; resolves with that name. Rejects with an AccountApiError whose
+   * message is ready to show (invalid name, Mac not in this account, service
+   * unavailable, no connection).
+   */
+  renameHost: (deviceId: string, label: string) => Promise<string>;
+  /**
+   * Removes a Mac from the account. The Mac leaves the list only once the
+   * server removed it; when it was this browser's Mac, its workspace, saved
+   * choice and offline copies go too. When no answer comes (a timeout or a
+   * dropped connection), the account's list is loaded again: a Mac it no
+   * longer has was removed, and this resolves as a removal does. Otherwise
+   * rejects like renameHost.
+   */
+  removeHost: (deviceId: string) => Promise<void>;
   sendText: (agentId: string, text: string, submit: boolean) => boolean;
   sendScreenPointer: (
     agentId: string,
@@ -285,6 +313,37 @@ interface BrowserRegistration {
   done: Promise<void>;
 }
 let browserRegistration: BrowserRegistration | null = null;
+
+/**
+ * Renames and removals this page made, in order. A host list requested before
+ * one of them may answer after it with the old name or the removed Mac; the
+ * edits made since that list was requested apply on top of it.
+ */
+interface HostListEdit {
+  seq: number;
+  deviceId: string;
+  label?: string;
+  removed?: boolean;
+}
+let hostListEditSeq = 0;
+let hostListEdits: HostListEdit[] = [];
+const HOST_LIST_EDIT_HISTORY = 32;
+/**
+ * Macs this page is removing, until when. The relay closes this browser's
+ * socket to such a Mac as it goes; the page already says it was removed.
+ */
+const hostRemovalsByThisPage = new Map<string, number>();
+/** Longer than a removal request may wait, plus the list check after a lost answer. */
+const HOST_REMOVAL_ECHO_WINDOW_MS = HOST_MANAGEMENT_TIMEOUT_MS + 15_000;
+const HOST_REVOKED_NOTICE = 'Access to this Mac was revoked.';
+const HOST_REVOKED_CACHE_FAILED_NOTICE =
+  'Access was revoked. Browser offline copies could not be cleared; retry in Profile.';
+/**
+ * The Mac whose offline copies this page could not clear, with the notice
+ * that says so. A later rename or removal of that Mac must not hide the
+ * notice: the copies stay in this browser until the user retries in Profile.
+ */
+let cacheFailureNotice: { deviceId: string; notice: string } | null = null;
 const HOST_LIST_UNAVAILABLE_COPY = 'Signed in, but your Macs could not load. Refresh to try again.';
 const HOST_CHOICE_NOT_SAVED_COPY =
   "Your Macs loaded, but this browser could not save your Mac choice. Check this site's storage settings.";
@@ -602,19 +661,33 @@ export const useAppStore = create<AppState>((set, get) => ({
           if (!isCurrent()) return;
           if (intentional) return;
           if (event.code === 4003) {
+            // The same close code covers this browser's access being revoked
+            // and the Mac leaving the account; the reason tells them apart.
+            const removedFromAccount = event.reason === HOST_REMOVED_RELAY_REASON;
+            // A removal this page made says so on its own; no second notice.
+            const removedHere = removedFromAccount && hostRemovalByThisPage(pairedHost.deviceId);
             get().disconnectPeer();
+            if (removedFromAccount) recordHostListEdit({ deviceId: pairedHost.deviceId, removed: true });
             set((state) => ({
               pairedHost: null,
               availableHosts: state.availableHosts.filter((host) => host.deviceId !== pairedHost.deviceId),
               route: state.user ? 'hosts' : fallbackEntryRoute(),
               error: null,
-              accessRevocationNotice: 'Access to this Mac was revoked.',
+              accessRevocationNotice: removedHere
+                ? state.accessRevocationNotice
+                : removedFromAccount
+                  ? HOST_MANAGEMENT_COPY.removedNotice
+                  : HOST_REVOKED_NOTICE,
             }));
             void Promise.all([
               idbDel(PAIRED_HOST_KEY),
               offlineCache.clear(get().user?.id, pairedHost.deviceId),
             ]).catch(() => {
-              set({ accessRevocationNotice: 'Access was revoked. Browser offline copies could not be cleared; retry in Profile.' });
+              showCacheFailureNotice(
+                set,
+                pairedHost.deviceId,
+                removedFromAccount ? HOST_MANAGEMENT_COPY.removedNoticeCacheFailed : HOST_REVOKED_CACHE_FAILED_NOTICE,
+              );
             });
             return;
           }
@@ -1133,12 +1206,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       // A newer sync (sign-in, account switch, sign-out) replaces this one.
       const isCurrentList = () =>
         registration.syncVersion === sessionSyncVersion && browserRegistration === registration;
+      const editMark = hostListEditSeq;
       try {
-        const { result: hosts, session: accountSession } = await accountRequestWithSessionRetry(
+        const { result: listed, session: accountSession } = await accountRequestWithSessionRetry(
           session,
           (accessToken) => fetchAccountHosts(accessToken, keypair.deviceId),
         );
         if (!isCurrentList()) return;
+        const hosts = withHostListEditsSince(listed, editMark);
 
         const state = get();
         const selected = chooseHostSelection(hosts, state.pairedHost);
@@ -1233,6 +1308,98 @@ export const useAppStore = create<AppState>((set, get) => ({
       error: host.online ? null : connectionStatusCopy('offline-cached'),
     });
     await get().startPeer();
+  },
+
+  async renameHost(deviceId, label) {
+    const validation = validateHostLabel(label);
+    if (!validation.ok) throw new AccountApiError(validation.error, 400);
+    const account = get().user?.id;
+    let stored: AccountHost | undefined;
+    try {
+      const session = await currentSession();
+      ({ result: stored } = await accountRequestWithSessionRetry(session, (accessToken) =>
+        renameAccountHost(accessToken, {
+          deviceId,
+          label: validation.label,
+          requesterDeviceId: get().phoneKeypair?.deviceId,
+        }),
+      ));
+    } catch (error) {
+      throw hostActionFailure(get, 'rename', error);
+    }
+    const nextLabel = stored?.deviceId === deviceId && stored.label ? stored.label : validation.label;
+    // Another account signed in while the request ran: its list is not this one.
+    if (get().user?.id !== account) return nextLabel;
+    recordHostListEdit({ deviceId, label: nextLabel });
+    set((state) => ({
+      // The screen now reports this change; an earlier access notice is stale,
+      // unless it says this Mac's offline copies are still in this browser.
+      accessRevocationNotice: cacheFailureNoticeFor(state, deviceId),
+      availableHosts: state.availableHosts.map((host) =>
+        host.deviceId === deviceId ? renamedAccountHost(host, nextLabel, stored) : host,
+      ),
+      pairedHost:
+        state.pairedHost?.deviceId === deviceId ? { ...state.pairedHost, label: nextLabel } : state.pairedHost,
+    }));
+    const paired = get().pairedHost;
+    if (paired?.deviceId === deviceId) {
+      // The saved choice keeps its name; failing to save it changes nothing else.
+      await idbSet(PAIRED_HOST_KEY, paired).catch(() => {});
+    }
+    return nextLabel;
+  },
+
+  async removeHost(deviceId) {
+    const account = get().user?.id;
+    // The relay may close this browser's socket to the Mac before the answer.
+    hostRemovalsByThisPage.set(deviceId, Date.now() + HOST_REMOVAL_ECHO_WINDOW_MS);
+    try {
+      const session = await currentSession();
+      await accountRequestWithSessionRetry(session, (accessToken) =>
+        removeAccountHost(accessToken, { deviceId }),
+      );
+    } catch (error) {
+      // No answer (the request timed out or the connection dropped): the
+      // removal may have happened anyway. If the account's list, loaded
+      // again, no longer has the Mac, it did, and it ends as a removal does.
+      if (!isNetworkFailure(error) || !(await hostLeftAccountList(get, account, deviceId))) {
+        hostRemovalsByThisPage.delete(deviceId);
+        throw hostActionFailure(get, 'remove', error);
+      }
+    }
+    if (get().user?.id !== account) return;
+    recordHostListEdit({ deviceId, removed: true });
+    const wasSelected = get().pairedHost?.deviceId === deviceId;
+    if (wasSelected) {
+      get().disconnectPeer();
+      try {
+        localStorage.removeItem(`gt.webauthn.enrolled.${deviceId}`);
+      } catch {
+        // Storage may be unavailable; nothing else depends on this flag.
+      }
+    }
+    set((state) => ({
+      // The relay may already have closed this browser's socket to the Mac and
+      // failed to clear its offline copies; that notice stays.
+      accessRevocationNotice: cacheFailureNoticeFor(state, deviceId),
+      availableHosts: state.availableHosts.filter((host) => host.deviceId !== deviceId),
+      ...(wasSelected
+        ? {
+            pairedHost: null,
+            relayHostOnline: null,
+            route: isWorkspaceRoute(state.route) ? ('hosts' as const) : state.route,
+          }
+        : {}),
+    }));
+    // This browser keeps nothing of a Mac that left the account. The removal
+    // itself succeeded; copies that could not be cleared are reported instead.
+    const cleared = await Promise.allSettled([
+      wasSelected ? idbDel(PAIRED_HOST_KEY) : Promise.resolve(),
+      account ? offlineCache.clear(account, deviceId) : Promise.resolve(),
+    ]);
+    if (cleared.some((result) => result.status === 'rejected') && get().user?.id === account) {
+      showCacheFailureNotice(set, deviceId, HOST_MANAGEMENT_COPY.removedNoticeCacheFailed);
+    }
   },
 
   sendText(agentId, text, submit) {
@@ -1742,6 +1909,7 @@ async function runSessionSync(
 
   let hosts: AccountHost[];
   let accountSession = session;
+  const editMark = hostListEditSeq;
   try {
     const result = await accountRequestWithSessionRetry(session, (accessToken) =>
       registerBrowserDevice(accessToken, {
@@ -1752,7 +1920,7 @@ async function runSessionSync(
         platform: navigator.userAgent,
       }),
     );
-    hosts = result.result;
+    hosts = withHostListEditsSince(result.result, editMark);
     accountSession = result.session;
   } catch (err) {
     if (!isCurrentSync()) return;
@@ -2598,6 +2766,122 @@ function friendlyAccountSyncError(error: unknown): string {
     return 'Signed in, but Mac sync could not reach Glasstunnel. Check your connection and refresh.';
   }
   return `Signed in, but Macs could not sync: ${message}`;
+}
+
+function recordHostListEdit(edit: Omit<HostListEdit, 'seq'>): void {
+  hostListEditSeq += 1;
+  hostListEdits = [...hostListEdits, { ...edit, seq: hostListEditSeq }].slice(-HOST_LIST_EDIT_HISTORY);
+}
+
+/** The list as it stands after the renames and removals this page made since `mark`. */
+function withHostListEditsSince(hosts: AccountHost[], mark: number): AccountHost[] {
+  let next = hosts;
+  for (const edit of hostListEdits) {
+    if (edit.seq <= mark) continue;
+    if (edit.removed) {
+      next = next.filter((host) => host.deviceId !== edit.deviceId);
+    } else if (edit.label !== undefined) {
+      const label = edit.label;
+      next = next.map((host) => (host.deviceId === edit.deviceId ? { ...host, label } : host));
+    }
+  }
+  return next;
+}
+
+function showCacheFailureNotice(set: SetState, deviceId: string, notice: string): void {
+  cacheFailureNotice = { deviceId, notice };
+  set({ accessRevocationNotice: notice });
+}
+
+/** The notice on screen when it still reports this Mac's offline copies left in this browser, else null. */
+function cacheFailureNoticeFor(state: Pick<AppState, 'accessRevocationNotice'>, deviceId: string): string | null {
+  return cacheFailureNotice?.deviceId === deviceId && state.accessRevocationNotice === cacheFailureNotice.notice
+    ? cacheFailureNotice.notice
+    : null;
+}
+
+/**
+ * After a removal that got no answer: whether the account's list, loaded
+ * again, no longer has the Mac. False when the list cannot load or another
+ * account signed in meanwhile, so the failure is reported as it was.
+ */
+/**
+ * How long the list check after an unanswered removal may take. It runs on
+ * the same possibly stalled connection, and the Remove dialog cannot be
+ * dismissed while it waits, so it gets its own limit; no answer in time means
+ * "not confirmed" and the connection error shows.
+ */
+export const HOST_REMOVAL_RECHECK_TIMEOUT_MS = 15_000;
+
+async function hostLeftAccountList(
+  get: () => AppState,
+  account: string | undefined,
+  deviceId: string,
+): Promise<boolean> {
+  const keypair = get().phoneKeypair;
+  if (!account || !keypair) return false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const recheck = (async () => {
+      const session = await currentSession();
+      if (session.user.id !== account) return null;
+      const { result } = await accountRequestWithSessionRetry(session, (accessToken) =>
+        fetchAccountHosts(accessToken, keypair.deviceId),
+      );
+      return result;
+    })();
+    const giveUp = new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), HOST_REMOVAL_RECHECK_TIMEOUT_MS);
+    });
+    const hosts = await Promise.race([recheck, giveUp]);
+    if (!hosts) {
+      // A late answer from the abandoned check is ignored.
+      recheck.catch(() => {});
+      return false;
+    }
+    return get().user?.id === account && !hosts.some((host) => host.deviceId === deviceId);
+  } catch {
+    return false;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+function hostRemovalByThisPage(deviceId: string): boolean {
+  const until = hostRemovalsByThisPage.get(deviceId);
+  if (until === undefined) return false;
+  if (until > Date.now()) return true;
+  hostRemovalsByThisPage.delete(deviceId);
+  return false;
+}
+
+/**
+ * The Mac as the list shows it after a rename. Only fields that do not depend
+ * on which browser asked come from the server's answer; presence and this
+ * browser's trust stay as listed.
+ */
+function renamedAccountHost(host: AccountHost, label: string, stored: AccountHost | undefined): AccountHost {
+  return {
+    ...host,
+    label,
+    ...(stored?.appVersion ? { appVersion: stored.appVersion } : {}),
+    ...(stored?.addedAtUnixMs ? { addedAtUnixMs: stored.addedAtUnixMs } : {}),
+  };
+}
+
+/**
+ * A failed rename or removal, with a message ready to show. When the server
+ * said the Mac is not in the account (404 "Mac not found") or the answer never
+ * came (the change may have happened), the list loads again so it shows what
+ * the account holds. Any other 404 (an older Worker without the route) is a
+ * plain failure: it says nothing about the Mac.
+ */
+function hostActionFailure(get: () => AppState, action: HostAction, error: unknown): AccountApiError {
+  const status = error instanceof AccountApiError ? error.status : 0;
+  if (isHostNotInAccount(error) || isNetworkFailure(error)) {
+    void get().refreshHosts({ force: true }).catch(() => {});
+  }
+  return new AccountApiError(hostActionErrorCopy(action, error), isAccountApiAuthFailure(error) ? 401 : status);
 }
 
 function chooseHostSelection(hosts: AccountHost[], current: PairedHost | null): PairedHost | null {

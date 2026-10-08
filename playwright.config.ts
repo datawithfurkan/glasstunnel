@@ -58,6 +58,14 @@ export default defineConfig({
       use: { ...devices['Pixel 7'] },
     },
     {
+      // Rename, Details and Remove on a linked lab Mac, with a second phone that
+      // has it open. Removing the Mac unlinks the lab host, so it runs alone:
+      // node scripts/lab/e2e.mjs device-management.
+      name: 'local-device-management-mobile-chromium',
+      grep: /@device-management-account/,
+      use: { ...devices['Pixel 7'] },
+    },
+    {
       name: 'local-retention-mobile-chromium',
       grep: /@retention-account/,
       use: { ...devices['Pixel 7'] },
