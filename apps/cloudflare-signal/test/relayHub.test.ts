@@ -133,6 +133,8 @@ function deviceRow(identity: DeviceIdentity, kind: 'host' | 'phone'): Record<str
 /** The test Worker's gateway (test/wrangler.jsonc). */
 const GATEWAY_URL = 'https://gateway-test.convex.site/worker/account-plane';
 const GATEWAY_SECRET = 'worker-gateway-secret-for-tests-0123456789';
+/** The fake gateway's session token for a second account ('user-2'); any other token is 'user-1'. */
+const SECOND_ACCOUNT_TOKEN = 'second-account-token';
 
 class GatewayRejection extends Error {
   constructor(readonly code: string) {
@@ -194,9 +196,13 @@ function stubAccountPlane(options: {
   };
 
   const functions: Record<string, (args: Record<string, unknown>) => unknown | Promise<unknown>> = {
-    async verifyBearerToken() {
+    async verifyBearerToken(args) {
       await pauseIf('auth-user');
-      return options.failAuth ? null : { id: 'user-1', email: 'user@example.test' };
+      if (options.failAuth) return null;
+      // A second account, for tests where two accounts act at once.
+      return args.token === SECOND_ACCOUNT_TOKEN
+        ? { id: 'user-2', email: 'second@example.test' }
+        : { id: 'user-1', email: 'user@example.test' };
     },
     async findDeviceByDeviceId(args) {
       await pauseIf('device-lookup');
@@ -215,11 +221,6 @@ function stubAccountPlane(options: {
     findApprovalById: (args) => approvals.find((row) => row.id === args.requestId) ?? null,
     listPendingApprovalsByHost: (args) =>
       approvals.filter((row) => row.host_device_uuid === args.hostDeviceUuid && row.status === 'pending'),
-    getUnconsumedHostLinkCode: (args) => {
-      const usable = linkCodes.filter((row) => row.code === args.code && row.consumed_at == null &&
-        Date.parse(String(row.expires_at)) > Date.now());
-      return usable.length === 1 ? usable[0] : null;
-    },
     async upsertUserDevice(args) {
       const existing = devices.find((row) => row.device_id === args.deviceId);
       const at = new Date().toISOString();
@@ -304,10 +305,17 @@ function stubAccountPlane(options: {
       });
       return null;
     },
-    consumeHostLinkCode: (args) => {
-      const row = linkCodes.find((code) => code.id === args.id);
-      if (row) Object.assign(row, { consumed_at: new Date().toISOString(), claimed_user_id: args.claimedUserId });
-      return null;
+    // Synchronous from lookup to write, as the real mutation is one serializable
+    // transaction: two racing claims cannot both see the code unconsumed.
+    claimHostLinkCode: (args) => {
+      const unconsumed = linkCodes.filter((row) => row.code === args.code && row.consumed_at == null).slice(0, 20);
+      const live = unconsumed.filter((row) => Date.parse(String(row.expires_at)) > Date.now());
+      if (live.length === 1) {
+        Object.assign(live[0], { consumed_at: new Date().toISOString(), claimed_user_id: args.claimedUserId });
+        return live[0];
+      }
+      if (live.length === 0 && unconsumed.length > 0) throw new GatewayRejection('link_code_expired');
+      throw new GatewayRejection('link_code_not_found');
     },
     deleteHostLinkCodesByHostDeviceId: (args) => remove(linkCodes, (row) => row.host_device_id === args.hostDeviceId),
     deleteDeviceByUuid: (args) => {
@@ -1471,6 +1479,103 @@ describe('SignalingHub link-code re-authorization', () => {
     await runInDurableObject(relay, async (_hub, state) => {
       expect(await state.storage.get(`revoked-device:${phone.deviceId}`)).toBeUndefined();
     });
+  });
+});
+
+describe('SignalingHub link-code claims', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  function linkCodeRow(host: DeviceIdentity, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      id: 'code-1', code: 'RACE23', host_device_id: host.deviceId, host_public_key_b64: host.publicKeyB64,
+      host_label: 'Test Mac', host_metadata: {}, created_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 600_000).toISOString(), consumed_at: null, claimed_user_id: null,
+      ...overrides,
+    };
+  }
+
+  function claim(stub: DurableObjectStub<SignalingHub>, token: string, body: Record<string, unknown>) {
+    return stub.fetch('https://hub.test/account/claim-host-code', {
+      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  it.each([
+    ['one account', 'test-token', 'user-1'],
+    ['two accounts', SECOND_ACCOUNT_TOKEN, 'user-2'],
+  ] as const)('lets exactly one of two racing claims from %s use the code', async (_label, secondToken, secondUser) => {
+    const host = await createDeviceIdentity();
+    const firstPhone = await createDeviceIdentity();
+    const secondPhone = await createDeviceIdentity();
+    const devices = [deviceRow(firstPhone, 'phone'), { ...deviceRow(secondPhone, 'phone'), user_id: secondUser }];
+    const pairings: Record<string, unknown>[] = [];
+    const linkCodes = [linkCodeRow(host)];
+    // The first claim pauses at its first device lookup, after the code is claimed
+    // and before the Mac is linked or a browser paired. The second claim starts and
+    // finishes inside that window, as it would when both requests arrive together.
+    const gate = stubAccountPlane({ gateOn: 'device-lookup', devices, pairings, linkCodes });
+    const stub = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`claim-race-${host.deviceId}`));
+
+    const first = claim(stub, 'test-token', { code: 'RACE23', requesterDeviceId: firstPhone.deviceId });
+    await waitFor(() => gate.reached, 'the first claim to pause');
+    const second = await claim(stub, secondToken, { code: 'race-23', requesterDeviceId: secondPhone.deviceId });
+    gate.release();
+    const winner = await first;
+
+    expect(second.status).toBe(404);
+    expect(await second.json()).toEqual({ ok: false, error: 'link code not found' });
+    expect(winner.status).toBe(200);
+    expect(await winner.json()).toMatchObject({ ok: true, host: { deviceId: host.deviceId, trusted: true } });
+    expect(linkCodes).toEqual([expect.objectContaining({ claimed_user_id: 'user-1', consumed_at: expect.any(String) })]);
+    expect(devices.filter((row) => row.kind === 'host')).toEqual([
+      expect.objectContaining({ device_id: host.deviceId, user_id: 'user-1' }),
+    ]);
+    // One code pairs one browser: the losing claim paired nothing.
+    expect(pairings).toEqual([expect.objectContaining({ owner_user_id: 'user-1', phone_device_uuid: `phone-${firstPhone.deviceId}` })]);
+  });
+
+  it('tells the person to show a new code when linking fails after the code was claimed', async () => {
+    const host = await createDeviceIdentity();
+    const phone = await createDeviceIdentity();
+    const linkCodes = [linkCodeRow(host)];
+    stubAccountPlane({ devices: [deviceRow(phone, 'phone')], linkCodes });
+    const stubbed = globalThis.fetch;
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      if (gatewayFunction(input, init) === 'findDeviceByDeviceId') throw new Error('account service unreachable');
+      return stubbed(input, init);
+    });
+    const stub = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`claim-spent-${host.deviceId}`));
+
+    const response = await claim(stub, 'test-token', { code: 'RACE23', requesterDeviceId: phone.deviceId });
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: "Linking didn't finish, and this code can't be used again. Show a new code on your Mac and enter it.",
+    });
+    expect(linkCodes).toEqual([expect.objectContaining({ claimed_user_id: 'user-1', consumed_at: expect.any(String) })]);
+  });
+
+  it.each([
+    ['expired', [{ expires_at: new Date(Date.now() - 1_000).toISOString() }], 400, 'link code expired'],
+    ['already used', [{ consumed_at: new Date().toISOString(), claimed_user_id: 'user-9' }], 404, 'link code not found'],
+    ['ambiguous', [{}, { id: 'code-2' }], 404, 'link code not found'],
+    ['unknown', [], 404, 'link code not found'],
+  ] as const)('refuses an %s code without linking the Mac', async (_label, rows, status, error) => {
+    const host = await createDeviceIdentity();
+    const devices: Record<string, unknown>[] = [];
+    const linkCodes = rows.map((overrides) => linkCodeRow(host, overrides));
+    const before = structuredClone(linkCodes);
+    stubAccountPlane({ devices, linkCodes });
+    const stub = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`claim-refused-${host.deviceId}`));
+
+    const response = await claim(stub, 'test-token', { code: 'RACE23' });
+
+    expect(response.status).toBe(status);
+    expect(await response.json()).toEqual({ ok: false, error });
+    expect(linkCodes).toEqual(before);
+    expect(devices).toEqual([]);
   });
 });
 

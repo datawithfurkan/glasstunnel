@@ -14,6 +14,17 @@ This document tracks the hosted Glasstunnel platform layout.
   - Development deployment: `whimsical-sockeye-495`
 - Deploy workflow: `.github/workflows/deploy.yml` (manual; Convex first, then
   the Worker and the web surfaces)
+- Auth email: Resend, sending domain `mail.glasstunnel.io` (region Ireland,
+  eu-west-1). The Convex deployment sends password reset and password changed
+  emails with `RESEND_API_KEY` and `AUTH_EMAIL_FROM` (see `convex/README.md`).
+  Click and open tracking stay off so reset links are never rewritten.
+- DNS: the `glasstunnel.io` zone is on Cloudflare (Namecheap is only the
+  registrar). Mail forwarding for the main domain stays on Namecheap's MX and
+  SPF records. Resend's records live on the `mail` subdomain:
+  `resend._domainkey.mail` (DKIM TXT), `send.mail` and `rsend.mail` (CNAMEs,
+  DNS only). `_dmarc` holds a monitoring-only policy (`p=none`).
+- `www.glasstunnel.io` redirects permanently to `https://glasstunnel.io` with a
+  Cloudflare redirect rule.
 
 The Supabase project (`gdvqnyebglrimangddts`) is retired. Accounts moved to
 Convex on 2026-09-29, and nothing in the product reads it since 2026-10-08.

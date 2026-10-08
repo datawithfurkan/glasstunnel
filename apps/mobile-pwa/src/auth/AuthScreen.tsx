@@ -1,7 +1,9 @@
 import { FormEvent, useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../lib/store';
 import { readAuthRedirectError } from '../lib/authClient';
+import { pendingLinkCodeEmail } from '../lib/pendingLinkCode';
 import { BrandMark } from '../ui/Brand';
+import { ForgotPasswordButton, ForgotPasswordView, ResetPasswordView, passwordResetHeading } from './PasswordResetViews';
 
 type EmailAuthMode = 'signin' | 'signup';
 type HostedAuthProvider = 'google' | 'github' | 'email';
@@ -15,6 +17,11 @@ export function AuthScreen() {
   const signOutError = useAppStore((s) => s.signOutError);
   const signingOut = useAppStore((s) => s.signingOut);
   const signOut = useAppStore((s) => s.signOut);
+  const passwordResetFlow = useAppStore((s) => s.passwordResetFlow) ?? null;
+  const openForgotPassword = useAppStore((s) => s.openForgotPassword);
+  const closePasswordReset = useAppStore((s) => s.closePasswordReset);
+  const requestPasswordReset = useAppStore((s) => s.requestPasswordReset);
+  const completePasswordReset = useAppStore((s) => s.completePasswordReset);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -27,6 +34,10 @@ export function AuthScreen() {
   const [error, setError] = useState<string | null>(null);
   const requestedProvider = useRef<HostedAuthProvider | null>(readRequestedProvider());
   const providerRequestHandled = useRef(false);
+  const emailInput = useRef<HTMLInputElement>(null);
+  const passwordInput = useRef<HTMLInputElement>(null);
+  // Set by "Back to sign in"; the sign-in field to focus once the reset screen is gone.
+  const focusAfterReset = useRef<SignInField | null>(null);
 
   // A Google/GitHub sign-in that failed comes back with an error in the URL.
   useEffect(() => {
@@ -139,22 +150,79 @@ export function AuthScreen() {
     }
   };
 
+  const showForgotPassword = () => {
+    setError(null);
+    openForgotPassword(email);
+  };
+
+  // Back from the forgot/reset screens to email sign-in, keeping the email
+  // typed so far. A tab with none (the reset link's new tab) gets the address
+  // the kept Mac code is bound to: signing in with it links that Mac.
+  const backToSignIn = () => {
+    focusAfterReset.current = signInFieldAfterReset(email, emailStepComplete);
+    closePasswordReset();
+    setEmail(signInEmailAfterReset(email, pendingLinkCodeEmail()));
+    setError(null);
+    setPassword('');
+    setEmailMode('signin');
+    setEmailVisible(true);
+    if (!email.trim()) setEmailStepComplete(false);
+  };
+
+  // A reset screen is shown only where sign-in itself is available.
+  const resetFlow = authConfigured && !signingOut ? passwordResetFlow : null;
+
+  // The button that was focused went away with the reset screen: focus the
+  // field the person continues with, so focus does not fall back to the page.
+  useEffect(() => {
+    if (resetFlow) return;
+    const field = focusAfterReset.current;
+    if (!field) return;
+    focusAfterReset.current = null;
+    (field === 'password' ? passwordInput : emailInput).current?.focus();
+  }, [resetFlow]);
+
+  const heading = resetFlow
+    ? passwordResetHeading(resetFlow)
+    : { title: 'Open your agents', detail: 'Sign in once. Your linked Macs and coding agents appear automatically.' };
+
   return (
     <div className={authScreenShellClassName()}>
       <div className="flex min-h-full w-full items-center justify-center py-6 min-[480px]:py-8">
         <div className="w-full max-w-[420px]">
           <div className="mb-8 flex flex-col items-center text-center">
             <BrandMark className="h-16 w-16 object-contain" alt="Glasstunnel" />
-            <h1 className="mt-5 text-4xl font-semibold">Open your agents</h1>
-            <p className="gt-muted mt-3 max-w-sm text-base leading-6">
-              Sign in once. Your linked Macs and coding agents appear automatically.
-            </p>
+            <h1 className={`mt-5 font-semibold ${resetFlow ? 'text-3xl' : 'text-4xl'}`}>{heading.title}</h1>
+            {heading.detail && (
+              <p className="gt-muted mt-3 max-w-sm text-base leading-6">{heading.detail}</p>
+            )}
           </div>
 
           <div className="gt-panel p-5">
 
         {signingOut ? (
           <p role="status" className="gt-muted py-3 text-center">Signing out...</p>
+        ) : resetFlow?.screen === 'forgot' ? (
+          <ForgotPasswordView
+            flow={resetFlow}
+            email={email}
+            onEmailChange={setEmail}
+            onSubmit={(value) => {
+              setEmail(value.trim().toLowerCase());
+              void requestPasswordReset(value);
+            }}
+            onBack={backToSignIn}
+          />
+        ) : resetFlow?.screen === 'reset' ? (
+          <ResetPasswordView
+            flow={resetFlow}
+            onSubmit={(token, newPassword) => {
+              void completePasswordReset(token, newPassword);
+            }}
+            onCancel={backToSignIn}
+            onRequestNewLink={showForgotPassword}
+            onBackToSignIn={backToSignIn}
+          />
         ) : authConfigured ? (
           <div className="space-y-4">
             <div className="space-y-3">
@@ -194,6 +262,7 @@ export function AuthScreen() {
                 <label className="block">
                   <span className="gt-label mb-2 block">Email</span>
                   <input
+                    ref={emailInput}
                     type="email"
                     inputMode="email"
                     autoComplete="email"
@@ -263,6 +332,7 @@ export function AuthScreen() {
                 <label className="block">
                   <span className="gt-label mb-2 block">Password</span>
                   <input
+                    ref={passwordInput}
                     type="password"
                     autoComplete={emailMode === 'signin' ? 'current-password' : 'new-password'}
                     value={password}
@@ -271,6 +341,8 @@ export function AuthScreen() {
                     className="gt-input"
                   />
                 </label>
+
+                <ForgotPasswordButton mode={emailMode} disabled={busy} onClick={showForgotPassword} />
 
                 <button
                   type="submit"
@@ -294,9 +366,9 @@ export function AuthScreen() {
           </div>
         )}
 
-        {(error || signOutError) && (
+        {((!resetFlow && error) || signOutError) && (
           <div role="alert" className="mt-4 rounded-[6px] border border-err/30 bg-err/10 px-4 py-3 text-sm text-err">
-            {error || signOutError}
+            {(!resetFlow && error) || signOutError}
             {signOutError && !signingOut && (
               <button type="button" className="gt-button gt-button-secondary mt-3" onClick={() => { void signOut().catch(() => {}); }}>
                 Retry sign out
@@ -310,6 +382,24 @@ export function AuthScreen() {
       </div>
     </div>
   );
+}
+
+type SignInField = 'email' | 'password';
+
+/**
+ * The sign-in field "Back to sign in" lands on: the password when the email
+ * step was already done with an address, otherwise the email.
+ */
+export function signInFieldAfterReset(email: string, emailStepComplete: boolean): SignInField {
+  return emailStepComplete && email.trim() ? 'password' : 'email';
+}
+
+/**
+ * The email "Back to sign in" shows: the one typed in this tab, else the
+ * address a Mac code kept through the reset is bound to, else nothing.
+ */
+export function signInEmailAfterReset(typed: string, keptForMac: string | null): string {
+  return typed.trim() ? typed : keptForMac ?? typed;
 }
 
 export function authScreenShellClassName() {

@@ -113,11 +113,54 @@ export async function configureLabConvex(config, { runCommand = defaultRunComman
     BETTER_AUTH_URL: config.urls.convexSite,
     PUBLIC_APP_URL: config.urls.pwa,
     WORKER_CONVEX_SECRET: secrets.workerSecret,
+    // Account emails (password reset, password changed) land in the local
+    // labEmailOutbox table instead of being sent. The backend honours this
+    // only while its auth URL is loopback, so it can never reach production.
+    AUTH_EMAIL_OUTBOX: 'lab',
   };
   for (const [name, value] of Object.entries(values)) {
     await runConvexCli(config, ['env', 'set', name, value], { runCommand });
   }
   return secrets;
+}
+
+/**
+ * Parses `convex run` output for the lab outbox. The CLI prints the result as
+ * indented JSON when stdout is not a terminal and prints nothing for null.
+ * Errors never echo the output: it holds live reset links.
+ */
+export function parseLabEmails(output) {
+  const text = String(output ?? '').trim();
+  if (!text) return [];
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    // Tolerate a stray notice line before the JSON block.
+    const lines = text.split(/\r?\n/);
+    const start = lines.findIndex((line) => line === '[' || line === '[]');
+    if (start === -1) throw new Error('The local email outbox did not return JSON.');
+    try {
+      parsed = JSON.parse(lines.slice(start).join('\n'));
+    } catch {
+      throw new Error('The local email outbox did not return JSON.');
+    }
+  }
+  if (!Array.isArray(parsed)) throw new Error('The local email outbox did not return a list.');
+  return parsed;
+}
+
+/**
+ * Reads the account emails the local backend stored for one lab address,
+ * newest first (internal query email:labOutbox through the admin CLI).
+ * Returns [] when the backend is not in lab outbox mode.
+ */
+export async function readLabEmails(config, to, { runCommand = defaultRunCommand } = {}) {
+  assertLabIdentity(to);
+  const { stdout } = await runConvexCli(config, ['run', 'email:labOutbox', JSON.stringify({ to })], {
+    runCommand,
+  });
+  return parseLabEmails(stdout);
 }
 
 async function authJson(response, description) {

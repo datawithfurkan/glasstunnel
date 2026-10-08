@@ -101,6 +101,13 @@ body {
     border: 1px solid var(--gt-border);
   }
 
+  /* Keyboard focus stays visible on every button style, including ghost buttons. */
+  .gt-button:focus-visible,
+  .gt-segment-button:focus-visible {
+    outline: 2px solid var(--gt-accent);
+    outline-offset: 2px;
+  }
+
   .gt-button-primary {
     background: var(--gt-accent);
     border-color: rgba(0, 122, 255, 0.82);

@@ -38,7 +38,6 @@ const QUERIES = {
   findPendingApproval: internal.accountPlane.findPendingApproval,
   findApprovalById: internal.accountPlane.findApprovalById,
   listPendingApprovalsByHost: internal.accountPlane.listPendingApprovalsByHost,
-  getUnconsumedHostLinkCode: internal.accountPlane.getUnconsumedHostLinkCode,
   verifyBearerToken: internal.auth.verifyBearerToken,
 } as const;
 
@@ -49,7 +48,7 @@ const MUTATIONS = {
   markApprovalStatus: internal.accountPlane.markApprovalStatus,
   ensurePairing: internal.accountPlane.ensurePairing,
   createHostLinkCode: internal.accountPlane.createHostLinkCode,
-  consumeHostLinkCode: internal.accountPlane.consumeHostLinkCode,
+  claimHostLinkCode: internal.accountPlane.claimHostLinkCode,
   deleteHostLinkCodesByHostDeviceId: internal.accountPlane.deleteHostLinkCodesByHostDeviceId,
   deleteDeviceByUuid: internal.accountPlane.deleteDeviceByUuid,
   deleteRevokedPairings: internal.accountPlane.deleteRevokedPairings,

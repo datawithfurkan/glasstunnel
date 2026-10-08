@@ -13,6 +13,10 @@ import { platformConfig } from './platform';
 // browser stored when it started that sign-in (`gtAuthFlow`). Without that
 // binding a crafted link could sign a victim into someone else's account and
 // let them link their Mac to it (login CSRF).
+//
+// Password reset emails link straight to the app (`?resetPassword=1&token=`).
+// The token leaves the address bar as soon as the app reads it and lives only
+// in memory and this tab's sessionStorage, for at most an hour.
 
 type AuthChangeEvent = 'INITIAL_SESSION' | 'SIGNED_IN' | 'SIGNED_OUT' | 'TOKEN_REFRESHED';
 type AuthCallback = (event: AuthChangeEvent, session: Session | null) => void;
@@ -56,7 +60,14 @@ export class AuthError extends Error {
 export class AuthUnavailableError extends AuthError {}
 
 type AuthClient = ReturnType<typeof createAuthClient>;
-type FetchOptions = { fetchOptions?: { signal?: AbortSignal; headers?: Record<string, string> } };
+type FetchOptions = {
+  fetchOptions?: {
+    signal?: AbortSignal;
+    headers?: Record<string, string>;
+    /** Replaces the client's own bearer token (the stored session) for this one request. */
+    auth?: { type: 'Bearer'; token: string };
+  };
+};
 // The handful of client actions this shim calls; the plugin-augmented client
 // type is too deep for TypeScript to infer usefully here.
 interface AuthActions {
@@ -93,15 +104,32 @@ const BEARER_TOKEN_KEY = 'gt.better-auth.bearer-token';
 const SESSION_SNAPSHOT_KEY = 'gt.better-auth.session-snapshot';
 const OAUTH_FLOW_KEY = 'gt.better-auth.oauth-flow';
 const PENDING_REVOCATION_KEY = 'gt.better-auth.pending-revocation';
+const PASSWORD_RESET_TOKEN_KEY = 'gt.password-reset-token';
 const OAUTH_FLOW_MAX_AGE_MS = 15 * 60_000;
+const PASSWORD_RESET_TOKEN_MAX_AGE_MS = 60 * 60_000;
 const SESSION_READ_TIMEOUT_MS = 10_000;
+const AUTH_REQUEST_TIMEOUT_MS = 20_000;
 const listeners = new Set<AuthCallback>();
+
+interface PendingPasswordReset {
+  token: string;
+  expiresAt: number;
+}
 
 let betterAuthClient: AuthClient | null = null;
 let redirectHandled: Promise<void> | null = null;
 let pendingRedirectError: string | null = null;
 let sessionRead: Promise<Session | null> | null = null;
 let crossTabAttached = false;
+let pendingPasswordReset: PendingPasswordReset | null = null;
+let invalidPasswordResetLink = false;
+/**
+ * Set when a sign-in made in this tab stored its session (email and password,
+ * sign-up, or a Google/GitHub return to this tab), until the store takes it.
+ * A session another tab stored, a reload, and a session refresh never set it,
+ * and a session another tab stores afterwards, or a sign-out, clears it.
+ */
+let signedInHere = false;
 
 function getAuthBaseUrl() {
   const url = platformConfig.convexSiteUrl;
@@ -119,6 +147,14 @@ function storage(): Storage | null {
   }
 }
 
+function tabStorage(): Storage | null {
+  try {
+    return typeof sessionStorage === 'undefined' ? null : sessionStorage;
+  } catch {
+    return null;
+  }
+}
+
 function readBearerToken() {
   return storage()?.getItem(BEARER_TOKEN_KEY) ?? null;
 }
@@ -129,6 +165,7 @@ function writeBearerToken(token: string | null | undefined) {
 }
 
 function clearStoredSession() {
+  signedInHere = false;
   storage()?.removeItem(BEARER_TOKEN_KEY);
   storage()?.removeItem(SESSION_SNAPSHOT_KEY);
 }
@@ -275,6 +312,116 @@ function takeRedirectParameters(): { token: string | null; error: string | null 
   return { token, error: null };
 }
 
+function writePasswordResetToken(token: string) {
+  pendingPasswordReset = { token, expiresAt: Date.now() + PASSWORD_RESET_TOKEN_MAX_AGE_MS };
+  try {
+    tabStorage()?.setItem(PASSWORD_RESET_TOKEN_KEY, JSON.stringify(pendingPasswordReset));
+  } catch {
+    // Storage full or blocked: the in-memory copy still finishes this reset.
+  }
+}
+
+function storedPasswordResetToken(): PendingPasswordReset | null {
+  try {
+    const raw = tabStorage()?.getItem(PASSWORD_RESET_TOKEN_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<PendingPasswordReset>;
+    return typeof parsed.token === 'string' && parsed.token && typeof parsed.expiresAt === 'number'
+      ? { token: parsed.token, expiresAt: parsed.expiresAt }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Forgets the pending password reset token (after success, an invalid token, or cancel). */
+export function clearPasswordResetToken(): void {
+  pendingPasswordReset = null;
+  try {
+    tabStorage()?.removeItem(PASSWORD_RESET_TOKEN_KEY);
+  } catch {
+    // Nothing stored.
+  }
+}
+
+/**
+ * Moves a password reset link (`?resetPassword=1&token=…`) out of the address
+ * bar so the token is not left in history, bookmarks, or screenshots. Other
+ * parameters, such as a Mac linkCode, stay. A reset link's `error` belongs to
+ * the reset, never to a Google/GitHub sign-in.
+ */
+function capturePasswordResetLink(): void {
+  if (typeof window === 'undefined' || !window.location?.href) return;
+  let url: URL;
+  try {
+    url = new URL(window.location.href);
+  } catch {
+    return;
+  }
+  if (!url.searchParams.has('resetPassword')) return;
+  const token = url.searchParams.get('token')?.trim() ?? '';
+  const failed = url.searchParams.has('error');
+  for (const name of ['resetPassword', 'token', 'error', 'error_description']) url.searchParams.delete(name);
+  window.history.replaceState(window.history.state, '', url.toString());
+  if (token && !failed) {
+    invalidPasswordResetLink = false;
+    writePasswordResetToken(token);
+  } else {
+    clearPasswordResetToken();
+    invalidPasswordResetLink = true;
+  }
+}
+
+/** The reset token from the email link this tab opened, or null once it expired or was used. */
+export function readPasswordResetToken(): string | null {
+  capturePasswordResetLink();
+  pendingPasswordReset = pendingPasswordReset ?? storedPasswordResetToken();
+  if (pendingPasswordReset && pendingPasswordReset.expiresAt <= Date.now()) clearPasswordResetToken();
+  return pendingPasswordReset?.token ?? null;
+}
+
+/** True once after this tab opened a reset link that carried no usable token. */
+export function takeInvalidPasswordResetLink(): boolean {
+  capturePasswordResetLink();
+  const invalid = invalidPasswordResetLink;
+  invalidPasswordResetLink = false;
+  return invalid;
+}
+
+/**
+ * POSTs to an auth endpoint that needs no session. No bearer token and no
+ * cookies go along: a reset must not depend on, or leak, whoever is signed in.
+ */
+async function postAuthJson(path: string, body: Record<string, unknown>, fallbackMessage: string) {
+  let response: Response;
+  try {
+    response = await fetch(`${getAuthBaseUrl()}/api/auth${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      credentials: 'omit',
+      signal: typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(AUTH_REQUEST_TIMEOUT_MS) : undefined,
+    });
+  } catch {
+    throw new AuthUnavailableError(UNAVAILABLE_MESSAGE);
+  }
+  const payload = (await response.json().catch(() => null)) as { status?: unknown; code?: unknown; message?: unknown } | null;
+  if (!response.ok) {
+    assertAuthSuccess(
+      {
+        error: {
+          status: response.status,
+          code: typeof payload?.code === 'string' ? payload.code : undefined,
+          message: typeof payload?.message === 'string' ? payload.message : undefined,
+        },
+      },
+      fallbackMessage,
+    );
+  }
+  // A 200 without Better Auth's `status: true` (a proxy page, say) did not do the work.
+  if (payload?.status !== true) throw new AuthUnavailableError(fallbackMessage, undefined, response.status);
+}
+
 async function postOneTimeToken(token: string): Promise<Response> {
   return fetch(`${getAuthBaseUrl()}/api/auth/cross-domain/one-time-token/verify`, {
     method: 'POST',
@@ -313,12 +460,26 @@ async function exchangeOneTimeToken(token: string): Promise<void> {
   writeBearerToken(sessionToken);
   const session = sessionFromPayload({ ...body, token: sessionToken });
   if (session) writeSnapshot(session);
+  // This tab started the flow (the nonce matched) and stored the session.
+  signedInHere = true;
+}
+
+/**
+ * True once after a sign-in made in this tab stored its session, so the store
+ * can tell it from a session adopted from another tab, a reload, or a refresh.
+ */
+export function takeSignInFromThisTab(): boolean {
+  const value = signedInHere;
+  signedInHere = false;
+  return value;
 }
 
 /** Runs once per page load, before the first session read. */
 function handleRedirect(): Promise<void> {
   if (!redirectHandled) {
     redirectHandled = (async () => {
+      // First, so a reset link's parameters never reach the OAuth handling below.
+      capturePasswordResetLink();
       const { token, error } = takeRedirectParameters();
       if (error) {
         pendingRedirectError = error;
@@ -342,19 +503,50 @@ export async function readAuthRedirectError(): Promise<string | null> {
   return pendingRedirectError;
 }
 
+/**
+ * Ends this browser's session locally: the stored token and snapshot go first,
+ * so a reload or a stalled request cannot bring them back. The token is queued
+ * for revocation until the server confirms it is gone. Returns that token.
+ */
+function endLocalSession(): string | null {
+  const token = readBearerToken();
+  clearStoredSession();
+  if (token) storage()?.setItem(PENDING_REVOCATION_KEY, token);
+  return token;
+}
+
+/**
+ * Revokes one session on the server with exactly that session's token.
+ *
+ * The token replaces the client's own bearer auth for this request. Passing it
+ * as an extra Authorization header instead would let better-fetch add the
+ * stored session's token too, and the server would read "Bearer old, Bearer
+ * new": no session is found, nothing is revoked, and the call still succeeds.
+ *
+ * A 2xx means it is revoked now (Better Auth also answers 200 for a session
+ * that is already gone); a 401 means it already was. Either way the queued revocation for
+ * this token is dropped, unless a newer one replaced it meanwhile. Anything
+ * else keeps it for the next session read.
+ */
+async function revokeSessionToken(token: string): Promise<void> {
+  try {
+    const result = (await authClientInstance().signOut({
+      fetchOptions: {
+        auth: { type: 'Bearer', token },
+        signal: typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(AUTH_REQUEST_TIMEOUT_MS) : undefined,
+      },
+    })) as BetterAuthResponse;
+    if (result?.error && result.error.status !== 401) return;
+    if (storage()?.getItem(PENDING_REVOCATION_KEY) === token) storage()?.removeItem(PENDING_REVOCATION_KEY);
+  } catch {
+    // Offline or timed out: retried on the next session read.
+  }
+}
+
 /** Retries a sign-out the server did not acknowledge, so the old session does not live on. */
 async function retryPendingRevocation(): Promise<void> {
   const token = storage()?.getItem(PENDING_REVOCATION_KEY);
-  if (!token) return;
-  try {
-    const result = (await authClientInstance().signOut({
-      fetchOptions: { headers: { Authorization: `Bearer ${token}` } },
-    })) as BetterAuthResponse;
-    const status = result?.error?.status;
-    if (!result?.error || status === 401) storage()?.removeItem(PENDING_REVOCATION_KEY);
-  } catch {
-    // Still offline; try again next time.
-  }
+  if (token) await revokeSessionToken(token);
 }
 
 async function readSessionFromServer(): Promise<Session | null> {
@@ -434,6 +626,8 @@ function attachCrossTabSync() {
   crossTabAttached = true;
   window.addEventListener('storage', (event: StorageEvent) => {
     if (event.key !== BEARER_TOKEN_KEY) return;
+    // Another tab's session (or sign-out) replaced whatever this tab signed in to.
+    signedInHere = false;
     if (!event.newValue) {
       notify('SIGNED_OUT', null);
       return;
@@ -525,6 +719,7 @@ export const authClient = platformConfig.convexSiteUrl
               password: input.password,
             })) as BetterAuthResponse;
             const session = await sessionFromResult(result, 'Could not sign in with that email and password.');
+            signedInHere = !!session;
             notify('SIGNED_IN', session);
             return { data: { session }, error: null };
           } catch (error) {
@@ -544,31 +739,64 @@ export const authClient = platformConfig.convexSiteUrl
               password: input.password,
             })) as BetterAuthResponse;
             const session = await sessionFromResult(result, 'Could not create your account.');
+            signedInHere = !!session;
             notify('SIGNED_IN', session);
             return { data: { session, user: session?.user ?? null }, error: null };
           } catch (error) {
             return { data: { session: null, user: null }, error };
           }
         },
-        async signOut() {
-          // The local session ends first: a reload or a stalled request must not
-          // bring it back. The server copy is revoked with the captured token,
-          // and kept for a retry if the server cannot be reached now.
-          const token = readBearerToken();
-          clearStoredSession();
-          notify('SIGNED_OUT', null);
-          if (!token) return { error: null };
-          storage()?.setItem(PENDING_REVOCATION_KEY, token);
+        /**
+         * Asks for a reset email. The server answers the same way whether or
+         * not the address has an account; RESET_PASSWORD_DISABLED (400) means
+         * email delivery is not configured, 429 means too many requests.
+         */
+        async requestPasswordReset(email: string): Promise<{ error: unknown }> {
           try {
-            const result = (await authClientInstance().signOut({
-              fetchOptions: { headers: { Authorization: `Bearer ${token}` } },
-            })) as BetterAuthResponse;
-            if (!result?.error || result.error.status === 401) {
-              storage()?.removeItem(PENDING_REVOCATION_KEY);
-            }
-          } catch {
-            // Offline: the pending revocation is retried on the next session read.
+            // No redirectTo: the email links straight to the app.
+            await postAuthJson('/request-password-reset', { email: email.trim().toLowerCase() }, 'Could not send the reset link.');
+            return { error: null };
+          } catch (error) {
+            return { error };
           }
+        },
+        /**
+         * Sets a new password with the token from the email, then signs this
+         * browser out the same way signOut does.
+         *
+         * The server ends every session of the account that was reset. This
+         * browser may be signed in to a different account, though (a reset link
+         * opened while signed in as someone else), and that session must not
+         * live on, so its token is revoked explicitly. For the reset account the
+         * session is already gone; the server's 200 or 401 clears the queued revocation.
+         * The revocation is not awaited: the reset is done either way, and a
+         * revocation that cannot reach the server is retried on the next session read.
+         */
+        async resetPassword(input: { token: string; newPassword: string }): Promise<{ error: unknown }> {
+          try {
+            await postAuthJson('/reset-password', { newPassword: input.newPassword, token: input.token }, 'Could not update your password.');
+          } catch (error) {
+            if (error instanceof AuthError && error.code === 'INVALID_TOKEN') clearPasswordResetToken();
+            return { error };
+          }
+          clearPasswordResetToken();
+          // The sign-out is part of a successful reset, not a failure of it.
+          const token = endLocalSession();
+          if (!token) return { error: null };
+          void revokeSessionToken(token);
+          try {
+            notify('SIGNED_OUT', null);
+          } catch {
+            // A listener failing must not turn a finished reset into an error.
+          }
+          return { error: null };
+        },
+        async signOut() {
+          // The local session ends first; the server copy is revoked with the
+          // captured token, and kept for a retry if the server cannot be reached now.
+          const token = endLocalSession();
+          notify('SIGNED_OUT', null);
+          if (token) await revokeSessionToken(token);
           return { error: null };
         },
       },

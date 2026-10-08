@@ -28,6 +28,10 @@ vi.mock('./authClient', () => ({
     getSession: mocks.getSession,
     signOut: mocks.signOut,
   } },
+  readPasswordResetToken: () => null,
+  takeInvalidPasswordResetLink: () => false,
+  clearPasswordResetToken: () => {},
+  takeSignInFromThisTab: () => false,
 }));
 vi.mock('./accountApi', async (importOriginal) => ({
   ...await importOriginal<typeof import('./accountApi')>(),

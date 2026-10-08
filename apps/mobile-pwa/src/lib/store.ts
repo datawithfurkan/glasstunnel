@@ -41,7 +41,31 @@ import { PeerConnection } from '../transport/PeerConnection';
 import type { FileAttachmentInput } from '../transport/PeerConnection';
 import type { RelayConnection, RelayScreenFrame } from '../transport/RelayConnection';
 import { PeerFlowAbortRegistry } from '../transport/PeerFlowAbortRegistry';
-import { hasAccountAuth, authClient, type Session, type User } from './authClient';
+import {
+  hasAccountAuth,
+  authClient,
+  clearPasswordResetToken,
+  readPasswordResetToken,
+  takeInvalidPasswordResetLink,
+  takeSignInFromThisTab,
+  type Session,
+  type User,
+} from './authClient';
+import {
+  PASSWORD_RESET_COPY,
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
+  isInvalidResetTokenError,
+  passwordResetErrorCopy,
+  passwordResetRequestErrorCopy,
+  type PasswordResetFlow,
+} from './passwordReset';
+import {
+  bindPendingLinkCodeEmail,
+  clearPendingLinkCode,
+  moveLinkCodeFromUrl,
+  restorePendingLinkCodeForSignIn,
+} from './pendingLinkCode';
 import {
   fallbackRemoteAppsFromLayout,
   isScreenSharingOn,
@@ -133,6 +157,11 @@ export interface AppState {
   error: string | null;
   signOutError: string | null;
   signingOut: boolean;
+  /**
+   * The forgot-password or reset-password screen, when one is open. A reset
+   * link shows its screen over everything else, even while signed in.
+   */
+  passwordResetFlow: PasswordResetFlow | null;
 
   bootstrap: () => Promise<void>;
   navigateTo: (route: Route) => void;
@@ -156,6 +185,23 @@ export interface AppState {
   signInWithPassword: (email: string, password: string) => Promise<void>;
   signUpWithPassword: (email: string, password: string, displayName?: string) => Promise<void>;
   signOut: () => Promise<void>;
+  /** Shows the reset screen for a reset link this tab opened (token or invalid link). */
+  loadPasswordResetLink: () => void;
+  /**
+   * Opens the forgot screen. A Mac linkCode in the address bar moves into
+   * storage (10 minutes), bound to `email` (the address typed so far), for the
+   * sign-in after the reset.
+   */
+  openForgotPassword: (email?: string) => void;
+  /** Leaves the forgot/reset screens and forgets a pending reset token. */
+  closePasswordReset: () => void;
+  /**
+   * Sends a reset email; resolves true when the server accepted the request.
+   * A Mac linkCode this tab's forgot flow kept is then bound to that address.
+   */
+  requestPasswordReset: (email: string) => Promise<boolean>;
+  /** Sets the new password; on success every session, including this one, is signed out. */
+  completePasswordReset: (token: string, newPassword: string) => Promise<boolean>;
   refreshHosts: (options?: { force?: boolean }) => Promise<void>;
   claimHostLinkCode: (code: string) => Promise<AccountHost>;
   chooseHost: (hostDeviceId: string) => Promise<void>;
@@ -262,8 +308,16 @@ export const useAppStore = create<AppState>((set, get) => ({
   error: null,
   signOutError: null,
   signingOut: false,
+  passwordResetFlow: null,
 
   async bootstrap() {
+    // Before anything async: the reset token leaves the address bar at once.
+    // A malformed reset link must never block start-up.
+    try {
+      get().loadPasswordResetLink();
+    } catch {
+      // Without a readable reset link the app starts as usual.
+    }
     try {
       let keypair = await loadKeypair();
       if (!keypair) {
@@ -835,6 +889,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     const account = get().user?.id ?? pendingSignOutAccount;
     pendingSignOutAccount = account;
     sessionSyncVersion += 1;
+    // A Mac code kept through a password reset must not link to whoever signs in next.
+    clearPendingLinkCode();
     // Local content and transports must disappear even if remote logout fails.
     get().disconnectPeer();
     set({
@@ -874,6 +930,93 @@ export const useAppStore = create<AppState>((set, get) => ({
       throw failed.reason;
     }
     pendingSignOutAccount = undefined;
+  },
+
+  loadPasswordResetLink() {
+    const token = readPasswordResetToken();
+    const invalidLink = takeInvalidPasswordResetLink();
+    const flow = get().passwordResetFlow;
+    if (token) {
+      if (flow?.screen === 'reset' && flow.token === token) return;
+      set({ passwordResetFlow: { screen: 'reset', token, status: 'idle', error: null } });
+    } else if (invalidLink) {
+      set({ passwordResetFlow: { screen: 'reset', token: null, status: 'invalid', error: null } });
+    }
+  },
+
+  openForgotPassword(email = '') {
+    clearPasswordResetToken();
+    // A Mac that started this sign-in passed its linkCode in the address bar.
+    // The reset email opens a new tab without it, so the code moves into
+    // storage, bound to the address this flow is for. It comes back only for
+    // a sign-in a tab of this browser makes itself to the account with that
+    // email (synchronizeSession). Left in this tab too, it would be claimed twice:
+    // once by the reset tab's sign-in, once here when that sign-in reaches
+    // this tab.
+    moveLinkCodeFromUrl(email);
+    set({ passwordResetFlow: { screen: 'forgot', status: 'idle', error: null } });
+  },
+
+  closePasswordReset() {
+    clearPasswordResetToken();
+    set({ passwordResetFlow: null });
+  },
+
+  async requestPasswordReset(email) {
+    const flow = get().passwordResetFlow;
+    if (flow?.screen === 'forgot' && flow.status === 'sending') return false;
+    const normalized = email.trim().toLowerCase();
+    const failWith = (error: string) => {
+      set({ passwordResetFlow: { screen: 'forgot', status: 'idle', error } });
+      return false;
+    };
+    if (!normalized) return failWith(PASSWORD_RESET_COPY.emptyEmail);
+    if (!authClient) return failWith(PASSWORD_RESET_COPY.notConfigured);
+    const sending: PasswordResetFlow = { screen: 'forgot', status: 'sending', error: null };
+    set({ passwordResetFlow: sending });
+    const { error } = await authClient.auth.requestPasswordReset(normalized);
+    // The reset is for this address now: a Mac code this tab's forgot flow
+    // kept is linked by a sign-in to that account only.
+    if (!error) bindPendingLinkCodeEmail(normalized);
+    // The person left this screen while the request was in flight.
+    if (get().passwordResetFlow !== sending) return !error;
+    if (error) return failWith(passwordResetRequestErrorCopy(error));
+    set({ passwordResetFlow: { screen: 'forgot', status: 'sent', error: null } });
+    return true;
+  },
+
+  async completePasswordReset(token, newPassword) {
+    const flow = get().passwordResetFlow;
+    if (flow?.screen === 'reset' && flow.status === 'updating') return false;
+    const failWith = (error: string) => {
+      set({ passwordResetFlow: { screen: 'reset', token, status: 'idle', error } });
+      return false;
+    };
+    const showInvalidLink = () => {
+      clearPasswordResetToken();
+      set({ passwordResetFlow: { screen: 'reset', token: null, status: 'invalid', error: null } });
+      return false;
+    };
+    if (!token) return showInvalidLink();
+    if (newPassword.length < PASSWORD_MIN_LENGTH) return failWith(PASSWORD_RESET_COPY.tooShort);
+    if (newPassword.length > PASSWORD_MAX_LENGTH) return failWith(PASSWORD_RESET_COPY.tooLong);
+    if (!authClient) return failWith(PASSWORD_RESET_COPY.notConfigured);
+    const updating: PasswordResetFlow = { screen: 'reset', token, status: 'updating', error: null };
+    set({ passwordResetFlow: updating });
+    const { error } = await authClient.auth.resetPassword({ token, newPassword });
+    if (error) {
+      const invalidToken = isInvalidResetTokenError(error);
+      if (invalidToken) clearPasswordResetToken();
+      // The person left this screen while the request was in flight.
+      if (get().passwordResetFlow !== updating) return false;
+      return invalidToken ? showInvalidLink() : failWith(passwordResetErrorCopy(error));
+    }
+    clearPasswordResetToken();
+    set({ passwordResetFlow: { screen: 'reset', token: null, status: 'done', error: null } });
+    // The server ended every session of the account. The auth client already
+    // announced the sign-out; this covers a session the store still shows.
+    if (get().user) await synchronizeSession(set, get, null);
+    return true;
   },
 
   async refreshHosts(options) {
@@ -945,6 +1088,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         requesterDeviceId: get().phoneKeypair?.deviceId,
       }),
     );
+    // A code kept through a password reset is used up now.
+    clearPendingLinkCode(code);
     await get().refreshHosts({ force: true });
     set((state) => ({
       availableHosts: mergeClaimedHost(state.availableHosts, host),
@@ -1339,6 +1484,11 @@ async function synchronizeSession(
   options: { preserveRoute?: boolean } = {},
 ) {
   if (get().signingOut && session?.user) return;
+  // A sign-in made in this tab (not a session adopted from another tab, a
+  // reload, or a refresh) gets the Mac linkCode a forgot-password flow kept for
+  // this account's email. In the address bar before the route is chosen
+  // below, the hosts screen claims it as in the usual Mac flow.
+  if (session?.user && takeSignInFromThisTab()) restorePendingLinkCodeForSignIn(session.user.email);
   const syncVersion = ++sessionSyncVersion;
   const isCurrentSync = () => syncVersion === sessionSyncVersion;
   const previousUser = get().user;
@@ -1386,6 +1536,13 @@ async function synchronizeSession(
 
   const user = mapUser(session.user);
   set({ signOutError: null });
+  // Someone just signed in (a password sign-in that finished after "Forgot
+  // password?" was opened, another tab, a provider return): the forgot screen
+  // must not cover the signed-in app. A reset link's screen stays open. A Mac
+  // code the forgot screen kept stays in storage for its own account's sign-in.
+  if ((!previousUser || accountChanged) && get().passwordResetFlow?.screen === 'forgot') {
+    set({ passwordResetFlow: null });
+  }
   const keypair = state.phoneKeypair;
   if (!keypair) {
     set({

@@ -56,15 +56,25 @@ The hosted product uses:
 - Cloudflare Pages for `apps/mobile-pwa`.
 - Cloudflare Workers and Durable Objects for `apps/cloudflare-signal`.
 - Convex for accounts, devices, and sign-in (Better Auth), from `convex/`.
+- Resend for account email (password reset links and "password changed"
+  notices), called from the Convex deployment. Resend receives each recipient
+  address and the whole message, including live reset links; see
+  `docs/security.md`.
 - A separately operated TURN service for WebRTC fallback.
 
 A production fork needs its own Cloudflare account/project/routes, Convex
-deployment, OAuth providers, domains, TURN service, and the following deployment
-values:
+deployment, OAuth providers, domains, TURN service, a Resend account with a
+verified sending domain if it offers password reset (restrict its dashboard
+access like the Convex dashboard), and the following deployment values:
 
 - Convex deployment environment: `BETTER_AUTH_SECRET`, `PUBLIC_APP_URL`,
-  `WORKER_CONVEX_SECRET`, and the Google and GitHub client IDs and secrets. See
-  `convex/README.md` for each value and the OAuth redirect URLs.
+  `WORKER_CONVEX_SECRET`, and the Google and GitHub client IDs and secrets.
+  Password reset by email also needs `RESEND_API_KEY` and `AUTH_EMAIL_FROM` (a
+  sender on a domain verified in Resend); without them reset stays off. The
+  account email caps in `convex/email.ts` (at most 60 emails a day across the
+  deployment) are sized for Resend's free plan of 100 a day shared with other
+  projects; change them there if your plan differs. See `convex/README.md` for
+  each value, the caps and their residual risk, and the OAuth redirect URLs.
 - PWA build: `VITE_PUBLIC_APP_URL`, `VITE_SIGNALING_URL`, `VITE_CONVEX_URL`,
   `VITE_CONVEX_SITE_URL`.
 - Worker config and secrets: `PUBLIC_APP_URL`, `ALLOWED_ORIGINS`, `CONVEX_URL`,

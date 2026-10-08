@@ -29,7 +29,11 @@ export function App() {
   const disconnectPeer = useAppStore((s) => s.disconnectPeer);
   const recoverConnection = useAppStore((s) => s.recoverConnection);
   const resumeVideoPeerIfNeeded = useAppStore((s) => s.resumeVideoPeerIfNeeded);
+  // A password reset link (or the forgot-password screen) takes over the app,
+  // even while signed in: finishing it signs every device out.
+  const passwordResetOpen = useAppStore((s) => s.passwordResetFlow !== null);
   const workspaceFixtureEnabled = isWorkspaceFixtureEnabled();
+  const showAuth = route === 'auth' || passwordResetOpen;
 
   useEffect(() => {
     const showUpdateRequired = () => setUpdateRequired(true);
@@ -121,14 +125,14 @@ export function App() {
 
   return (
     <div className="h-full w-full flex flex-col bg-surface-0 text-[color:var(--gt-text)]">
-      {route !== 'auth' && <TopBar />}
+      {!showAuth && <TopBar />}
       <main className="flex-1 overflow-hidden">
-        {route === 'loading' && <LoadingScreen />}
-        {route === 'auth' && <AuthScreen />}
-        {route === 'hosts' && <HostsScreen />}
-        {route === 'profile' && <ProfileScreen />}
-        {route === 'unlock' && <UnlockScreen />}
-        {(route === 'workspace' || route === 'grid') && <AgentCarousel />}
+        {!showAuth && route === 'loading' && <LoadingScreen />}
+        {showAuth && <AuthScreen />}
+        {!showAuth && route === 'hosts' && <HostsScreen />}
+        {!showAuth && route === 'profile' && <ProfileScreen />}
+        {!showAuth && route === 'unlock' && <UnlockScreen />}
+        {!showAuth && (route === 'workspace' || route === 'grid') && <AgentCarousel />}
       </main>
     </div>
   );
