@@ -182,6 +182,10 @@ function stubAccountPlane(options: {
   calls?: string[];
   /** Functions that answer as an outage (HTTP 500); a test may change the set mid-way. */
   failFunctions?: Set<string>;
+  /** The verified sign-in: its session id and when it started (Unix ms). Omitted: not reported. */
+  session?: { id: string; createdAt: number };
+  /** Session ids signOutSession ended, in order. */
+  signedOutSessions?: string[];
 }) {
   let release: () => void = () => {};
   const released = new Promise<void>((resolve) => {
@@ -232,9 +236,17 @@ function stubAccountPlane(options: {
       await pauseIf('auth-user');
       if (options.failAuth) return null;
       // A second account, for tests where two accounts act at once.
+      const session = options.session && !options.signedOutSessions?.includes(options.session.id)
+        ? { session_id: options.session.id, session_created_at: options.session.createdAt }
+        : {};
+      if (options.session && options.signedOutSessions?.includes(options.session.id)) return null;
       return args.token === SECOND_ACCOUNT_TOKEN
         ? { id: 'user-2', email: 'second@example.test' }
-        : { id: 'user-1', email: 'user@example.test' };
+        : { id: 'user-1', email: 'user@example.test', ...session };
+    },
+    signOutSession: (args) => {
+      options.signedOutSessions?.push(String(args.sessionId));
+      return true;
     },
     async findDeviceByDeviceId(args) {
       await pauseIf('device-lookup');
@@ -938,6 +950,133 @@ describe('SignalingHub revocation', () => {
     await runInDurableObject(stub, (hub) => hub.webSocketMessage(signalingInternals(hub).peers.get(host.deviceId)!, JSON.stringify({ ...envelope, fromDeviceId: host.deviceId, toDeviceId: phone.deviceId, envelopeId: 'reverse-after' })));
     expect(hostSocket.messages.some((message) => message.envelopeId === 'after')).toBe(false);
     expect(phoneSocket.messages.some((message) => message.envelopeId === 'reverse-after')).toBe(false);
+  });
+});
+
+describe('Account-wide access after a Mac signs a browser out', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const register = (stub: DurableObjectStub<SignalingHub>, phone: DeviceIdentity) =>
+    stub.fetch('https://hub.test/account/device/register', {
+      method: 'POST', headers: { authorization: 'Bearer test-token', 'content-type': 'application/json' },
+      body: JSON.stringify({ deviceId: phone.deviceId, publicKeyB64: phone.publicKeyB64, kind: 'browser', label: 'Chrome on Mac' }),
+    });
+
+  const revokedPairing = (host: DeviceIdentity, phone: DeviceIdentity, revokedAt: string) => ({
+    id: 'pair-revoked', owner_user_id: 'user-1', host_device_uuid: `host-${host.deviceId}`,
+    phone_device_uuid: `phone-${phone.deviceId}`, paired_at: revokedAt, revoked_at: revokedAt,
+    metadata: { revoked_via: 'host' },
+  });
+
+  it('restores every Mac to a browser that signed in again after a Mac signed it out', async () => {
+    const host = await createDeviceIdentity();
+    const phone = await createDeviceIdentity();
+    const revokedAt = new Date(Date.now() - 60_000).toISOString();
+    const pairings = [revokedPairing(host, phone, revokedAt)];
+    const calls: string[] = [];
+    stubAccountPlane({
+      devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')], pairings, calls,
+      session: { id: 'session-new', createdAt: Date.now() - 1_000 },
+    });
+    const stub = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`sign-in-restores-${host.deviceId}`));
+    const hostSocket = await openHubSocket(stub, '/signal');
+    hostSocket.client.send(await signedClientAuth(host, hostSocket.nonce, 'host'));
+    await expect(hostSocket.nextMessage()).resolves.toMatchObject({ type: 'auth_ok' });
+
+    const response = await register(stub, phone);
+    expect(response.status).toBe(200);
+    const body = await response.json() as { hosts: Record<string, unknown>[] };
+    expect(body.hosts).toEqual([expect.objectContaining({ deviceId: host.deviceId, trusted: true })]);
+    expect(pairings).toEqual([expect.objectContaining({
+      revoked_at: null,
+      metadata: expect.objectContaining({ approved_via: 'account_sign_in', reauthorized_at: expect.any(String) }),
+    })]);
+    expect(calls).toContain('deleteRevokedPairings');
+    expect(calls).not.toContain('signOutSession');
+    // The Mac hears the re-authorization time, which lifts its own record of the denial.
+    await waitFor(() => hostSocket.messages.some((m) => m.type === 'account_device_authorized'), 'host notice');
+    const notice = hostSocket.messages.find((m) => m.type === 'account_device_authorized')!;
+    expect(notice).toMatchObject({ requester_device_id: phone.deviceId, reauthorized_at: expect.any(String) });
+    expect(Date.parse(String(notice.reauthorized_at))).toBeGreaterThan(Date.parse(revokedAt));
+  });
+
+  it('ends a sign-in older than the sign-out and asks the browser to sign in again', async () => {
+    const host = await createDeviceIdentity();
+    const phone = await createDeviceIdentity();
+    const revokedAt = new Date(Date.now() - 60_000).toISOString();
+    const pairings = [revokedPairing(host, phone, revokedAt)];
+    const signedOutSessions: string[] = [];
+    stubAccountPlane({
+      devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')], pairings, signedOutSessions,
+      session: { id: 'session-old', createdAt: Date.parse(revokedAt) - 5_000 },
+    });
+    const stub = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`sign-in-ended-${host.deviceId}`));
+
+    const response = await register(stub, phone);
+    expect(response.status).toBe(401);
+    expect(await response.json()).toMatchObject({ ok: false, code: 'signed_out_by_mac' });
+    expect(signedOutSessions).toEqual(['session-old']);
+    // Nothing was lifted: only a new sign-in restores access.
+    expect(pairings).toEqual([expect.objectContaining({ revoked_at: revokedAt })]);
+  });
+
+  it('answers the host list the same way for a sign-in older than the sign-out', async () => {
+    const host = await createDeviceIdentity();
+    const phone = await createDeviceIdentity();
+    const revokedAt = new Date(Date.now() - 60_000).toISOString();
+    stubAccountPlane({
+      devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')],
+      pairings: [revokedPairing(host, phone, revokedAt)], signedOutSessions: [],
+      session: { id: 'session-old', createdAt: Date.parse(revokedAt) - 5_000 },
+    });
+    const stub = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`list-ended-${host.deviceId}`));
+    const response = await stub.fetch(`https://hub.test/account/hosts?device_id=${phone.deviceId}`, {
+      headers: { authorization: 'Bearer test-token' },
+    });
+    expect(response.status).toBe(401);
+    expect(await response.json()).toMatchObject({ code: 'signed_out_by_mac' });
+  });
+
+  it('keeps the earlier behaviour when the verifier reports no sign-in time', async () => {
+    const host = await createDeviceIdentity();
+    const phone = await createDeviceIdentity();
+    const revokedAt = new Date(Date.now() - 60_000).toISOString();
+    const pairings = [revokedPairing(host, phone, revokedAt)];
+    stubAccountPlane({ devices: [deviceRow(host, 'host'), deviceRow(phone, 'phone')], pairings });
+    const stub = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`no-session-time-${host.deviceId}`));
+    const response = await register(stub, phone);
+    expect(response.status).toBe(200);
+    expect(pairings).toEqual([expect.objectContaining({ revoked_at: revokedAt })]);
+  });
+
+  it('signs the browser out of the account when a Mac revokes it', async () => {
+    const host = await createDeviceIdentity();
+    const phone = await createDeviceIdentity();
+    const signedOutSessions: string[] = [];
+    stubAccountPlane({
+      devices: [deviceRow(host, 'host'), { ...deviceRow(phone, 'phone'), metadata: { auth_session_id: 'session-phone' } }],
+      signedOutSessions,
+    });
+    const stub = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`revoke-signs-out-${host.deviceId}`));
+    const hostSocket = await openHubSocket(stub, '/signal');
+    hostSocket.client.send(await signedClientAuth(host, hostSocket.nonce, 'host'));
+    await expect(hostSocket.nextMessage()).resolves.toMatchObject({ type: 'auth_ok' });
+
+    await runInDurableObject(stub, (hub) => hub.webSocketMessage(signalingInternals(hub).peers.get(host.deviceId)!, JSON.stringify({
+      type: 'revoke_device', device_id: phone.deviceId, request_id: 'revoke-sign-out',
+    })));
+    await waitFor(() => hostSocket.messages.some((m) => m.type === 'device_revoked'), 'revocation acknowledgement');
+    expect(hostSocket.messages.find((m) => m.type === 'device_revoked')).toMatchObject({ ok: true });
+    expect(signedOutSessions).toEqual(['session-phone']);
+  });
+
+  it('records which sign-in a browser registers with', async () => {
+    const phone = await createDeviceIdentity();
+    const row = deviceRow(phone, 'phone');
+    stubAccountPlane({ devices: [row], session: { id: 'session-current', createdAt: Date.now() } });
+    const stub = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`records-session-${phone.deviceId}`));
+    expect((await register(stub, phone)).status).toBe(200);
+    expect(row.metadata).toMatchObject({ auth_session_id: 'session-current' });
   });
 });
 

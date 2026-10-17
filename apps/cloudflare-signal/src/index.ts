@@ -129,6 +129,10 @@ interface AccountUser {
   user_metadata?: Record<string, unknown> | null;
   /** Unix ms; Better Auth session tokens are opaque, so the verifier reports the expiry. */
   session_expires_at?: number;
+  /** The verified session's id (not its token). A Mac signing this browser out ends it. */
+  session_id?: string;
+  /** Unix ms when this sign-in happened. A sign-in newer than a Mac's sign-out restores access. */
+  session_created_at?: number;
 }
 
 interface ProfileRow {
@@ -267,11 +271,20 @@ class AccountPlaneUnavailable extends Error {
 
 /** An account request refused with a specific status and a message the app can show. */
 class AccountRequestError extends Error {
-  constructor(readonly status: number, message: string) {
+  constructor(readonly status: number, message: string, readonly code?: string) {
     super(message);
     this.name = "AccountRequestError";
   }
 }
+
+/**
+ * Same-account access works like a private network: a browser signed in to the
+ * account reaches every Mac of the account. A Mac taking access away signs that
+ * browser out of the account, and signing in again restores its access. This
+ * is the answer to a browser whose sign-in is older than such a sign-out.
+ */
+const SIGNED_OUT_BY_MAC_CODE = "signed_out_by_mac";
+const SIGNED_OUT_BY_MAC_MESSAGE = "One of your Macs signed this browser out. Sign in again to use your Macs.";
 
 /** The account service failed after a link code was claimed, so that code is spent. */
 class ClaimedLinkCodeUnavailable extends Error {
@@ -406,6 +419,7 @@ const convexAccountPlane = {
 
 const convexAuth = {
   verifyBearerToken: gatewayRef<"query", { token: string }, AccountUser | null>("verifyBearerToken"),
+  signOutSession: gatewayRef<"mutation", { userId: string; sessionId: string }, boolean>("signOutSession"),
 };
 
 const VERSION = "0.1.0";
@@ -1403,7 +1417,10 @@ export class SignalingHub extends DurableObject<Env> {
     } catch (error) {
       const message = error instanceof Error ? error.message : "unknown error";
       if (error instanceof AccountRequestError) {
-        return json({ ok: false, error: error.message }, { status: error.status });
+        return json(
+          { ok: false, error: error.message, ...(error.code ? { code: error.code } : {}) },
+          { status: error.status },
+        );
       }
       if (error instanceof ClaimedLinkCodeUnavailable) {
         return json({ ok: false, error: CLAIMED_LINK_CODE_UNAVAILABLE_MESSAGE }, { status: 503 });
@@ -1459,15 +1476,81 @@ export class SignalingHub extends DurableObject<Env> {
       appVersion: stringField(body.appVersion) || undefined,
       metadata: {
         auth_provider: stringField((user.user_metadata ?? {}).provider),
+        // Which sign-in this browser uses, so a Mac signing it out can end it.
+        ...(user.session_id ? { auth_session_id: user.session_id } : {}),
       },
     });
 
+    await this.reconcileMacSignOuts(user, device);
     const hosts = await listHostsForUser(this.env, user.id, deviceId, device);
     return json({
       ok: true,
       device_id: device.device_id,
       hosts,
     });
+  }
+
+  /**
+   * Account-wide access: a browser signed in to the account reaches all of its
+   * Macs. When a Mac signed this browser out (its access to that Mac was
+   * revoked), the outcome depends on when this sign-in happened:
+   * - signed in after that sign-out: the new sign-in restores access, exactly
+   *   like a link code from the Mac does: the denials are lifted and the Mac is
+   *   told the re-authorization time, which clears its own record of the denial;
+   * - signed in before it: this sign-in is the one the Mac ended. The session
+   *   is ended here too (older Mac builds only revoked access) and the browser
+   *   is asked to sign in again (401 signed_out_by_mac).
+   * A verifier that reports no sign-in time changes nothing here.
+   */
+  private async reconcileMacSignOuts(user: AccountUser, requester: DeviceRow): Promise<void> {
+    const signedInAt = user.session_created_at;
+    if (signedInAt === undefined || !Number.isFinite(signedInAt)) return;
+    if (requester.user_id !== user.id || requester.kind === "host" || requester.revoked_at) return;
+    const pairings = await convexQuery(this.env, convexAccountPlane.listPairingsForRequester, {
+      ownerUserId: user.id,
+      requesterDeviceUuid: requester.id,
+      limit: 500,
+    });
+    const revokedHosts = new Map<string, number>();
+    for (const pairing of pairings) {
+      if (!pairing.revoked_at) continue;
+      const revokedAt = Date.parse(pairing.revoked_at);
+      if (!Number.isFinite(revokedAt)) continue;
+      revokedHosts.set(pairing.host_device_uuid, Math.max(revokedHosts.get(pairing.host_device_uuid) ?? 0, revokedAt));
+    }
+    if (revokedHosts.size === 0) return;
+
+    if (signedInAt <= Math.max(...revokedHosts.values())) {
+      if (user.session_id) {
+        await convexMutation(this.env, convexAuth.signOutSession, { userId: user.id, sessionId: user.session_id })
+          .catch(() => false);
+      }
+      throw new AccountRequestError(401, SIGNED_OUT_BY_MAC_MESSAGE, SIGNED_OUT_BY_MAC_CODE);
+    }
+
+    for (const hostUuid of revokedHosts.keys()) {
+      const host = await findDeviceByUuid(this.env, hostUuid);
+      if (!host || host.user_id !== user.id || host.kind !== "host" || host.revoked_at) continue;
+      if (!(await this.liftPairingDenial(host, requester))) continue;
+      const reauthorizedAt = isoNow();
+      const pairing = await ensurePairing(this.env, {
+        ownerUserId: user.id,
+        hostDeviceUuid: host.id,
+        requesterDeviceUuid: requester.id,
+        metadata: { approved_via: "account_sign_in", reauthorized_at: reauthorizedAt },
+      });
+      const hostPeer = this.peers.get(host.device_id);
+      if (hostPeer) {
+        this.sendAccountDeviceAuthorized(hostPeer, {
+          requesterDeviceId: requester.device_id,
+          requesterPublicKeyB64: requester.public_key_b64,
+          requesterLabel: requester.label,
+          pairedAt: pairing.paired_at,
+          expiresAt: Date.now() + ACCOUNT_AUTH_CACHE_TTL_MS,
+          reauthorizedAt: pairingReauthorizedAt(pairing) ?? reauthorizedAt,
+        });
+      }
+    }
   }
 
   private async handleListHostsRequest(request: Request, url: URL): Promise<Response> {
@@ -1481,7 +1564,9 @@ export class SignalingHub extends DurableObject<Env> {
       throw new Error("device_id is required");
     }
 
-    const hosts = await listHostsForUser(this.env, user.id, requesterDeviceId);
+    const requester = await findDeviceByDeviceId(this.env, requesterDeviceId);
+    if (requester) await this.reconcileMacSignOuts(user, requester);
+    const hosts = await listHostsForUser(this.env, user.id, requesterDeviceId, requester ?? undefined);
     return json({ ok: true, hosts });
   }
 
@@ -2191,6 +2276,11 @@ export class SignalingHub extends DurableObject<Env> {
       });
       const result = await response.json() as { ok?: boolean };
       ok = response.ok && result.ok === true;
+      // Taking a browser's access away signs it out of the account. Signing in
+      // again restores its access (reconcileMacSignOuts). A failure here keeps
+      // the denial: that browser's next request finds its sign-in older than
+      // the revocation and ends it then.
+      if (ok) await this.signOutRevokedBrowser(host, deviceId);
     } catch {
       // Keep the local denial and report an unconfirmed operation, never success.
     }
@@ -2498,9 +2588,22 @@ export class SignalingHub extends DurableObject<Env> {
     });
   }
 
+  /** Ends the account sign-in a browser registered with, after a Mac revoked it. Never throws. */
+  private async signOutRevokedBrowser(host: DeviceRow, requesterDeviceId: string): Promise<void> {
+    try {
+      const requester = await findDeviceByDeviceId(this.env, requesterDeviceId);
+      if (!requester || requester.kind === "host" || requester.user_id !== host.user_id) return;
+      const sessionId = stringField(requester.metadata?.auth_session_id);
+      if (!sessionId) return;
+      await convexMutation(this.env, convexAuth.signOutSession, { userId: requester.user_id, sessionId });
+    } catch {
+      // The denial stands; the browser's next account request finishes the sign-out.
+    }
+  }
+
   /**
-   * A link code generated on the Mac is the explicit re-authorization gesture:
-   * it lifts an earlier removal of this browser in the account records, in this
+   * A link code generated on the Mac, or a sign-in newer than a Mac's sign-out
+   * of this browser, is the explicit re-authorization: it lifts an earlier removal of this browser in the account records, in this
    * hub's denial list, and in the Mac's relay object. Returns true if a denial
    * existed, so the pairing can carry a `reauthorized_at` that the Mac compares
    * with its own tombstone.

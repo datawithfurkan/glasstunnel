@@ -47,6 +47,10 @@ const authUserResult = v.object({
   user_metadata: v.any(),
   /** Unix ms when the verified session expires; the relay caps its socket deadline by it. */
   session_expires_at: v.optional(v.number()),
+  /** The verified session's id (never its token): a Mac's sign-out of a browser ends this session. */
+  session_id: v.optional(v.string()),
+  /** Unix ms when this sign-in happened; a sign-in newer than a Mac's sign-out restores access. */
+  session_created_at: v.optional(v.number()),
 });
 
 type AdapterDoc = Record<string, any> & { _id: string };
@@ -513,6 +517,8 @@ export const verifyBearerToken = query({
     }
 
     const expiresAt = new Date((session.session as any)?.expiresAt ?? NaN).getTime();
+    const createdAt = new Date((session.session as any)?.createdAt ?? NaN).getTime();
+    const sessionId = (session.session as any)?.id;
     return {
       ...serializeAuthUser({
         _id: session.user.id,
@@ -522,7 +528,40 @@ export const verifyBearerToken = query({
         image: session.user.image,
       }),
       ...(Number.isFinite(expiresAt) ? { session_expires_at: expiresAt } : {}),
+      ...(typeof sessionId === "string" && sessionId ? { session_id: sessionId } : {}),
+      ...(Number.isFinite(createdAt) ? { session_created_at: createdAt } : {}),
     };
+  },
+});
+
+/**
+ * Signs one browser out: deletes the account session with this id, and only
+ * when it belongs to this account. A Mac signing a browser out ends that
+ * browser's sign-in; signing in again starts a new session, which restores
+ * its access to every Mac of the account. Returns whether a session was deleted.
+ */
+export const signOutSession = mutation({
+  args: { userId: v.string(), sessionId: v.string() },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    if (!args.sessionId) return false;
+    const user = await findUserByLegacyId(ctx, args.userId);
+    if (!user) return false;
+    const session = (await ctx.runQuery(components.betterAuth.adapter.findOne, {
+      model: "session",
+      where: [
+        { field: "_id", value: args.sessionId },
+        { field: "userId", value: user._id },
+      ],
+    })) as AdapterDoc | null;
+    if (!session) return false;
+    await ctx.runMutation(components.betterAuth.adapter.deleteOne, {
+      input: {
+        model: "session",
+        where: [{ field: "_id", value: session._id }],
+      },
+    });
+    return true;
   },
 });
 

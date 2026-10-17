@@ -117,7 +117,7 @@ struct AccessView: View {
         GlasstunnelGroupedList {
             GlasstunnelGroupHeader(
                 title: "Devices",
-                subtitle: "Phones and browsers that have opened this Mac"
+                subtitle: "Browsers signed in to your account that opened this Mac. Signing one out ends its access to your Macs until it signs in again."
             )
             GlasstunnelRowDivider(leadingInset: 0)
 
@@ -160,11 +160,11 @@ struct AccessView: View {
 
                 Menu {
                     if status != .confirmed {
-                        Button(device.revoked ? "Retry Revocation" : "Revoke Access", role: .destructive) {
+                        Button(device.revoked ? "Retry Sign Out" : "Sign Out Browser", role: .destructive) {
                             Task { await appState.revokeDevice(device.deviceId) }
                         }
                     }
-                    Button("Remove Device", role: .destructive) {
+                    Button("Sign Out and Remove", role: .destructive) {
                         Task { await appState.removeDevice(device.deviceId) }
                     }
                 } label: {
@@ -188,7 +188,7 @@ struct AccessView: View {
         if let error = appState.deviceRevocationErrors[device.deviceId] {
             parts.append(error)
         } else if device.revoked && device.revocationConfirmedAt == nil {
-            parts.append("Server confirmation needed. Retry revocation to finish.")
+            parts.append("Server confirmation needed. Retry sign-out to finish.")
         }
         return parts.joined(separator: " · ")
     }
@@ -227,7 +227,7 @@ enum DeviceAccessStatus: Equatable {
         case .allowed: return nil
         case .pending: return "Confirming..."
         case .blockedLocally: return "Blocked locally"
-        case .confirmed: return "Revoked"
+        case .confirmed: return "Signed out"
         }
     }
 }

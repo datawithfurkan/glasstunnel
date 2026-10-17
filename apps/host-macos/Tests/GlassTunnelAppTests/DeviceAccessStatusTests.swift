@@ -10,6 +10,6 @@ final class DeviceAccessStatusTests: XCTestCase {
         XCTAssertEqual(DeviceAccessStatus(device: device, pending: false), .blockedLocally)
         XCTAssertEqual(DeviceAccessStatus(device: device, pending: true), .pending)
         device.revocationConfirmedAt = Date()
-        XCTAssertEqual(DeviceAccessStatus(device: device, pending: false).title, "Revoked")
+        XCTAssertEqual(DeviceAccessStatus(device: device, pending: false).title, "Signed out")
     }
 }

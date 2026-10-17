@@ -73,8 +73,6 @@ vi.mock('../transport/RelayConnection', () => ({
 const PAIRED_HOST_KEY = 'gt.pairedHost';
 const REMOVED_CACHE_FAILED_NOTICE =
   'This Mac was removed from your account. Browser offline copies could not be cleared; retry in Profile.';
-const REVOKED_CACHE_FAILED_NOTICE =
-  'Access was revoked. Browser offline copies could not be cleared; retry in Profile.';
 const cacheKeyFor = (account: string, hostId: string) => `gt.relay.cache.v2.${JSON.stringify([account, hostId])}`;
 
 const host: AccountHost = {
@@ -443,15 +441,15 @@ describe('renaming and removing Macs in the store', () => {
     mocks.idbDel.mockImplementation(async (key: string) => {
       if (key === PAIRED_HOST_KEY) throw new Error('IndexedDB unavailable');
     });
-    mocks.relays.at(-1)!.opts.onClose?.({ code: 4003, reason: 'access revoked' } as CloseEvent, false);
-    await vi.waitFor(() => expect(store.getState().accessRevocationNotice).toBe(REVOKED_CACHE_FAILED_NOTICE));
+    mocks.relays.at(-1)!.opts.onClose?.({ code: 4003, reason: 'mac removed from account' } as CloseEvent, false);
+    await vi.waitFor(() => expect(store.getState().accessRevocationNotice).toBe(REMOVED_CACHE_FAILED_NOTICE));
     mocks.renameAccountHost.mockImplementation(async (_token: string, input: { deviceId: string; label: string }) => ({
       ...(input.deviceId === host.deviceId ? host : otherHost), label: input.label,
     }));
 
     // Its offline copies are still in this browser: the notice stays.
     await store.getState().renameHost(host.deviceId, 'Desk Mac');
-    expect(store.getState().accessRevocationNotice).toBe(REVOKED_CACHE_FAILED_NOTICE);
+    expect(store.getState().accessRevocationNotice).toBe(REMOVED_CACHE_FAILED_NOTICE);
     // Another Mac's change says nothing about them: the screen reports that change.
     await store.getState().renameHost(otherHost.deviceId, 'Old Mac');
     expect(store.getState().accessRevocationNotice).toBeNull();
@@ -463,8 +461,8 @@ describe('renaming and removing Macs in the store', () => {
     mocks.idbDel.mockImplementation(async (key: string) => {
       if (key === PAIRED_HOST_KEY) throw new Error('IndexedDB unavailable');
     });
-    mocks.relays.at(-1)!.opts.onClose?.({ code: 4003, reason: 'access revoked' } as CloseEvent, false);
-    await vi.waitFor(() => expect(store.getState().accessRevocationNotice).toBe(REVOKED_CACHE_FAILED_NOTICE));
+    mocks.relays.at(-1)!.opts.onClose?.({ code: 4003, reason: 'mac removed from account' } as CloseEvent, false);
+    await vi.waitFor(() => expect(store.getState().accessRevocationNotice).toBe(REMOVED_CACHE_FAILED_NOTICE));
     mocks.removeAccountHost.mockResolvedValue(undefined);
 
     await store.getState().removeHost(otherHost.deviceId);
@@ -529,11 +527,32 @@ describe('renaming and removing Macs in the store', () => {
     await vi.waitFor(() => expect(mocks.idbDel).toHaveBeenCalledWith(PAIRED_HOST_KEY));
   });
 
-  it('keeps the revocation wording for a 4003 close without the removal reason', async () => {
+  it('signs this browser out with a notice when a Mac revokes it (a 4003 close without the removal reason)', async () => {
     const store = await signedIn({ selected: host });
     await store.getState().startPeer();
     mocks.relays.at(-1)!.opts.onClose?.({ code: 4003, reason: 'access revoked' } as CloseEvent, false);
-    expect(store.getState().accessRevocationNotice).toBe('Access to this Mac was revoked.');
+    await vi.waitFor(() => expect(store.getState().signingOut).toBe(false));
+    expect(store.getState()).toMatchObject({
+      user: null,
+      route: 'auth',
+      signInNotice: 'One of your Macs signed this browser out. Sign in again to use your Macs.',
+    });
+    expect(mocks.signOut).toHaveBeenCalled();
+    // The next sign-in uses a new browser identity, which no Mac, relay or hub has denied.
+    await vi.waitFor(() => expect(mocks.idbSet).toHaveBeenCalledWith('gt.phone.keypair', expect.objectContaining({ deviceId: 'test-phone' })));
+  });
+
+  it('signs this browser out when the account says a Mac ended this sign-in', async () => {
+    const store = await signedIn();
+    mocks.fetchAccountHosts.mockRejectedValue(
+      new AccountApiError('One of your Macs signed this browser out. Sign in again to use your Macs.', 401, 'signed_out_by_mac'),
+    );
+    mocks.refreshSession.mockClear();
+    await store.getState().refreshHosts({ force: true, userInitiated: true });
+    await vi.waitFor(() => expect(store.getState().user).toBeNull());
+    expect(store.getState().signInNotice).toMatch(/signed this browser out/);
+    // The same sign-in cannot come back by refreshing its token.
+    expect(mocks.refreshSession).not.toHaveBeenCalled();
   });
 
   it('does not add a removal notice for a Mac this page is removing itself', async () => {

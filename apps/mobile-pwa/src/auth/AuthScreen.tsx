@@ -15,6 +15,7 @@ export function AuthScreen() {
   const signUpWithPassword = useAppStore((s) => s.signUpWithPassword);
   const authConfigured = useAppStore((s) => s.authConfigured);
   const signOutError = useAppStore((s) => s.signOutError);
+  const signInNotice = useAppStore((s) => s.signInNotice) ?? null;
   const signingOut = useAppStore((s) => s.signingOut);
   const signOut = useAppStore((s) => s.signOut);
   const passwordResetFlow = useAppStore((s) => s.passwordResetFlow) ?? null;
@@ -200,6 +201,12 @@ export function AuthScreen() {
 
           <div className="gt-panel p-5">
 
+        {signInNotice && !signingOut && !resetFlow && (
+          <p role="status" className="mb-4 rounded-[6px] border border-warn/30 bg-warn/10 px-4 py-3 text-sm text-warn">
+            {signInNotice}
+          </p>
+        )}
+
         {signingOut ? (
           <p role="status" className="gt-muted py-3 text-center">Signing out...</p>
         ) : resetFlow?.screen === 'forgot' ? (
@@ -370,7 +377,7 @@ export function AuthScreen() {
           <div role="alert" className="mt-4 rounded-[6px] border border-err/30 bg-err/10 px-4 py-3 text-sm text-err">
             {(!resetFlow && error) || signOutError}
             {signOutError && !signingOut && (
-              <button type="button" className="gt-button gt-button-secondary mt-3" onClick={() => { void signOut().catch(() => {}); }}>
+              <button type="button" className="gt-button gt-button-secondary mt-3" onClick={() => { void signOut(signInNotice ? { notice: signInNotice } : undefined).catch(() => {}); }}>
                 Retry sign out
               </button>
             )}

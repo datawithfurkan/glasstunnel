@@ -28,10 +28,23 @@ export class AccountApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    /** The server's machine-readable reason, when it gives one. */
+    readonly code?: string,
   ) {
     super(message);
     this.name = 'AccountApiError';
   }
+}
+
+/**
+ * One of the account's Macs signed this browser out (it took this browser's
+ * access away), and this sign-in is the one it ended. Signing in again restores
+ * access to every Mac of the account.
+ */
+export const SIGNED_OUT_BY_MAC_CODE = 'signed_out_by_mac';
+
+export function isSignedOutByMac(error: unknown): boolean {
+  return error instanceof AccountApiError && error.code === SIGNED_OUT_BY_MAC_CODE;
 }
 
 export function isAccountApiAuthFailure(error: unknown): boolean {
@@ -71,6 +84,7 @@ async function apiFetch<T>(accessToken: string, path: string, init: RequestInit 
     throw new AccountApiError(
       (payload.error as string) || `Request failed with ${response.status}`,
       response.status,
+      typeof payload.code === 'string' ? payload.code : undefined,
     );
   }
   return payload as T;
