@@ -3,6 +3,24 @@
 Notable user-facing changes are recorded here. Glasstunnel follows semantic
 versioning after the first public beta; pre-release compatibility may still change.
 
+## Unreleased
+
+### Access
+
+- Signed in means connected, like a private network: any browser signed in to
+  your account reaches every Mac on it. On the Mac, "Revoke Access" is now
+  **Sign Out Browser** (and "Remove Device" is **Sign Out and Remove**): it
+  signs that browser out of your account instead of leaving a silent,
+  permanent block. Signing in again brings back all your Macs. Before, a Mac
+  could take a browser's access away and that browser simply stopped listing
+  the Mac, with no way back except a link code from the Mac itself.
+- A browser a Mac signed out says so on the sign-in screen: "One of your Macs
+  signed this browser out. Sign in again to use your Macs."
+- Browsers get names you can recognise in the Mac's Access list, such as
+  "Chrome on Mac" or "Safari on iPhone", instead of "Browser".
+- The server and web parts are live without a Mac update; the renamed Mac
+  buttons ship with the next Mac release.
+
 ## 0.1.10 - Sharper screen, shared hooks, tighter access
 
 ### Security

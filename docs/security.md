@@ -230,14 +230,16 @@ hosted relay and signaling paths. **Mac binaries before 0.1.10 do not contain
 this operation.** Source integration and a hosted deployment do not update an
 installed Mac; binary publication is a separate release step.
 
-With the matching Mac/Worker/PWA versions, Revoke Access stops that device's local
+With the matching Mac/Worker/PWA versions, Sign Out Browser (named Revoke Access
+in Mac builds up to 0.1.10) stops that device's local
 WebRTC session and further host command dispatch. The Mac shows confirmation
 pending until the server persists its denial and revokes the account pairing.
 Failure leaves local access blocked and offers a retry; do not assume hosted
 delivery is cut off until confirmation. Removing a device hides its row but keeps
 the denial. Restarts, cached authorization and re-registering the same identity
-must not restore it. A revoked browser clears its active workspace and stops
-automatic reconnects; another authorized browser can continue.
+must not restore it; a new sign-in or a link code does (see Account-wide access
+below). A revoked browser clears its active workspace, signs out and stops
+automatic reconnects; another signed-in browser can continue.
 
 Relay clients renew their authorization on the open socket at token expiry or
 after five minutes, whichever is earlier: the relay asks about a minute before
@@ -247,18 +249,58 @@ browser that does not renew in time is closed at the deadline (close code 4001)
 and reconnects. This bounds stale account decisions, not the network latency of
 an explicit revocation. There is no supported sub-second guarantee.
 
-Removal is reversible only through the Mac's owner: a new link code generated on
-that Mac and entered on the phone lifts the account denial, clears the relay and
-signaling denials, and reports a re-authorization time that the Mac compares with
-its own removal before it lifts its tombstone. A link code works once. The Worker
+### Account-wide access (2026-10-17)
+
+Access works like a private network: a browser signed in to the account reaches
+every Mac of the account, with no per-Mac approval. Reviewed against source on
+2026-10-17. On the Mac, **Sign Out Browser** (and **Sign Out and Remove**,
+which also hides the row) takes access away by signing that browser out of the
+account:
+
+1. The Mac blocks the browser at once and the relay and signaling hub persist
+   their denials, as described above.
+2. The Worker then ends the account session the browser registered with. At
+   registration the Worker records that session's id (never its token) on the
+   browser's device row; Convex deletes the session only when it belongs to the
+   same account. If this step fails the denial still stands, and step 3 ends
+   the session on the browser's next account request.
+3. When a browser registers or loads its list of Macs, the Worker compares when
+   its current sign-in happened with the newest revocation of that browser by
+   any Mac of the account. A sign-in that is not newer is the one a Mac ended:
+   the Worker ends that session and answers `401` with code
+   `signed_out_by_mac`. The web app then signs out and says "One of your Macs
+   signed this browser out. Sign in again to use your Macs." It does the same
+   when the relay closes its socket with code 4003 for a revocation. It also
+   replaces its browser identity (a new key pair and device id), so the next
+   sign-in registers a browser that no Mac, relay or signaling hub has denied,
+   and it reaches every Mac through the ordinary same-account pairing.
+4. A browser that keeps its identity (an older cached web app, or one that
+   could not save a new key pair) is restored by a sign-in newer than every
+   such revocation, exactly like a link code: the Worker deletes the revoked pairing rows, clears the relay and
+   signaling denials, records a pairing with `approved_via: account_sign_in` and
+   a re-authorization time, and tells a connected Mac, which lifts its own
+   tombstone because that time is newer than its revocation. Macs from 0.1.10 do
+   this already. A Mac that is offline lifts it when it next receives the
+   browser's authorization.
+
+So no Mac can lock a signed-in account holder out of their other devices: the
+worst a Mac can do is end one browser's sign-in, and signing in again (with the
+account's password, Google or GitHub) brings every Mac back. A verifier that
+reports no sign-in time leaves the earlier rules in place. The same reasoning
+means a Mac's sign-out is not a defense against someone who holds the account's
+credentials; recovering a compromised account needs a password reset, which
+ends every session.
+
+A link code generated on the Mac still works as before: it lifts the account
+denial, clears the relay and signaling denials, and reports a re-authorization
+time that the Mac compares with its own removal before it lifts its tombstone. A link code works once. The Worker
 claims it in one Convex transaction before it links the Mac or pairs the browser,
 so when two claims of the same code race, from one account or two, only one
-succeeds; a claim that fails after that point still uses up the code. Nothing else restores a removed
-phone; it must otherwise use a new browser identity, which appears as a new
-device to approve. Revocation cannot cancel
-a command already executing in a coding app, retract received content, or invalidate
-every account session. Same-account onboarding can authorize a new browser
-identity, so a compromised account requires account-level recovery as well.
+succeeds; a claim that fails after that point still uses up the code. Besides a
+link code, a new sign-in on that browser restores it (see Account-wide access
+above). Signing a browser out cannot cancel a command already executing in a
+coding app, retract received content, or end the account's other sessions, so a
+compromised account requires account-level recovery as well.
 
 Signed signaling envelopes carry IDs and timestamps, but signature verification
 alone does not provide a complete application replay policy. The hosted JSON
@@ -274,9 +316,8 @@ already received by a browser or operator.
 Reviewed against source on 2026-10-08. Each Mac in **Your Macs** has a menu with
 Rename, Details and Remove from account. The account is the trust unit for
 these actions: any signed-in session of the account can rename or remove any of
-its Macs, including a browser that one of those Macs revoked. This is an
-accepted product decision: a Mac's revocation ends that browser's access to the
-Mac, it does not sign the browser out of the account. Nothing here can reach
+its Macs. A browser that a Mac signed out has to sign in again first (see
+Account-wide access). Nothing here can reach
 another account's Mac. The Worker sends the account and the device id to one
 Convex mutation, which checks that the device is this account's active Mac
 inside the same transaction as the change. A removal also looks the device up
@@ -416,9 +457,10 @@ and trying again is safe.
 To use a removed Mac again, link it from the Mac with a new link code. Removal
 does not lift browser denials. The relay's and signaling hub's denials and the
 Mac's own tombstones stay. Because removal deletes the revoked pairing rows, a
-link code claimed later no longer finds a denial to lift, so a browser that the
-Mac revoked stays refused after the Mac is linked again. It needs a new browser
-identity, which appears as a new device. Mac binaries without the removal
+link code claimed later no longer finds a denial to lift, so the old browser
+identity stays refused after the Mac is linked again. The web app replaces that
+identity when it is signed out for a revocation, so signing in again reaches the
+re-linked Mac as a new device. Mac binaries without the removal
 notice keep an established WebRTC session open until it ends. Relay and
 signaling access end regardless of the Mac version.
 

@@ -702,7 +702,7 @@ public final class SessionManager {
     public enum RevocationError: LocalizedError {
         case unconfirmed
         public var errorDescription: String? {
-            "Access is blocked on this Mac, but the server has not confirmed revocation. Reconnect and retry."
+            "Access is blocked on this Mac, but the server has not confirmed the sign-out. Reconnect and retry."
         }
     }
 

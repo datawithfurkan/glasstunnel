@@ -52,10 +52,10 @@ disclosures, not hidden implementation details.
   of older messages. Old browser versions must reload to adopt the browser policy.
 - Acknowledged cross-transport revocation and the Mac-owned read-only boundary
   need a Mac running 0.1.10 or later together with the current Worker and PWA;
-  local failure is not proof of server cutoff. Revocation affects one browser
-  identity on one Mac, not an account whose credentials are compromised, and a
-  removed phone can only be allowed again with a new link code generated on that
-  Mac. Browser unlock is not mandatory biometric reauthentication. The read-only
+  local failure is not proof of server cutoff. Access is account-wide: a Mac
+  signing a browser out ends that browser's sign-in, and signing in again
+  restores its access to every Mac, so this is not a defense against someone
+  who holds the account's credentials. Browser unlock is not mandatory biometric reauthentication. The read-only
   boundary is not a complete per-device administrator policy. See `docs/security.md`.
 - The picture-size readout next to "Screen ready" depends on the browser reporting
   the video's dimensions; on iOS Safari it can stay hidden while the stream itself

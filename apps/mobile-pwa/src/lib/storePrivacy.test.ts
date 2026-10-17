@@ -263,17 +263,19 @@ describe('browser content security boundaries', () => {
     expect(useAppStore.getState().messageDetails).toEqual({});
   });
 
-  it('leaves the workspace and stops reconnecting after access is revoked', async () => {
+  it('signs this browser out, leaves the workspace and stops reconnecting when a Mac revokes it', async () => {
     const relay = await connectWithDetail();
     relay.opts.onClose?.({ code: 4003, reason: 'access revoked' } as CloseEvent, false);
     relay.opts.onMessageDetail?.(detail);
-    expect(useAppStore.getState().route).toBe('hosts');
+    expect(useAppStore.getState().route).toBe('auth');
     expect(useAppStore.getState().pairedHost).toBeNull();
     expect(useAppStore.getState().messageDetails).toEqual({});
-    expect(useAppStore.getState().accessRevocationNotice).toMatch(/access.*revoked/i);
+    expect(useAppStore.getState().user).toBeNull();
+    expect(useAppStore.getState().signInNotice).toMatch(/signed this browser out.*sign in again/i);
     await vi.advanceTimersByTimeAsync(120_000);
+    expect(mocks.signOut).toHaveBeenCalledOnce();
     expect(mocks.relays).toHaveLength(1);
-    expect(useAppStore.getState().user?.id).toBe('one');
+    expect(useAppStore.getState().signInNotice).toMatch(/signed this browser out/i);
   });
 
   it('clears expanded output when forgetting the Mac', async () => {

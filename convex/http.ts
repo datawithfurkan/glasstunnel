@@ -55,6 +55,7 @@ const MUTATIONS = {
   revokePairing: internal.accountPlane.revokePairing,
   renameHostDevice: internal.accountPlane.renameHostDevice,
   removeHostDevice: internal.accountPlane.removeHostDevice,
+  signOutSession: internal.auth.signOutSession,
 } as const;
 
 const encoder = new TextEncoder();

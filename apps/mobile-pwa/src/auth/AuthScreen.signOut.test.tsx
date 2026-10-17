@@ -1,7 +1,9 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
-const state = vi.hoisted(() => ({ authConfigured: true, signingOut: false, signOutError: null as string | null }));
+const state = vi.hoisted(() => ({
+  authConfigured: true, signingOut: false, signOutError: null as string | null, signInNotice: null as string | null,
+}));
 vi.mock('../lib/store', () => ({ useAppStore: (select: (value: typeof state) => unknown) => select(state) }));
 import { AuthScreen } from './AuthScreen';
 
@@ -19,5 +21,15 @@ describe('sign-out presentation', () => {
     const html = renderToStaticMarkup(<AuthScreen />);
     expect(html).toContain('role="alert"');
     expect(html).toContain('Retry sign out');
+  });
+  it('says why this browser was signed out next to the sign-in options', () => {
+    state.signingOut = false;
+    state.signOutError = null;
+    state.signInNotice = 'One of your Macs signed this browser out. Sign in again to use your Macs.';
+    const html = renderToStaticMarkup(<AuthScreen />);
+    expect(html).toContain('role="status"');
+    expect(html).toContain('One of your Macs signed this browser out. Sign in again to use your Macs.');
+    expect(html).toContain('Continue with Google');
+    state.signInNotice = null;
   });
 });

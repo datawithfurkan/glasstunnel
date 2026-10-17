@@ -31,6 +31,7 @@ import {
   claimHostCode,
   fetchAccountHosts,
   isAccountApiAuthFailure,
+  isSignedOutByMac,
   registerBrowserDevice,
   removeAccountHost,
   renameAccountHost,
@@ -208,7 +209,10 @@ export interface AppState {
   signInWithGitHub: () => Promise<void>;
   signInWithPassword: (email: string, password: string) => Promise<void>;
   signUpWithPassword: (email: string, password: string, displayName?: string) => Promise<void>;
-  signOut: () => Promise<void>;
+  /** Signs this browser out; `notice` is shown on the sign-in screen that follows. */
+  signOut: (options?: { notice?: string }) => Promise<void>;
+  /** Why this browser was signed out, shown on the sign-in screen until the next sign-in. */
+  signInNotice: string | null;
   /** Shows the reset screen for a reset link this tab opened (token or invalid link). */
   loadPasswordResetLink: () => void;
   /**
@@ -335,9 +339,12 @@ const HOST_LIST_EDIT_HISTORY = 32;
 const hostRemovalsByThisPage = new Map<string, number>();
 /** Longer than a removal request may wait, plus the list check after a lost answer. */
 const HOST_REMOVAL_ECHO_WINDOW_MS = HOST_MANAGEMENT_TIMEOUT_MS + 15_000;
-const HOST_REVOKED_NOTICE = 'Access to this Mac was revoked.';
-const HOST_REVOKED_CACHE_FAILED_NOTICE =
-  'Access was revoked. Browser offline copies could not be cleared; retry in Profile.';
+/**
+ * Account-wide access: a browser signed in to the account reaches every Mac of
+ * the account. A Mac taking this browser's access away signs it out of the
+ * account, and signing in again restores its access to every Mac.
+ */
+export const SIGNED_OUT_BY_MAC_NOTICE = 'One of your Macs signed this browser out. Sign in again to use your Macs.';
 /**
  * The Mac whose offline copies this page could not clear, with the notice
  * that says so. A later rename or removal of that Mac must not hide the
@@ -410,6 +417,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   availableHosts: [],
   hostsStatus: 'idle',
   accessRevocationNotice: null,
+  signInNotice: null,
   user: null,
   authConfigured: hasAccountAuth(),
   layout: null,
@@ -663,31 +671,29 @@ export const useAppStore = create<AppState>((set, get) => ({
           if (event.code === 4003) {
             // The same close code covers this browser's access being revoked
             // and the Mac leaving the account; the reason tells them apart.
-            const removedFromAccount = event.reason === HOST_REMOVED_RELAY_REASON;
+            if (event.reason !== HOST_REMOVED_RELAY_REASON) {
+              // A Mac took this browser's access away, which signs it out of
+              // the account. Signing in again restores access to every Mac;
+              // sign-out also clears this account's offline copies.
+              signOutAfterMacSignOut(set, get);
+              return;
+            }
             // A removal this page made says so on its own; no second notice.
-            const removedHere = removedFromAccount && hostRemovalByThisPage(pairedHost.deviceId);
+            const removedHere = hostRemovalByThisPage(pairedHost.deviceId);
             get().disconnectPeer();
-            if (removedFromAccount) recordHostListEdit({ deviceId: pairedHost.deviceId, removed: true });
+            recordHostListEdit({ deviceId: pairedHost.deviceId, removed: true });
             set((state) => ({
               pairedHost: null,
               availableHosts: state.availableHosts.filter((host) => host.deviceId !== pairedHost.deviceId),
               route: state.user ? 'hosts' : fallbackEntryRoute(),
               error: null,
-              accessRevocationNotice: removedHere
-                ? state.accessRevocationNotice
-                : removedFromAccount
-                  ? HOST_MANAGEMENT_COPY.removedNotice
-                  : HOST_REVOKED_NOTICE,
+              accessRevocationNotice: removedHere ? state.accessRevocationNotice : HOST_MANAGEMENT_COPY.removedNotice,
             }));
             void Promise.all([
               idbDel(PAIRED_HOST_KEY),
               offlineCache.clear(get().user?.id, pairedHost.deviceId),
             ]).catch(() => {
-              showCacheFailureNotice(
-                set,
-                pairedHost.deviceId,
-                removedFromAccount ? HOST_MANAGEMENT_COPY.removedNoticeCacheFailed : HOST_REVOKED_CACHE_FAILED_NOTICE,
-              );
+              showCacheFailureNotice(set, pairedHost.deviceId, HOST_MANAGEMENT_COPY.removedNoticeCacheFailed);
             });
             return;
           }
@@ -1020,7 +1026,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (error) throw error;
   },
 
-  async signOut() {
+  async signOut(options) {
     if (get().signingOut) return;
     const account = get().user?.id ?? pendingSignOutAccount;
     pendingSignOutAccount = account;
@@ -1033,6 +1039,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       user: null,
       signOutError: null,
       signingOut: true,
+      signInNotice: options?.notice ?? null,
       accessRevocationNotice: null,
       availableHosts: [],
       hostsStatus: 'idle',
@@ -1244,6 +1251,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         });
       } catch (err) {
         if (!isCurrentList()) return;
+        if (isSignedOutByMac(err)) {
+          signOutAfterMacSignOut(set, get);
+          return;
+        }
         set({
           error: friendlyAccountSyncError(err),
           hostsStatus: hostsStatusAfterFailure(get().hostsStatus),
@@ -1896,6 +1907,8 @@ async function runSessionSync(
   set({
     user,
     authConfigured: true,
+    // Signed in again: the reason for the last sign-out no longer applies.
+    signInNotice: null,
     route: initialSignedInRoute,
     locked: refreshKeepsRoute || isWorkspaceRoute(state.route) ? state.locked : false,
     ...(options.background ? {} : { error: null }),
@@ -1924,6 +1937,10 @@ async function runSessionSync(
     accountSession = result.session;
   } catch (err) {
     if (!isCurrentSync()) return;
+    if (isSignedOutByMac(err)) {
+      signOutAfterMacSignOut(set, get);
+      return;
+    }
     const latest = get();
     const fallbackRoute =
       latest.route === 'loading' || latest.route === 'auth' ? 'hosts' : latest.route;
@@ -2148,7 +2165,8 @@ async function accountRequestWithSessionRetry<T>(
       session,
     };
   } catch (error) {
-    if (!isAccountApiAuthFailure(error)) throw error;
+    // This sign-in was ended by a Mac: a refreshed token is the same sign-in.
+    if (!isAccountApiAuthFailure(error) || isSignedOutByMac(error)) throw error;
     let refreshed: Session;
     try {
       refreshed = await currentSession({ forceRefresh: true });
@@ -2744,11 +2762,32 @@ function mapUser(user: User): AuthenticatedUser {
 
 function browserDeviceLabel(): string {
   if (typeof navigator === 'undefined') return 'Browser';
-  const ua = navigator.userAgent;
-  if (/iPhone/i.test(ua)) return 'iPhone browser';
-  if (/iPad/i.test(ua)) return 'iPad browser';
-  if (/Android/i.test(ua)) return 'Android browser';
-  return 'Browser';
+  return describeBrowser(navigator.userAgent, navigator.maxTouchPoints ?? 0);
+}
+
+/**
+ * A name people recognise in the Mac's list of devices, such as "Chrome on Mac"
+ * or "Safari on iPhone", so the browser they still use is easy to tell apart.
+ */
+export function describeBrowser(userAgent: string, maxTouchPoints = 0): string {
+  const ua = userAgent;
+  const platform = /iPhone/i.test(ua) ? 'iPhone'
+    : /iPad/i.test(ua) || (/Macintosh/i.test(ua) && maxTouchPoints > 1) ? 'iPad'
+      : /Android/i.test(ua) ? 'Android'
+        : /CrOS/i.test(ua) ? 'ChromeOS'
+          : /Macintosh|Mac OS X/i.test(ua) ? 'Mac'
+            : /Windows/i.test(ua) ? 'Windows'
+              : /Linux/i.test(ua) ? 'Linux'
+                : null;
+  const browser = /Edg(e|A|iOS)?\//.test(ua) ? 'Edge'
+    : /OPR\/|Opera/.test(ua) ? 'Opera'
+      : /Firefox\/|FxiOS\//.test(ua) ? 'Firefox'
+        : /CriOS\/|Chrome\//.test(ua) ? 'Chrome'
+          : /Safari\//.test(ua) ? 'Safari'
+            : null;
+  if (browser && platform) return `${browser} on ${platform}`;
+  if (platform) return `Browser on ${platform}`;
+  return browser ?? 'Browser';
 }
 
 function friendlyAccountSyncError(error: unknown): string {
@@ -2786,6 +2825,22 @@ function withHostListEditsSince(hosts: AccountHost[], mark: number): AccountHost
     }
   }
   return next;
+}
+
+/**
+ * A Mac signed this browser out. Sign out (content leaves the screen at once),
+ * then give this browser a new identity: every denial a Mac, the relay or the
+ * signaling hub keeps is for the old one, so the next sign-in starts clean and
+ * reaches every Mac of the account. If the new identity cannot be saved, the
+ * old one stays, and the server restores it on a sign-in newer than the sign-out.
+ */
+function signOutAfterMacSignOut(set: SetState, get: () => AppState): void {
+  void get().signOut({ notice: SIGNED_OUT_BY_MAC_NOTICE }).catch(() => {});
+  void (async () => {
+    const keypair = await generateDeviceKeypair();
+    await saveKeypair(keypair);
+    set({ phoneKeypair: keypair });
+  })().catch(() => {});
 }
 
 function showCacheFailureNotice(set: SetState, deviceId: string, notice: string): void {
