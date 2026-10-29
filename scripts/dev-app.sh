@@ -7,9 +7,10 @@
 # binary in a .app with a stable CFBundleIdentifier lets macOS attach
 # the permission persistently.
 #
-# The script also copies WebRTC.framework into Contents/Frameworks/ and
-# re-signs everything with matching entitlements so the hardened runtime
-# accepts the nested framework.
+# The script also copies WebRTC.framework and Sparkle.framework into
+# Contents/Frameworks/ and re-signs everything with matching entitlements so
+# the hardened runtime accepts the nested frameworks. Development builds carry
+# no update key, so Sparkle never runs; the app still links it at launch.
 #
 # Usage:
 #   bash scripts/dev-app.sh          # debug build
@@ -81,6 +82,10 @@ if [[ ! -d "$BUILD_DIR/WebRTC.framework" ]]; then
   echo "       this usually means SwiftPM moved its layout; inspect $BUILD_DIR manually." >&2
   exit 1
 fi
+if [[ ! -d "$BUILD_DIR/Sparkle.framework" ]]; then
+  echo "error: Sparkle.framework not found alongside the binary at $BUILD_DIR" >&2
+  exit 1
+fi
 
 # Kill only the copy installed at this bundle path. Other Glasstunnel builds
 # may be running with different account and endpoint configuration.
@@ -105,6 +110,11 @@ mkdir -p "$APP_DIR/Contents/Frameworks"
 cp "$BIN" "$APP_DIR/Contents/MacOS/GlassTunnel"
 cp "$HOST/Metadata/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 cp -R "$BUILD_DIR/WebRTC.framework" "$APP_DIR/Contents/Frameworks/"
+# ditto keeps the framework's symlinks, which its signature depends on. The
+# app is not sandboxed, so Sparkle's XPC services are never used: drop them.
+SPARKLE_DEST="$APP_DIR/Contents/Frameworks/Sparkle.framework"
+ditto "$BUILD_DIR/Sparkle.framework" "$SPARKLE_DEST"
+rm -rf "$SPARKLE_DEST/Versions/B/XPCServices" "$SPARKLE_DEST/XPCServices"
 
 # Any Swift standard-library dylibs we linked dynamically need to come
 # with us. Most of Swift is resolved via /usr/lib/swift at runtime on
@@ -131,6 +141,9 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key>          <string>APPL</string>
   <key>LSMinimumSystemVersion</key>       <string>13.0</string>
   <key>NSHighResolutionCapable</key>      <true/>
+  <!-- As in Metadata/Info.plist: the app starts as a menu bar app and shows
+       its Dock icon only while its window is open. -->
+  <key>LSUIElement</key>                  <true/>
   <key>LSEnvironment</key>
   <dict>
 	    <key>GLASSTUNNEL_DEV</key>            <string>1</string>
@@ -231,6 +244,15 @@ echo "==> Signing WebRTC.framework"
 codesign --force --sign "$IDENTITY" --options runtime \
   --timestamp=none \
   "$APP_DIR/Contents/Frameworks/WebRTC.framework"
+
+echo "==> Signing Sparkle.framework"
+# Sparkle's helpers first, then the framework that contains them.
+for sparkle_part in \
+  "$SPARKLE_DEST/Versions/B/Autoupdate" \
+  "$SPARKLE_DEST/Versions/B/Updater.app" \
+  "$SPARKLE_DEST"; do
+  codesign --force --sign "$IDENTITY" --options runtime --timestamp=none "$sparkle_part"
+done
 
 echo "==> Signing app bundle"
 APP_CODESIGN_ARGS=(

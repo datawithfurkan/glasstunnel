@@ -189,7 +189,8 @@ GT_DEVELOPER_ID="Developer ID Application: YOUR NAME (TEAMID)" \
 Release builds update themselves with [Sparkle](https://sparkle-project.org)
 (pinned in `apps/host-macos/Package.swift`). The app checks
 `https://glasstunnel.io/appcast.xml` once a day, and on **Glasstunnel >
-Check for Updates…** or **Settings > Updates**. When a newer version exists it
+Check for Updates…**, the menu bar icon's **Check for Updates…**, or
+**Settings > Updates**. When a newer version exists it
 shows the release notes and an **Install Update** button, then installs the new
 version and relaunches. People can turn off the daily check or let new versions
 download and install the next time the app quits.

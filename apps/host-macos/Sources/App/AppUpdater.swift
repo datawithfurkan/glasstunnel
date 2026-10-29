@@ -43,7 +43,7 @@ enum AppUpdatePolicy {
 @MainActor
 final class AppUpdater: ObservableObject {
     static let shared = AppUpdater()
-    static let menuTitle = "Check for Updates…"
+    nonisolated static let menuTitle = "Check for Updates…"
 
     let mode: AppUpdatePolicy.Mode
     @Published private(set) var canCheckForUpdates = false
@@ -86,6 +86,9 @@ final class AppUpdater: ObservableObject {
     /// The menu item and Settings button stay enabled on development builds,
     /// where they open the Releases page instead.
     var checkIsAvailable: Bool { updatesInApp ? canCheckForUpdates : true }
+
+    /// The Settings and menu bar button title for this build.
+    var checkTitle: String { updatesInApp ? Self.menuTitle : "View Releases" }
 
     func checkForUpdates() {
         if let controller {

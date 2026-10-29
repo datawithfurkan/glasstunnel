@@ -1,4 +1,5 @@
 #if os(macOS)
+import AppKit
 import SwiftUI
 
 struct BrandMarkView: View {
@@ -34,5 +35,44 @@ struct BrandMarkView: View {
         }
         .frame(width: size, height: size)
     }
+
+    /// The mark's tunnel and lines without the tile, as a template image so
+    /// the menu bar can tint it for light, dark, and highlighted states.
+    static let menuBarImage: NSImage = {
+        let image = NSImage(size: NSSize(width: 18, height: 18), flipped: true) { rect in
+            // The strokes span x 0.08...0.72 and y 0.23...0.68 of the tile;
+            // scale that box to about 14 pt wide and center it.
+            let scale: CGFloat = 22
+            let origin = CGPoint(x: (rect.width - 0.64 * scale) / 2 - 0.08 * scale,
+                                 y: (rect.height - 0.45 * scale) / 2 - 0.23 * scale)
+            func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+                CGPoint(x: origin.x + x * scale, y: origin.y + y * scale)
+            }
+            NSColor.black.setStroke()
+
+            let tunnel = NSBezierPath()
+            tunnel.move(to: point(0.30, 0.66))
+            tunnel.line(to: point(0.30, 0.38))
+            tunnel.curve(to: point(0.72, 0.38), controlPoint1: point(0.30, 0.18), controlPoint2: point(0.72, 0.18))
+            tunnel.line(to: point(0.72, 0.66))
+
+            let lines = NSBezierPath()
+            for (startX, y) in [(0.12, 0.48), (0.08, 0.58), (0.16, 0.68)] as [(CGFloat, CGFloat)] {
+                lines.move(to: point(startX, y))
+                lines.line(to: point(0.48, y))
+            }
+
+            for path in [tunnel, lines] {
+                path.lineWidth = 1.6
+                path.lineCapStyle = .round
+                path.lineJoinStyle = .round
+                path.stroke()
+            }
+            return true
+        }
+        image.isTemplate = true
+        image.accessibilityDescription = "Glasstunnel"
+        return image
+    }()
 }
 #endif
