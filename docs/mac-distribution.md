@@ -222,8 +222,9 @@ SPARKLE_BIN=apps/host-macos/.build/artifacts/sparkle/Sparkle/bin
 "$SPARKLE_BIN/generate_keys" --account glasstunnel
 # Save the public key as the release key file:
 "$SPARKLE_BIN/generate_keys" --account glasstunnel -p > apps/host-macos/Metadata/sparkle-public-ed-key.txt
-# Export the private key once, store it in a password manager, then delete the file:
-"$SPARKLE_BIN/generate_keys" --account glasstunnel -x sparkle-private-key.txt
+# Export the private key once, outside the checkout, store it in a password
+# manager, then delete the file:
+"$SPARKLE_BIN/generate_keys" --account glasstunnel -x ~/sparkle-private-key.txt
 ```
 
 Commit `sparkle-public-ed-key.txt`; never commit the private key. Release builds
