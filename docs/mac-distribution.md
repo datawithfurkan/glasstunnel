@@ -260,6 +260,11 @@ Applications directory with Homebrew updates and cleanup disabled, verifies the
 installed app, then removes its cask receipt, tap, and temporary files while
 restoring the user's original Homebrew developer-mode state.
 
+Current Homebrew refuses to load casks from untrusted taps. Both the audit and
+the install smoke trust only their disposable cask (`brew trust --cask`) for
+the run and put that one trust entry back the way it was on exit, so the
+user's other `brew trust` settings are never touched.
+
 ## App assembly source of truth
 
 Do not assemble release bundles manually. The universal executable, embedded
