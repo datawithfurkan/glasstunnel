@@ -18,6 +18,29 @@ struct GlassTunnelAppEntry: App {
         Settings {
             EmptyView()
         }
+        .commands {
+            CommandGroup(after: .appInfo) {
+                CheckForUpdatesCommand(updater: AppUpdater.shared)
+            }
+            // Settings live in the main window, not in the placeholder scene.
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") {
+                    appDelegate.showSettings()
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
+        }
+    }
+}
+
+private struct CheckForUpdatesCommand: View {
+    @ObservedObject var updater: AppUpdater
+
+    var body: some View {
+        Button(AppUpdater.menuTitle) {
+            updater.checkForUpdates()
+        }
+        .disabled(!updater.checkIsAvailable)
     }
 }
 
@@ -29,6 +52,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     nonisolated func applicationDidFinishLaunching(_ notification: Notification) {
         MainActor.assumeIsolated {
             NSApp.setActivationPolicy(.regular)
+            // Starts Sparkle's daily check in release builds.
+            _ = AppUpdater.shared
             createMainWindow()
             NSApp.activate(ignoringOtherApps: true)
         }
@@ -84,6 +109,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
         self.mainWindow = window
+    }
+
+    func showSettings() {
+        appState?.selectTab(.settings)
+        ensureMainWindowVisible()
     }
 
     private func ensureMainWindowVisible() {

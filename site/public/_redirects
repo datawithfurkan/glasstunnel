@@ -1,0 +1,3 @@
+# The Mac app's update feed. Each GitHub Release carries a signed appcast.xml;
+# "latest" always resolves to the newest one, so releases need no site deploy.
+/appcast.xml https://github.com/datawithfurkan/glasstunnel/releases/latest/download/appcast.xml 302

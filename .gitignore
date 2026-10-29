@@ -35,6 +35,7 @@ coverage.out
 *.keychain-db
 dev-signing-keychain-password
 *_private.pem
+sparkle-private-key*
 *.p8
 *.p12
 

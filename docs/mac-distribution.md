@@ -184,20 +184,92 @@ GT_DEVELOPER_ID="Developer ID Application: YOUR NAME (TEAMID)" \
   ./scripts/notarize-mac-release.sh dist/Glasstunnel-0.1.0.dmg
 ```
 
+## In-app updates
+
+Release builds update themselves with [Sparkle](https://sparkle-project.org)
+(pinned in `apps/host-macos/Package.swift`). The app checks
+`https://glasstunnel.io/appcast.xml` once a day, and on **Glasstunnel >
+Check for Updates…** or **Settings > Updates**. When a newer version exists it
+shows the release notes and an **Install Update** button, then installs the new
+version and relaunches. People can turn off the daily check or let new versions
+download and install the next time the app quits.
+
+What protects an update:
+
+- The app only accepts a signed feed (`SURequireSignedFeed`), and checks each
+  DMG's EdDSA signature before opening it (`SUVerifyUpdateBeforeExtraction`).
+  Both use the update key pair below.
+- The DMG and the app inside are also Developer ID signed and notarized, as
+  for a manual download. A code-signed DMG also lets the update key be rotated.
+- `glasstunnel.io/appcast.xml` redirects (`site/public/_redirects`) to the
+  latest GitHub Release's `appcast.xml`, so publishing a release needs no site
+  deploy.
+
+Only Developer ID builds get the public key (`SUPublicEDKey`), from
+`apps/host-macos/Metadata/sparkle-public-ed-key.txt`. Ad-hoc, local-sign and
+development builds get none, never update themselves, and open GitHub Releases
+from the same menu item instead.
+
+### One-time update key setup
+
+The private key lives in the maintainer's login Keychain and nowhere else.
+Losing it means existing installs can no longer verify updates, so back it up.
+
+```bash
+swift package resolve --package-path apps/host-macos
+SPARKLE_BIN=apps/host-macos/.build/artifacts/sparkle/Sparkle/bin
+# Creates the key pair in the login Keychain (account "glasstunnel").
+"$SPARKLE_BIN/generate_keys" --account glasstunnel
+# Save the public key as the release key file:
+"$SPARKLE_BIN/generate_keys" --account glasstunnel -p > apps/host-macos/Metadata/sparkle-public-ed-key.txt
+# Export the private key once, outside the checkout, store it in a password
+# manager, then delete the file:
+"$SPARKLE_BIN/generate_keys" --account glasstunnel -x ~/sparkle-private-key.txt
+```
+
+Commit `sparkle-public-ed-key.txt`; never commit the private key. Release builds
+fail until the public key file exists.
+
+### Releasing an update
+
+`pnpm release:mac:assets -- VERSION dist/Glasstunnel-VERSION.dmg` now also writes
+`dist/appcast.xml`: one item for the new DMG, with the CHANGELOG section
+`## VERSION` as its release notes. It signs the DMG entry and the feed with the
+Keychain key (account `glasstunnel`, or `GT_SPARKLE_PRIVATE_KEY_FILE`), then
+verifies both. Upload
+`appcast.xml` with the DMGs. To write only the feed:
+
+```bash
+pnpm release:mac:appcast -- 0.1.0 dist/Glasstunnel-0.1.0.dmg
+```
+
+Installs older than the first Sparkle release (0.1.10 and earlier) cannot update
+themselves; their owners install the next version once by hand.
+
+To prove the whole path on this Mac without the real key or app, run the update
+smoke. It builds a tiny throwaway app with the same embedded, signed Sparkle,
+serves a signed feed from `127.0.0.1`, and checks that version 1.0.0 replaces
+itself with 1.0.1:
+
+```bash
+pnpm qa:mac:update-smoke
+```
+
 ## Homebrew cask
 
-`Casks/glasstunnel.rb` is the Homebrew cask recipe. It points at the `.dmg` you publish to GitHub Releases. Glasstunnel does not update itself, so the cask must not declare `auto_updates true`. Users install from the project tap with:
+`Casks/glasstunnel.rb` is the Homebrew cask recipe. It points at the `.dmg` you publish to GitHub Releases. Glasstunnel updates itself, so the cask declares `auto_updates true` and `brew upgrade` only replaces it with `--greedy`. Users install from the project tap with:
 
 ```bash
 brew tap datawithfurkan/glasstunnel https://github.com/datawithfurkan/glasstunnel
 brew install --cask datawithfurkan/glasstunnel/glasstunnel
 ```
 
-After a newer release and matching cask revision are published, users upgrade with:
+The app's own updater is the usual way to upgrade. To upgrade through Homebrew
+after a newer release and matching cask revision are published:
 
 ```bash
 brew update
-brew upgrade --cask datawithfurkan/glasstunnel/glasstunnel
+brew upgrade --cask --greedy datawithfurkan/glasstunnel/glasstunnel
 ```
 
 Cask updates use `scripts/update-homebrew-cask.sh`, which bumps the version and SHA256 in the recipe:
@@ -236,13 +308,15 @@ https://github.com/datawithfurkan/glasstunnel/releases/latest/download/Glasstunn
 ```
 
 Every GitHub Release should still include the immutable, versioned asset for
-auditing and Homebrew, plus the stable alias used by the website:
+auditing and Homebrew, the stable alias used by the website, and the signed
+update feed:
 
 ```bash
 pnpm release:mac:assets -- 0.1.0 dist/Glasstunnel-0.1.0.dmg
 gh release upload v0.1.0 \
   dist/Glasstunnel-0.1.0.dmg dist/Glasstunnel-0.1.0.dmg.sha256 \
-  dist/Glasstunnel.dmg dist/Glasstunnel.dmg.sha256
+  dist/Glasstunnel.dmg dist/Glasstunnel.dmg.sha256 \
+  dist/appcast.xml
 ```
 
 `pnpm qa:site-download-links` rejects versioned DMG links in the public site so
