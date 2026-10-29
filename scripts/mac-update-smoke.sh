@@ -3,6 +3,8 @@
 # or the real app: a throwaway app embeds and signs Sparkle the way
 # build-app.sh does, version 1.0.0 reads a signed feed served from 127.0.0.1,
 # downloads the EdDSA-signed 1.0.1 DMG, installs it over itself and relaunches.
+# A second copy reads the same feed with its release notes altered after signing
+# and must refuse it.
 #
 # Uses a temporary Ed25519 key file (never the Keychain), a temporary
 # directory, and the bundle ID io.glasstunnel.update-smoke. Nothing is left
@@ -38,7 +40,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-STATUS="$WORK/status.log"
 PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
 FEED_URL="http://127.0.0.1:$PORT/appcast.xml"
 mkdir -p "$WORK/www" "$WORK/build" "$WORK/installed"
@@ -62,7 +63,7 @@ swiftc -O -F "$(dirname "$SPARKLE_FRAMEWORK")" -framework Sparkle \
   "$ROOT_DIR/scripts/mac-update-smoke/main.swift" -o "$WORK/build/UpdateSmoke"
 
 make_app() {
-  local version="$1" app="$2"
+  local version="$1" app="$2" feed_url="$3" status="$4"
   mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks"
   cp "$WORK/build/UpdateSmoke" "$app/Contents/MacOS/UpdateSmoke"
   ditto "$SPARKLE_FRAMEWORK" "$app/Contents/Frameworks/Sparkle.framework"
@@ -82,12 +83,12 @@ make_app() {
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>LSUIElement</key><true/>
   <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
-  <key>SUFeedURL</key><string>$FEED_URL</string>
+  <key>SUFeedURL</key><string>$feed_url</string>
   <key>SUPublicEDKey</key><string>$PUBLIC_KEY</string>
   <key>SURequireSignedFeed</key><true/>
   <key>SUVerifyUpdateBeforeExtraction</key><true/>
   <key>SUEnableAutomaticChecks</key><false/>
-  <key>GTSmokeStatusFile</key><string>$STATUS</string>
+  <key>GTSmokeStatusFile</key><string>$status</string>
   <key>GTSmokeTargetVersion</key><string>$NEW_VERSION</string>
 </dict>
 </plist>
@@ -102,8 +103,9 @@ PLIST
   codesign --verify --deep --strict "$app"
 }
 
-make_app "$OLD_VERSION" "$WORK/installed/UpdateSmoke.app"
-make_app "$NEW_VERSION" "$WORK/build/dmg-root/UpdateSmoke.app"
+make_app "$OLD_VERSION" "$WORK/installed/UpdateSmoke.app" "$FEED_URL" "$WORK/status.log"
+make_app "$OLD_VERSION" "$WORK/tampered/UpdateSmoke.app" "http://127.0.0.1:$PORT/appcast-tampered.xml" "$WORK/tampered.log"
+make_app "$NEW_VERSION" "$WORK/build/dmg-root/UpdateSmoke.app" "$FEED_URL" "$WORK/status.log"
 ln -s /Applications "$WORK/build/dmg-root/Applications"
 hdiutil create -quiet -volname "UpdateSmoke" -srcfolder "$WORK/build/dmg-root" -ov -format UDZO "$WORK/www/UpdateSmoke-$NEW_VERSION.dmg"
 
@@ -120,6 +122,9 @@ GT_SPARKLE_PRIVATE_KEY_FILE="$PRIVATE_KEY_FILE" node "$ROOT_DIR/scripts/sparkle-
   --out "$WORK/www/appcast.xml" \
   --changelog "$WORK/CHANGELOG.md" \
   --download-url "http://127.0.0.1:$PORT/UpdateSmoke-$NEW_VERSION.dmg"
+sed 's/The update smoke installed this version./Altered after signing./' \
+  "$WORK/www/appcast.xml" >"$WORK/www/appcast-tampered.xml"
+cmp -s "$WORK/www/appcast.xml" "$WORK/www/appcast-tampered.xml" && { echo "Could not alter the feed copy." >&2; exit 1; }
 
 python3 -m http.server "$PORT" --bind 127.0.0.1 --directory "$WORK/www" >"$WORK/server.log" 2>&1 &
 SERVER_PID=$!
@@ -128,28 +133,49 @@ for _ in $(seq 1 50); do
   sleep 0.1
 done
 
-echo "==> Launching $OLD_VERSION and waiting for it to update itself"
-open -n "$WORK/installed/UpdateSmoke.app"
-deadline=$((SECONDS + TIMEOUT_SECONDS))
-while (( SECONDS < deadline )); do
-  if grep -q "^running $NEW_VERSION$" "$STATUS" 2>/dev/null; then
-    break
-  fi
-  if grep -q -E "^(error|no-update)" "$STATUS" 2>/dev/null; then
-    break
-  fi
-  sleep 1
-done
+# Launches an app copy and waits until it reaches the new version or gives up.
+run_app() {
+  local app="$1" status="$2" deadline=$((SECONDS + TIMEOUT_SECONDS))
+  open -n "$app"
+  while (( SECONDS < deadline )); do
+    grep -q -E "^(running $NEW_VERSION|error|no-update)" "$status" 2>/dev/null && break
+    sleep 1
+  done
+  # Let the finished instance quit before the next copy (same bundle ID) starts.
+  sleep 2
+  echo "--- $(basename "$status")"
+  cat "$status" 2>/dev/null || echo "(no status written)"
+}
 
-echo "--- status"
-cat "$STATUS" 2>/dev/null || echo "(no status written)"
-installed_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$WORK/installed/UpdateSmoke.app/Contents/Info.plist")"
-if grep -q "^running $NEW_VERSION$" "$STATUS" 2>/dev/null && [[ "$installed_version" == "$NEW_VERSION" ]]; then
-  codesign --verify --deep --strict "$WORK/installed/UpdateSmoke.app"
-  echo "Update smoke passed: $OLD_VERSION installed $NEW_VERSION from a signed feed and relaunched."
-  exit 0
+app_version() {
+  /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$1/Contents/Info.plist"
+}
+
+FAILED=0
+echo "==> A feed altered after signing must be refused"
+run_app "$WORK/tampered/UpdateSmoke.app" "$WORK/tampered.log"
+if [[ "$(app_version "$WORK/tampered/UpdateSmoke.app")" == "$OLD_VERSION" ]] && grep -q "^error" "$WORK/tampered.log"; then
+  echo "Refused the altered feed and stayed on $OLD_VERSION."
+else
+  echo "The altered feed was not refused." >&2
+  FAILED=1
 fi
-echo "Update smoke failed: the app on disk is $installed_version." >&2
-echo "--- feed server" >&2
-cat "$WORK/server.log" >&2 || true
-exit 1
+
+echo "==> $OLD_VERSION must install $NEW_VERSION from the signed feed and relaunch"
+run_app "$WORK/installed/UpdateSmoke.app" "$WORK/status.log"
+if grep -q "^running $NEW_VERSION$" "$WORK/status.log" 2>/dev/null \
+  && [[ "$(app_version "$WORK/installed/UpdateSmoke.app")" == "$NEW_VERSION" ]]; then
+  codesign --verify --deep --strict "$WORK/installed/UpdateSmoke.app"
+  echo "Installed $NEW_VERSION and relaunched."
+else
+  echo "The app on disk is $(app_version "$WORK/installed/UpdateSmoke.app")." >&2
+  FAILED=1
+fi
+
+if [[ "$FAILED" -ne 0 ]]; then
+  echo "Update smoke failed." >&2
+  echo "--- feed server" >&2
+  cat "$WORK/server.log" >&2 || true
+  exit 1
+fi
+echo "Update smoke passed."
