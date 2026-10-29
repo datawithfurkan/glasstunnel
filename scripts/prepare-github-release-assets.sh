@@ -11,16 +11,22 @@ usage() {
   cat <<'USAGE'
 Usage: bash scripts/prepare-github-release-assets.sh VERSION [DMG_PATH]
 
-Creates checksum files for the versioned DMG and a stable latest-download alias:
+Creates checksum files for the versioned DMG, a stable latest-download alias,
+and the signed update feed the Mac app checks:
 
   dist/Glasstunnel-VERSION.dmg
   dist/Glasstunnel-VERSION.dmg.sha256
   dist/Glasstunnel.dmg
   dist/Glasstunnel.dmg.sha256
+  dist/appcast.xml
 
-Upload all four files to the GitHub Release. The website links to:
+Upload all five files to the GitHub Release. The website links to:
 
   https://github.com/datawithfurkan/glasstunnel/releases/latest/download/Glasstunnel.dmg
+
+and glasstunnel.io/appcast.xml redirects to the latest release's appcast.xml.
+The feed is signed with the update key from the login Keychain (or
+GT_SPARKLE_PRIVATE_KEY_FILE); CHANGELOG.md must have a "## VERSION" section.
 
 Homebrew continues to use the immutable versioned DMG URL and SHA-256.
 USAGE
@@ -72,15 +78,20 @@ latest_sha="$(shasum -a 256 "$LATEST_DMG" | awk '{print $1}')"
 printf '%s  %s\n' "$versioned_sha" "$(basename "$VERSIONED_DMG")" >"$VERSIONED_DMG.sha256"
 printf '%s  %s\n' "$latest_sha" "$(basename "$LATEST_DMG")" >"$LATEST_DMG.sha256"
 
+APPCAST="$DIST_DIR/appcast.xml"
+node "$ROOT_DIR/scripts/sparkle-appcast.mjs" "$VERSION" "$VERSIONED_DMG" --out "$APPCAST"
+
 echo "Prepared GitHub Release assets:"
 echo "  $VERSIONED_DMG"
 echo "  $VERSIONED_DMG.sha256"
 echo "  $LATEST_DMG"
 echo "  $LATEST_DMG.sha256"
+echo "  $APPCAST"
 echo
 echo "SHA-256: $versioned_sha"
 echo
 echo "Upload command:"
 echo "  gh release upload v$VERSION \\"
 echo "    $VERSIONED_DMG $VERSIONED_DMG.sha256 \\"
-echo "    $LATEST_DMG $LATEST_DMG.sha256"
+echo "    $LATEST_DMG $LATEST_DMG.sha256 \\"
+echo "    $APPCAST"

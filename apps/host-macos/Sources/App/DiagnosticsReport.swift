@@ -7,8 +7,9 @@ struct AppVersionInfo: Equatable {
     let version: String
     let build: String
 
+    /// Release builds use the version as their build number, so it shows once.
     var displayValue: String {
-        "\(version) (\(build))"
+        build == version ? version : "\(version) (\(build))"
     }
 
     static let releasesURL = URL(string: "https://github.com/datawithfurkan/glasstunnel/releases")!

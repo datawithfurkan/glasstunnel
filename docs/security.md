@@ -469,6 +469,30 @@ account, the Mac app version when the Mac reported one at signaling sign-in,
 and the first 12 characters of the device id (a value derived from the Mac's
 public key, not a secret) with a copy button for the whole id.
 
+## App Updates
+
+Release builds of the Mac app (0.1.11 and later) update themselves with
+Sparkle. Once a day, and when someone chooses **Check for Updates…**, the app
+fetches `https://glasstunnel.io/appcast.xml`, which redirects to the latest
+GitHub Release's `appcast.xml`. The request carries the app's version in its
+user agent; Sparkle's system profiling is off, so no hardware or usage details
+are sent.
+
+The app installs an update only when:
+
+- the feed is signed with the project's update key (`SURequireSignedFeed`);
+- the DMG's EdDSA signature matches that key, checked before the DMG is opened
+  (`SUVerifyUpdateBeforeExtraction`);
+- the app inside passes the usual code-signing checks. Releases are Developer
+  ID signed and notarized.
+
+The update key's public half ships in the app (`SUPublicEDKey`); the private
+half stays in the maintainer's Keychain and an offline backup. Anyone holding it
+could publish an update that installs, so it is treated like the Developer ID
+certificate. Development and local builds carry no public key and never update
+themselves. Installing an update needs someone to click **Install Update**,
+unless they turned on automatic installation in Settings.
+
 ## Logging And Telemetry
 
 The Mac uses Apple's unified logging for operational events. The PWA can write

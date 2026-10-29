@@ -19,6 +19,8 @@ struct SettingsContentPolicy {
         "Updates",
         "Installed version",
         "Check for Updates",
+        "Check automatically",
+        "Install automatically",
         "Advanced",
     ]
 
@@ -43,7 +45,6 @@ struct SettingsView: View {
     @State private var customRedactionPatterns: String = ""
     @State private var showAdvancedSettings = false
     @State private var diagnosticsCopyFeedback: DiagnosticsCopyFeedback?
-    @State private var updateActionError: String?
 
     var body: some View {
         ScrollView {
@@ -130,29 +131,7 @@ struct SettingsView: View {
             GlasstunnelGroupHeader(title: "Updates")
             GlasstunnelRowDivider(leadingInset: 0)
 
-            GlasstunnelListRow(
-                title: "Installed version",
-                subtitle: AppVersionInfo.current().displayValue,
-                systemImage: "arrow.triangle.2.circlepath",
-                iconColor: GlasstunnelDesign.accent
-            ) {
-                Button("Check for Updates") {
-                    updateActionError = NSWorkspace.shared.open(AppVersionInfo.releasesURL)
-                        ? nil
-                        : "Could not open the Glasstunnel Releases page."
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .pointingHandCursor()
-            }
-
-            if let updateActionError {
-                Text(updateActionError)
-                    .font(.caption)
-                    .foregroundStyle(GlasstunnelDesign.danger)
-                    .padding(.horizontal, 64)
-                    .padding(.bottom, 12)
-            }
+            UpdatesSettings(updater: AppUpdater.shared)
         }
     }
 
@@ -463,6 +442,82 @@ private struct LaunchAtLoginSetting: View {
             }
         }
         .onAppear { controller.refresh() }
+    }
+}
+private struct UpdatesSettings: View {
+    @ObservedObject var updater: AppUpdater
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            GlasstunnelListRow(
+                title: "Installed version",
+                subtitle: versionLine,
+                systemImage: "arrow.triangle.2.circlepath",
+                iconColor: GlasstunnelDesign.accent
+            ) {
+                Button(updater.updatesInApp ? AppUpdater.menuTitle : "View Releases") {
+                    updater.checkForUpdates()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(!updater.checkIsAvailable)
+                .pointingHandCursor(updater.checkIsAvailable)
+            }
+
+            if updater.updatesInApp {
+                GlasstunnelRowDivider()
+
+                GlasstunnelListRow(
+                    title: "Check automatically",
+                    subtitle: "Look for a new version once a day and offer to install it.",
+                    systemImage: "clock.arrow.circlepath",
+                    iconColor: GlasstunnelDesign.muted
+                ) {
+                    Toggle(
+                        "Check automatically",
+                        isOn: Binding(
+                            get: { updater.automaticallyChecksForUpdates },
+                            set: { updater.setAutomaticallyChecksForUpdates($0) }
+                        )
+                    )
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .pointingHandCursor()
+                }
+                GlasstunnelRowDivider()
+
+                GlasstunnelListRow(
+                    title: "Install automatically",
+                    subtitle: "Download new versions in the background and install them the next time Glasstunnel quits.",
+                    systemImage: "arrow.down.circle",
+                    iconColor: GlasstunnelDesign.muted
+                ) {
+                    Toggle(
+                        "Install automatically",
+                        isOn: Binding(
+                            get: { updater.automaticallyDownloadsUpdates },
+                            set: { updater.setAutomaticallyDownloadsUpdates($0) }
+                        )
+                    )
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .disabled(!updater.automaticallyChecksForUpdates)
+                    .pointingHandCursor(updater.automaticallyChecksForUpdates)
+                }
+            }
+        }
+    }
+
+    private var versionLine: String {
+        let version = AppVersionInfo.current().displayValue
+        switch updater.mode {
+        case .inApp:
+            return "\(version) · \(AppUpdateCopy.lastChecked(updater.lastUpdateCheckDate))"
+        case .releasesPage(let reason):
+            return "\(version) · \(reason)"
+        }
     }
 }
 #endif

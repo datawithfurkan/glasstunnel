@@ -69,11 +69,13 @@ brew install --cask datawithfurkan/glasstunnel/glasstunnel
 open -a Glasstunnel
 ```
 
-To install a newer published build later:
+Glasstunnel 0.1.11 and later update themselves: choose **Glasstunnel > Check
+for Updates…** (it also checks once a day), then **Install Update**. Older
+versions update once by hand, from the latest release or with Homebrew:
 
 ```bash
 brew update
-brew upgrade --cask datawithfurkan/glasstunnel/glasstunnel
+brew upgrade --cask --greedy datawithfurkan/glasstunnel/glasstunnel
 ```
 
 After the Mac app opens:
