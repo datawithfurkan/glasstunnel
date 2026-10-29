@@ -19,6 +19,9 @@ let package = Package(
         // WebRTC is consumed as a prebuilt XCFramework via stasel/WebRTC.
         // Pinned to a recent M-series release compatible with macOS 13+.
         .package(url: "https://github.com/stasel/WebRTC.git", from: "125.0.0"),
+        // Sparkle checks glasstunnel.io/appcast.xml and installs signed,
+        // notarized releases in place. Pinned exactly; bump deliberately.
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.0"),
     ],
     targets: [
         .target(
@@ -69,6 +72,7 @@ let package = Package(
                 "GTInput",
                 "GTSecurity",
                 "GTAdapters",
+                .product(name: "Sparkle", package: "Sparkle"),
             ],
             path: "Sources/App",
             resources: [

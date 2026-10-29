@@ -29,6 +29,18 @@
         <key>NSAllowsLocalNetworking</key>
         <true/>
     </dict>
+    <!-- In-app updates (Sparkle). build-app.sh adds SUPublicEDKey to release
+         builds only; without it the app sends people to GitHub Releases. -->
+    <key>SUFeedURL</key>
+    <string>https://glasstunnel.io/appcast.xml</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
+    <key>SUScheduledCheckInterval</key>
+    <integer>86400</integer>
+    <key>SURequireSignedFeed</key>
+    <true/>
+    <key>SUVerifyUpdateBeforeExtraction</key>
+    <true/>
     <key>NSAccessibilityUsageDescription</key>
     <string>Glasstunnel uses Accessibility to target the chat input fields of your local AI coding agents so the prompts you type on your phone land in the right place.</string>
     <key>NSScreenCaptureUsageDescription</key>

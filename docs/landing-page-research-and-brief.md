@@ -50,8 +50,8 @@ feature list.
 - The project is Apache 2.0 and can be self-hosted.
 
 Do not claim that every coding-agent integration is release-ready, that no
-metadata leaves the device, that the app updates itself, or that redaction can
-catch every secret.
+metadata leaves the device, that updates install silently or before 0.1.11, or
+that redaction can catch every secret.
 
 ## 3. Current-site audit
 

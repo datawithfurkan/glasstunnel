@@ -5,6 +5,10 @@
 #   GT_DEVELOPER_ID   "Developer ID Application: YOUR NAME (TEAMID)"
 #   GT_NOTARY_PROFILE notarytool keychain profile name (default: glasstunnel-notary)
 #
+# In-app updates (Sparkle): Developer ID builds embed the public EdDSA key from
+# apps/host-macos/Metadata/sparkle-public-ed-key.txt so the app can verify
+# updates. Other builds get no key and send people to GitHub Releases instead.
+#
 # Usage: ./scripts/build-app.sh [--ad-hoc|--local-sign] [--skip-notarize] [version]
 set -euo pipefail
 
@@ -19,6 +23,9 @@ DEVELOPER_ID="${GT_DEVELOPER_ID:-}"
 LOCAL_SIGN_IDENTITY="${GT_LOCAL_SIGN_IDENTITY:-Glasstunnel Local Development}"
 NOTARY_PROFILE="${GT_NOTARY_PROFILE:-glasstunnel-notary}"
 ENTITLEMENTS="$HOST/Metadata/entitlements.plist"
+SPARKLE_PUBLIC_KEY_FILE="$HOST/Metadata/sparkle-public-ed-key.txt"
+SPARKLE_PUBLIC_ED_KEY="${GT_SPARKLE_PUBLIC_ED_KEY:-}"
+SPARKLE_FEED_URL="${GT_SPARKLE_FEED_URL:-}"
 RELEASE_SCRATCH="$HOST/.build/glasstunnel-release"
 REQUIRED_ARCHS=(arm64 x86_64)
 
@@ -39,6 +46,10 @@ Environment:
   GT_LOCAL_SIGN_IDENTITY Stable local signing identity. Defaults to Glasstunnel Local Development.
                          Local mode prepares and unlocks its private keychain automatically.
   GT_NOTARY_PROFILE     notarytool keychain profile name. Defaults to glasstunnel-notary.
+  GT_SPARKLE_PUBLIC_ED_KEY  Update-signing public key for this build. Developer ID builds
+                         default to apps/host-macos/Metadata/sparkle-public-ed-key.txt;
+                         other modes only get one when this is set (update smoke tests).
+  GT_SPARKLE_FEED_URL   Replaces the update feed URL (update smoke tests only).
 USAGE
 }
 
@@ -96,6 +107,21 @@ if [[ "$SIGNING_MODE" == "developer-id" ]]; then
   fi
 fi
 
+if [[ "$SIGNING_MODE" == "developer-id" && -z "$SPARKLE_PUBLIC_ED_KEY" ]]; then
+  if [[ -f "$SPARKLE_PUBLIC_KEY_FILE" ]]; then
+    SPARKLE_PUBLIC_ED_KEY="$(tr -d '[:space:]' <"$SPARKLE_PUBLIC_KEY_FILE")"
+  fi
+  if [[ -z "$SPARKLE_PUBLIC_ED_KEY" ]]; then
+    echo "Release builds need the in-app update public key in $SPARKLE_PUBLIC_KEY_FILE." >&2
+    echo "Create the key pair once with Sparkle's generate_keys (see docs/mac-distribution.md)." >&2
+    exit 1
+  fi
+fi
+if [[ -n "$SPARKLE_PUBLIC_ED_KEY" && ! "$SPARKLE_PUBLIC_ED_KEY" =~ ^[A-Za-z0-9+/]{43}=$ ]]; then
+  echo "The update public key must be a base64 Ed25519 key (44 characters)." >&2
+  exit 1
+fi
+
 if [[ "$SIGNING_MODE" == "local" ]]; then
   LOCAL_SIGN_HELPER="$REPO/scripts/ensure-dev-codesign-identity.sh"
   if [[ ! -x "$LOCAL_SIGN_HELPER" ]]; then
@@ -138,15 +164,21 @@ for arch in "${REQUIRED_ARCHS[@]}"; do
   build_dir="$(swift build -c release --arch "$arch" --scratch-path "$scratch" --show-bin-path)"
   [[ -x "$build_dir/GlassTunnel" ]] || { echo "$arch release binary not found at $build_dir/GlassTunnel" >&2; exit 1; }
   [[ -d "$build_dir/WebRTC.framework" ]] || { echo "$arch WebRTC.framework not found at $build_dir" >&2; exit 1; }
+  [[ -d "$build_dir/Sparkle.framework" ]] || { echo "$arch Sparkle.framework not found at $build_dir" >&2; exit 1; }
   BUILD_DIRS+=("$build_dir")
 done
 
 ARM_BUILD_DIR="${BUILD_DIRS[0]}"
 X86_BUILD_DIR="${BUILD_DIRS[1]}"
 WEBRTC_SOURCE="$ARM_BUILD_DIR/WebRTC.framework"
+SPARKLE_SOURCE="$ARM_BUILD_DIR/Sparkle.framework"
 for arch in "${REQUIRED_ARCHS[@]}"; do
   if [[ " $(/usr/bin/lipo -archs "$WEBRTC_SOURCE/WebRTC") " != *" $arch "* ]]; then
     echo "WebRTC.framework is missing required architecture $arch." >&2
+    exit 1
+  fi
+  if [[ " $(/usr/bin/lipo -archs "$SPARKLE_SOURCE/Versions/B/Sparkle") " != *" $arch "* ]]; then
+    echo "Sparkle.framework is missing required architecture $arch." >&2
     exit 1
   fi
 done
@@ -161,6 +193,11 @@ mkdir -p "$DIST/$APP_NAME/Contents/Frameworks"
   "$X86_BUILD_DIR/GlassTunnel" \
   -output "$DIST/$APP_NAME/Contents/MacOS/GlassTunnel"
 cp -R "$WEBRTC_SOURCE" "$DIST/$APP_NAME/Contents/Frameworks/"
+# ditto keeps the framework's symlinks, which its signature depends on. The
+# app is not sandboxed, so Sparkle's XPC services are never used: drop them.
+SPARKLE_DEST="$DIST/$APP_NAME/Contents/Frameworks/Sparkle.framework"
+ditto "$SPARKLE_SOURCE" "$SPARKLE_DEST"
+rm -rf "$SPARKLE_DEST/Versions/B/XPCServices" "$SPARKLE_DEST/XPCServices"
 
 # Package any dynamically linked SwiftPM libraries as universal binaries.
 shopt -s nullglob
@@ -180,6 +217,14 @@ shopt -u nullglob
 cp "$HOST/Metadata/Info.plist" "$DIST/$APP_NAME/Contents/Info.plist"
 cp "$HOST/Metadata/AppIcon.icns" "$DIST/$APP_NAME/Contents/Resources/AppIcon.icns"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$DIST/$APP_NAME/Contents/Info.plist" || true
+# Sparkle compares CFBundleVersion, so it must grow with every release.
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$DIST/$APP_NAME/Contents/Info.plist"
+if [[ -n "$SPARKLE_PUBLIC_ED_KEY" ]]; then
+  /usr/libexec/PlistBuddy -c "Add :SUPublicEDKey string $SPARKLE_PUBLIC_ED_KEY" "$DIST/$APP_NAME/Contents/Info.plist"
+fi
+if [[ -n "$SPARKLE_FEED_URL" ]]; then
+  /usr/libexec/PlistBuddy -c "Set :SUFeedURL $SPARKLE_FEED_URL" "$DIST/$APP_NAME/Contents/Info.plist"
+fi
 /usr/libexec/PlistBuddy -c "Add :GTSourceCommit string $SOURCE_COMMIT" "$DIST/$APP_NAME/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :GTSourceDirty bool $SOURCE_DIRTY" "$DIST/$APP_NAME/Contents/Info.plist"
 
@@ -215,6 +260,13 @@ echo "==> Signing embedded code"
 codesign --force --options runtime "${TIMESTAMP_ARGS[@]}" \
   --sign "$SIGN_IDENTITY" \
   "$DIST/$APP_NAME/Contents/Frameworks/WebRTC.framework"
+# Sparkle's helpers first, then the framework that contains them.
+for sparkle_part in \
+  "$SPARKLE_DEST/Versions/B/Autoupdate" \
+  "$SPARKLE_DEST/Versions/B/Updater.app" \
+  "$SPARKLE_DEST"; do
+  codesign --force --options runtime "${TIMESTAMP_ARGS[@]}" --sign "$SIGN_IDENTITY" "$sparkle_part"
+done
 shopt -s nullglob
 for dylib in "$DIST/$APP_NAME/Contents/Frameworks"/*.dylib; do
   codesign --force --options runtime "${TIMESTAMP_ARGS[@]}" --sign "$SIGN_IDENTITY" "$dylib"
@@ -237,10 +289,16 @@ codesign "${APP_CODESIGN_ARGS[@]}" \
 codesign --verify --deep --strict --verbose=2 "$DIST/$APP_NAME"
 codesign --verify --strict --verbose=2 \
   "$DIST/$APP_NAME/Contents/Frameworks/WebRTC.framework"
+codesign --verify --deep --strict --verbose=2 "$SPARKLE_DEST"
 
 if ! otool -L "$DIST/$APP_NAME/Contents/MacOS/GlassTunnel" | \
   grep -F '@rpath/WebRTC.framework/WebRTC' >/dev/null; then
   echo "Packaged executable does not link the embedded WebRTC framework through @rpath." >&2
+  exit 1
+fi
+if ! otool -L "$DIST/$APP_NAME/Contents/MacOS/GlassTunnel" | \
+  grep -F '@rpath/Sparkle.framework/Versions/B/Sparkle' >/dev/null; then
+  echo "Packaged executable does not link the embedded Sparkle framework through @rpath." >&2
   exit 1
 fi
 if ! otool -l "$DIST/$APP_NAME/Contents/MacOS/GlassTunnel" | \
@@ -251,6 +309,11 @@ fi
 
 echo "==> Packaged architectures: $(/usr/bin/lipo -archs "$DIST/$APP_NAME/Contents/MacOS/GlassTunnel")"
 echo "==> Embedded WebRTC architectures: $(/usr/bin/lipo -archs "$DIST/$APP_NAME/Contents/Frameworks/WebRTC.framework/WebRTC")"
+if [[ -n "$SPARKLE_PUBLIC_ED_KEY" ]]; then
+  echo "==> In-app updates: on (feed $(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$DIST/$APP_NAME/Contents/Info.plist"))"
+else
+  echo "==> In-app updates: off (no update public key; the app links to GitHub Releases)"
+fi
 
 echo "==> Creating DMG"
 rm -f "$DIST/$DMG_NAME"

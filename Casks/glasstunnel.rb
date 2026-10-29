@@ -8,6 +8,9 @@ cask "glasstunnel" do
   desc "See your local AI coding agents from your phone"
   homepage "https://glasstunnel.io/"
 
+  # The app updates itself in place (Sparkle), so `brew upgrade` leaves it alone
+  # unless asked with --greedy.
+  auto_updates true
   depends_on macos: :ventura
 
   app "Glasstunnel.app"
