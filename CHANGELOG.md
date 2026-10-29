@@ -5,6 +5,21 @@ versioning after the first public beta; pre-release compatibility may still chan
 
 ## Unreleased
 
+### Getting to the web app
+
+- glasstunnel.io has a **Sign in** button at the top right that opens the web
+  app at app.glasstunnel.io. On a phone it sits beside the menu button, and the
+  hero adds "Already installed? Sign in at app.glasstunnel.io".
+- The Mac app has an **Open on Phone** button in its header. It shows a QR code
+  for the web app, the account to sign in with, and the Mac to choose, with
+  Open in Browser and Copy Link. The Access page has the same QR code, the menu
+  bar has **Open Web App**, and the Mac's sign-in screen says the next step is
+  signing in on the phone with the same account.
+- The web app's sign-in screen says to use the same account as the Mac app and
+  links to installing it, for people who arrive there first.
+- The site and web app changes are live without a Mac update; the Mac buttons
+  ship with the next Mac release.
+
 ### Access
 
 - Signed in means connected, like a private network: any browser signed in to

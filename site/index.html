@@ -46,6 +46,12 @@
         <span>Glasstunnel</span>
       </a>
 
+      <!-- Phones get the web app's sign-in beside the menu button; wider screens show it in the nav. -->
+      <a class="button button-small button-dark header-signin" href="https://app.glasstunnel.io">
+        <i data-lucide="log-in" aria-hidden="true"></i>
+        Sign in
+      </a>
+
       <button class="nav-toggle icon-button" type="button" aria-expanded="false" aria-controls="site-nav" data-nav-toggle>
         <i data-lucide="menu" aria-hidden="true"></i>
         <span class="sr-only">Open navigation</span>
@@ -59,6 +65,10 @@
         <a class="nav-github" href="https://github.com/datawithfurkan/glasstunnel" target="_blank" rel="noopener noreferrer" aria-label="Glasstunnel on GitHub">
           <i data-lucide="github" aria-hidden="true"></i>
           <span>GitHub</span>
+        </a>
+        <a class="button button-small button-dark nav-signin" href="https://app.glasstunnel.io">
+          <i data-lucide="log-in" aria-hidden="true"></i>
+          Sign in
         </a>
         <a class="button button-small button-light" href="https://github.com/datawithfurkan/glasstunnel/releases/latest/download/Glasstunnel.dmg" target="_blank" rel="noopener noreferrer">
           <i data-lucide="download" aria-hidden="true"></i>
@@ -88,6 +98,11 @@
           <i data-lucide="github" aria-hidden="true"></i> View source
         </a>
       </div>
+
+      <p class="hero2-signin">
+        Already installed?
+        <a href="https://app.glasstunnel.io">Sign in at app.glasstunnel.io <i data-lucide="arrow-right" aria-hidden="true"></i></a>
+      </p>
 
       <p class="hero2-meta">macOS 14+ · Signed &amp; notarized · Latest beta · Apache 2.0</p>
     </div>
@@ -475,7 +490,7 @@
             <ol>
               <li><span>1</span><div><strong>Install Glasstunnel</strong><small>Use Homebrew or download the notarized DMG.</small></div></li>
               <li><span>2</span><div><strong>Allow access and sign in</strong><small>Grant Screen Recording and Accessibility once.</small></div></li>
-              <li><span>3</span><div><strong>Open it on your phone</strong><small>Visit app.glasstunnel.io and use the same account.</small></div></li>
+              <li><span>3</span><div><strong>Open it on your phone</strong><small>Visit <a class="install-app-link" href="https://app.glasstunnel.io">app.glasstunnel.io</a> and sign in with the same account.</small></div></li>
             </ol>
           </div>
           <div class="install-terminal reveal">
@@ -487,7 +502,7 @@ brew install --cask datawithfurkan/glasstunnel/glasstunnel</code></pre>
             </button>
             <div class="install-buttons">
               <a class="button button-light" href="https://github.com/datawithfurkan/glasstunnel/releases/latest/download/Glasstunnel.dmg" target="_blank" rel="noopener noreferrer"><i data-lucide="download"></i>Download DMG</a>
-              <a class="button button-dark" href="https://app.glasstunnel.io" target="_blank" rel="noopener noreferrer"><i data-lucide="smartphone"></i>Open web app</a>
+              <a class="button button-dark" href="https://app.glasstunnel.io"><i data-lucide="log-in"></i>Sign in to the web app</a>
             </div>
           </div>
         </div>

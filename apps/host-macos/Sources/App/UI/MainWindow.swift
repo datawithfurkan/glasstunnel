@@ -71,6 +71,8 @@ struct MainWindow: View {
                 tone: headerTone(for: appState.sessionManagerState)
             )
 
+            OpenOnPhoneButton()
+
             Button {
                 profilePopoverPresented.toggle()
             } label: {
@@ -348,6 +350,17 @@ private struct AccountLinkGateView: View {
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: 360)
                 }
+
+                Label(
+                    PhoneAccessContent.signInNextStep(
+                        address: PhoneAccessContent.displayAddress(for: appState.webAppURL)
+                    ),
+                    systemImage: "iphone"
+                )
+                .font(.caption)
+                .foregroundStyle(GlasstunnelDesign.muted)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 360)
             }
             .frame(maxWidth: 420)
 
