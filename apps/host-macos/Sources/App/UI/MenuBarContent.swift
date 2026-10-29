@@ -37,6 +37,16 @@ struct MenuBarContent: View {
             .pointingHandCursor()
 
             Button {
+                NSWorkspace.shared.open(appState.webAppURL)
+            } label: {
+                Label("Open Web App", systemImage: "iphone")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            .pointingHandCursor()
+            .help("Open \(PhoneAccessContent.displayAddress(for: appState.webAppURL)), where your phone signs in")
+
+            Button {
                 openMainWindow(tab: .access)
             } label: {
                 Label("Open Access", systemImage: AppNavigationTab.access.systemImage)

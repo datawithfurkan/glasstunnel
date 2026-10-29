@@ -189,6 +189,11 @@ svg {
   margin-left: auto;
 }
 
+/* The phone-width sign-in button that sits beside the menu toggle. */
+.button.header-signin {
+  display: none;
+}
+
 .icon-button {
   border: 0;
   cursor: pointer;
@@ -1735,6 +1740,18 @@ svg {
   font-size: 12px;
 }
 
+.install-app-link {
+  color: var(--text);
+  font-weight: 650;
+  text-decoration: underline;
+  text-decoration-color: rgba(253, 252, 252, 0.35);
+  text-underline-offset: 3px;
+}
+
+.install-app-link:hover {
+  text-decoration-color: currentColor;
+}
+
 .install-terminal {
   position: relative;
   overflow: hidden;
@@ -2050,6 +2067,20 @@ svg {
 
   .site-nav .button {
     margin-top: 6px;
+  }
+
+  .button.header-signin {
+    display: inline-flex;
+    margin-left: auto;
+    padding: 0 13px;
+  }
+
+  .header-signin + .nav-toggle {
+    margin-left: 10px;
+  }
+
+  .site-nav .nav-signin {
+    display: none;
   }
 
   .hero {

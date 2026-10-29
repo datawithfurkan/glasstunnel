@@ -8,6 +8,7 @@ struct AccessView: View {
     @State private var accessError: String? = nil
     @State private var isPerformingAccountAction = false
     @State private var copiedWebAppURL = false
+    @State private var showingPhoneAccess = false
     @State private var showingSignOutConfirmation = false
 
     var body: some View {
@@ -65,17 +66,30 @@ struct AccessView: View {
 
             GlasstunnelListRow(
                 title: "Ready for remote access",
-                subtitle: "Open the web app on any signed-in device.",
+                subtitle: "Open \(PhoneAccessContent.displayAddress(for: appState.webAppURL)) on your phone and sign in with this account.",
                 systemImage: "checkmark.seal.fill",
                 iconColor: GlasstunnelDesign.success
             ) {
                 HStack(spacing: 8) {
                     Button {
+                        showingPhoneAccess.toggle()
+                    } label: {
+                        Label("Show QR Code", systemImage: "qrcode")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .pointingHandCursor()
+                    .popover(isPresented: $showingPhoneAccess, arrowEdge: .bottom) {
+                        PhoneAccessPopover()
+                            .environmentObject(appState)
+                    }
+
+                    Button {
                         NSWorkspace.shared.open(appState.webAppURL)
                     } label: {
                         Label("Open Web App", systemImage: "safari")
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.bordered)
                     .controlSize(.small)
                     .pointingHandCursor()
 

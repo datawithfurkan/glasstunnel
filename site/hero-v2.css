@@ -94,6 +94,17 @@
 .btn2-ghost { background: rgba(253,252,252,.04); color: var(--g-text); border: 1px solid var(--g-line); }
 .btn2-ghost:hover { background: rgba(253,252,252,.08); }
 
+.hero2-signin {
+  margin: 0 0 var(--s3); font-size: var(--t-ui); line-height: 1.5; color: var(--g-muted);
+}
+.hero2-signin a {
+  color: var(--g-text); font-weight: 600; text-decoration: underline;
+  text-decoration-color: rgba(253,252,252,.3); text-underline-offset: 3px; white-space: nowrap;
+}
+.hero2-signin a:hover { text-decoration-color: currentColor; }
+.hero2-signin a:focus-visible { outline: 2px solid var(--g-accent); outline-offset: 3px; border-radius: 2px; }
+.hero2-signin svg { display: inline-block; width: 14px; height: 14px; vertical-align: -2px; }
+
 .hero2-meta {
   font-family: var(--mono); font-size: 10.5px; letter-spacing: .06em;
   color: #6f6b6b; margin: 0;

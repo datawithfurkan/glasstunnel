@@ -185,7 +185,7 @@ export function AuthScreen() {
 
   const heading = resetFlow
     ? passwordResetHeading(resetFlow)
-    : { title: 'Open your agents', detail: 'Sign in once. Your linked Macs and coding agents appear automatically.' };
+    : { title: 'Open your agents', detail: SIGN_IN_COPY.detail };
 
   return (
     <div className={authScreenShellClassName()}>
@@ -384,12 +384,29 @@ export function AuthScreen() {
           </div>
         )}
 
+        {!resetFlow && (
+          <p className="gt-muted mt-6 text-center text-sm">
+            {SIGN_IN_COPY.noMacAppPrompt}{' '}
+            <a className="font-semibold text-white underline underline-offset-4" href={SIGN_IN_COPY.installUrl}>
+              {SIGN_IN_COPY.installAction}
+            </a>
+          </p>
+        )}
+
           </div>
         </div>
       </div>
     </div>
   );
 }
+
+/** Tells someone who lands here first that the phone signs in to the same account as the Mac app. */
+export const SIGN_IN_COPY = {
+  detail: 'Use the same account as Glasstunnel on your Mac. Your Macs and coding agents appear automatically.',
+  noMacAppPrompt: 'No Mac app yet?',
+  installAction: 'Install Glasstunnel on your Mac',
+  installUrl: 'https://glasstunnel.io/#install',
+} as const;
 
 type SignInField = 'email' | 'password';
 
