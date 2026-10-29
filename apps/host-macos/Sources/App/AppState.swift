@@ -242,7 +242,9 @@ final class AppState: ObservableObject {
             sessionManagerState: sessionManagerState
         )
     }
-    var hostStatusLabel: String {
+    var hostStatusLabel: String { Self.hostStatusLabel(for: sessionManagerState) }
+
+    nonisolated static func hostStatusLabel(for sessionManagerState: String) -> String {
         switch sessionManagerState {
         case "connected":
             return "Online"

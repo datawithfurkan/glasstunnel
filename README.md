@@ -70,7 +70,8 @@ open -a Glasstunnel
 ```
 
 Glasstunnel 0.1.11 and later update themselves: choose **Glasstunnel > Check
-for Updates…** (it also checks once a day), then **Install Update**. Older
+for Updates…** or the same item under the menu bar icon (it also checks once a
+day), then **Install Update**. Older
 versions update once by hand, from the latest release or with Homebrew:
 
 ```bash
@@ -87,6 +88,9 @@ After the Mac app opens:
    not a substitute for protecting that account and browser profile.
 5. Select your linked Mac and open an available remote app or Mac Screen.
 6. Add the PWA to your Home Screen if your browser offers it.
+
+Glasstunnel keeps a menu bar icon. Closing its window keeps the Mac available to
+your phone; choose **Quit Glasstunnel** under the menu bar icon to go offline.
 
 ## Develop locally
 

@@ -42,7 +42,9 @@ Each module has a clear purpose:
 - **GTCapture** - `ScreenCaptureKit` wrappers, window enumeration, frame streaming.
 - **GTInput** - `CGEvent` keyboard synthesis + Accessibility-driven input targeting.
 - **GTAdapters** - `AgentAdapter` protocol and Cursor / Claude Code / Codex / OpenCode / Mirror adapters.
-- **GlassTunnelApp** - SwiftUI entry point, menu bar, permissions onboarding, Workspace / Access / Settings UI.
+- **GlassTunnelApp** - SwiftUI entry point, menu bar icon and popover (`MenuBarController`, `MenuBarContent`), permissions onboarding, Workspace / Access / Settings UI.
+
+Closing the main window keeps the host running: the Dock icon and app menu hide, and the menu bar icon reopens the window or quits.
 
 ## Required permissions
 

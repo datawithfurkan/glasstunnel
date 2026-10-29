@@ -25,6 +25,8 @@ Before finishing any feature or bug fix, answer these questions in code or docum
 - Does a reconnect, cache, relay, auth, or adapter change affect what the user sees after closing and reopening mobile Safari/Chrome?
 - Does this introduce internal wording that should be hidden from normal users?
 - Does this require updated screenshots/manual test notes because the expected UI changed?
+- Does the menu bar popover show this control or state too? Keep it in step with the main window.
+- Does this flow need the main window open? The host keeps running with the window closed, so a request a phone waits on must also reach the user from the menu bar, or reopen the window.
 
 If the answer is yes, update the relevant UI in the same pull/commit.
 
@@ -44,6 +46,8 @@ When editing the Mac app:
 - Check whether `apps/mobile-pwa/src/agents/`, `apps/mobile-pwa/src/auth/`, or `apps/mobile-pwa/src/lib/store.ts` also needs a state or wording update.
 - If a Mac action can be started remotely, the web UI must show immediate pending feedback and then wait for Mac confirmation.
 - If a Mac action can fail, the web UI must show a clear failure state and a retry path.
+- The menu bar popover (`apps/host-macos/Sources/App/UI/MenuBarContent.swift`, hosted by `MenuBarController`) repeats host status, permissions, Open Workspace, Open Web App, Open Access, Read-only mode, Keep Mac awake, the access device count, Check for Updates…, and Quit Glasstunnel. When one of those changes in the main window, change it in the popover in the same pull request.
+- Closing the main window does not stop the host. Glasstunnel stays online from the menu bar, hides its Dock icon and app menu until the window opens again, and goes offline only on Quit. Do not word Mac or web UI as if closing the window disconnects the phone.
 
 When editing the web app:
 

@@ -10,12 +10,15 @@ import AppKit
 struct GlassTunnelAppEntry: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
-    // Settings scene acts as a harmless placeholder so the SwiftUI runtime
-    // has something to host. The main window is created imperatively in
-    // AppDelegate via NSHostingView - this sidesteps the MenuBarExtra +
-    // WindowGroup interaction where SwiftUI refuses to auto-open a window.
+    // A menu bar extra that is never inserted gives the SwiftUI runtime a
+    // scene to host and the app menu commands to hang on, and has no window.
+    // (A placeholder Settings scene opened an empty window at launch once the
+    // app was built with the macOS 27 SDK.) The main window (NSHostingView)
+    // and the menu bar icon (MenuBarController) are created imperatively in
+    // AppDelegate - this sidesteps the MenuBarExtra + WindowGroup interaction
+    // where SwiftUI refuses to auto-open a window.
     var body: some Scene {
-        Settings {
+        MenuBarExtra("Glasstunnel", isInserted: .constant(false)) {
             EmptyView()
         }
         .commands {
@@ -45,9 +48,10 @@ private struct CheckForUpdatesCommand: View {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var appState: AppState?
     private var mainWindow: NSWindow?
+    private var menuBar: MenuBarController?
 
     nonisolated func applicationDidFinishLaunching(_ notification: Notification) {
         MainActor.assumeIsolated {
@@ -55,6 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Starts Sparkle's daily check in release builds.
             _ = AppUpdater.shared
             createMainWindow()
+            createMenuBar()
             NSApp.activate(ignoringOtherApps: true)
         }
     }
@@ -72,7 +77,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated {
             appState?.refreshPermissions()
             appState?.launchAtLogin.refresh()
-            ensureMainWindowVisible()
         }
     }
 
@@ -82,8 +86,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // The host keeps serving phones from the menu bar after the window closes.
     nonisolated func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
+        BackgroundPresencePolicy.quitsWhenWindowCloses
+    }
+
+    nonisolated func windowWillClose(_ notification: Notification) {
+        MainActor.assumeIsolated {
+            _ = NSApp.setActivationPolicy(BackgroundPresencePolicy.activationPolicy(mainWindowOpen: false))
+        }
     }
 
     private func createMainWindow() {
@@ -105,18 +116,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.setFrameAutosaveName("GlasstunnelMain")
         window.contentView = NSHostingView(rootView: contentView)
         window.isReleasedWhenClosed = false
+        window.delegate = self
         AppWindowPresentationPolicy.configureMainWindow(window)
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
         self.mainWindow = window
     }
 
+    private func createMenuBar() {
+        guard let appState else { return }
+        menuBar = MenuBarController(appState: appState) { [weak self] tab in
+            self?.showMainWindow(tab: tab)
+        }
+    }
+
     func showSettings() {
-        appState?.selectTab(.settings)
+        showMainWindow(tab: .settings)
+    }
+
+    func showMainWindow(tab: AppNavigationTab) {
+        appState?.selectTab(tab)
         ensureMainWindowVisible()
     }
 
     private func ensureMainWindowVisible() {
+        NSApp.setActivationPolicy(BackgroundPresencePolicy.activationPolicy(mainWindowOpen: true))
         if let window = mainWindow {
             AppWindowPresentationPolicy.configureMainWindow(window)
             if !window.isVisible {

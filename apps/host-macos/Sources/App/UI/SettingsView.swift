@@ -455,7 +455,7 @@ private struct UpdatesSettings: View {
                 systemImage: "arrow.triangle.2.circlepath",
                 iconColor: GlasstunnelDesign.accent
             ) {
-                Button(updater.updatesInApp ? AppUpdater.menuTitle : "View Releases") {
+                Button(updater.checkTitle) {
                     updater.checkForUpdates()
                 }
                 .buttonStyle(.bordered)

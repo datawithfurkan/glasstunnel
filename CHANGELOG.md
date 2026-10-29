@@ -19,6 +19,17 @@ versioning after the first public beta; pre-release compatibility may still chan
 - This version is the last one to install by hand. Homebrew users can keep
   using `brew upgrade --cask --greedy`.
 
+### Menu bar
+
+- Glasstunnel has a menu bar icon. Its menu shows whether the Mac is online,
+  the Screen Recording and Accessibility permissions, Read-only mode, Keep Mac
+  awake, and how many devices have access, with Open Workspace, Open Web App,
+  Open Access, **Check for Updates…**, and **Quit Glasstunnel**. The icon dims
+  while the Mac is offline or reconnecting.
+- Closing the window no longer quits Glasstunnel, so the phone keeps its Mac.
+  The Dock icon hides until the window opens again from the menu bar icon or by
+  opening the app. **Quit Glasstunnel** takes the Mac offline.
+
 ### Getting to the web app
 
 - glasstunnel.io has a **Sign in** button at the top right that opens the web
