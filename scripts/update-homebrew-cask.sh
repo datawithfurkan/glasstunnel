@@ -73,5 +73,5 @@ echo "  sha256: $SHA256"
 echo
 echo "Next release steps:"
 echo "  1. Publish dist/Glasstunnel-$VERSION.dmg to GitHub Releases as v$VERSION."
-echo "  2. Run: brew audit --cask --strict Casks/glasstunnel.rb"
+echo "  2. Run: pnpm qa:mac:cask-audit"
 echo "  3. Commit the cask update or copy it into the public Homebrew tap."

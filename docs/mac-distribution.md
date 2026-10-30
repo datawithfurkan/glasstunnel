@@ -286,7 +286,8 @@ If the DMG is already remote, pass the SHA256 directly:
 ```
 
 Then audit the recipe through the disposable local audit tap before copying it
-into a public Homebrew tap:
+into a public Homebrew tap. The audit runs `brew audit --cask --strict` and,
+because that skips RuboCop for casks, `brew style` on the same copy:
 
 ```bash
 pnpm qa:mac:cask-audit
