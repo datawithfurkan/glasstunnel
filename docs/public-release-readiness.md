@@ -1,6 +1,6 @@
 # Public release readiness
 
-Last updated: 2026-09-03.
+Last updated: 2026-10-29.
 
 This checklist is the current release baseline. Historical investigations and raw
 test artifacts are intentionally not stored in the public repository.
@@ -77,3 +77,12 @@ install/reinstall and 0.1.9 → 0.1.10 upgrade, stable latest-download asset pre
 cask metadata validation passed. It makes agent transcripts readable on the phone
 (structured tool rows with previews and on-demand full output, protocol 0.2.2) and fixes
 the stuck "working" state after an interrupt.
+
+The `0.1.11` public beta release is the current public beta. Its signed and notarized DMG is tied
+to source commit `2033fef2` and SHA-256
+`c9841ceff6f318669038f442348bf64e806c17dc3ae80ea3295a87239c9103e1`.
+Developer ID signing/notarization, stapling, Gatekeeper verification, isolated
+install/reinstall and 0.1.10 → 0.1.11 upgrade, stable latest-download asset preparation,
+the EdDSA-signed update feed, and cask metadata validation passed. It is the first release
+that updates itself in place (Sparkle 2, signed feed and DMG), and it adds the menu bar
+icon, background mode, and the Open on Phone QR panel.

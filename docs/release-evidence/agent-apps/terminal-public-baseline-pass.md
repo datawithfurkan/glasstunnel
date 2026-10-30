@@ -1,10 +1,10 @@
 # Agent App Release Evidence
 
-- Date: 2026-09-10T12:48:52Z
+- Date: 2026-10-29T13:22:28Z
 - App: Terminal
 - Result: pass
 - Environment: local PTY and shared-screen-session regression coverage
-- Glasstunnel commit: 8550bec4
+- Glasstunnel commit: 2033fef2
 - Artifact: artifacts/terminal-public-baseline.txt
 - Privacy review: pass
 
@@ -32,6 +32,11 @@ stages and their follow-ups (pull requests #32-#36: truthful relay disclosure,
 acknowledged revocation, Mac-owned read-only control, 24-hour cache replicas,
 in-place relay renewal, clock-safe cache deadlines), again with the installed
 Glasstunnel app left running.
+Re-recorded at 2033fef2 for the 0.1.11 release after the account and Mac app
+changes (pull requests #38-#47: accounts on Convex, Mac rename and removal,
+account-wide access, Open on Phone, in-app updates, the menu bar icon and
+background mode); `pnpm qa:terminal` passed; the Terminal path itself is
+unchanged.
 
 ## Limitations
 

@@ -1,6 +1,6 @@
 Privacy-reviewed summary artifact.
-Date: 2026-09-10.
-Commit: 8550bec4.
+Date: 2026-10-29.
+Commit: 2033fef2.
 Scope: Terminal command, output, long-running interrupt, recovery, and session controls.
 Result: pass.
 Evidence command: pnpm qa:terminal (TerminalAdapterTests against a real PTY and the configured login shell).
