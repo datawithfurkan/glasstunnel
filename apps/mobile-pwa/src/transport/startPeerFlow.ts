@@ -13,6 +13,7 @@ import { SignalingClient } from './SignalingClient';
 import { PeerConnection } from './PeerConnection';
 import type { PairedHost } from '../lib/store';
 import { createClientId } from '../lib/id';
+import { platformConfig } from '../lib/platform';
 import { connectionStatusCopy } from '../lib/connectionCopy';
 
 export interface StartPeerFlowParams {
@@ -214,7 +215,8 @@ export async function startPeerFlow(params: StartPeerFlowParams) {
   refs.peer = peer;
 
   const signaling = new SignalingClient({
-    url: host.signalingUrl,
+    // Never the Mac's stored address; see relayUrlFor in RelayConnection.
+    url: platformConfig.defaultSignalingUrl,
     keypair,
     role: 'phone',
     deviceInfo: navigator.userAgent,

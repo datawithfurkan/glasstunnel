@@ -1,8 +1,25 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CURRENT_PROTOCOL_VERSION, type Hello } from '@glasstunnel/protocol';
 import { generateDeviceKeypair } from '@glasstunnel/shared-crypto';
-import { RelayConnection } from './RelayConnection';
+import { RelayConnection, relayUrlFor } from './RelayConnection';
 import type { PairedHost } from '../lib/store';
+import { platformConfig } from '../lib/platform';
+
+describe('relayUrlFor', () => {
+  it('uses this web app\'s signaling service, never an address a Mac supplied', () => {
+    // The relay socket carries the account token, so it must not follow a Mac's address.
+    const url = new URL(relayUrlFor({
+      deviceId: 'gt-host',
+      publicKeyB64: 'host-public-key',
+      label: 'Test Mac',
+      signalingUrl: 'wss://attacker.example/signal',
+      pairedAtUnixMs: 1,
+    }));
+    expect(url.host).toBe(new URL(platformConfig.defaultSignalingUrl).host);
+    expect(url.pathname).toBe('/relay');
+    expect(url.searchParams.get('host_device_id')).toBe('gt-host');
+  });
+});
 
 describe('RelayConnection host presence gating', () => {
   beforeEach(() => {

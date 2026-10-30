@@ -25,6 +25,7 @@ import {
 } from '@glasstunnel/protocol';
 import type { MessageDetail, MessageDetailRequest } from '@glasstunnel/protocol';
 import { createClientId } from '../lib/id';
+import { platformConfig } from '../lib/platform';
 import type { PairedHost } from '../lib/store';
 import { connectionStatusCopy } from '../lib/connectionCopy';
 import type { CacheTiming } from '../lib/offlineCache';
@@ -495,8 +496,10 @@ export class RelayConnection {
   }
 }
 
-function relayUrlFor(host: PairedHost): string {
-  const url = new URL(host.signalingUrl);
+// The relay is always this web app's own signaling service. A Mac's stored
+// signaling address is never used: the socket carries the account token.
+export function relayUrlFor(host: PairedHost): string {
+  const url = new URL(platformConfig.defaultSignalingUrl);
   url.pathname = '/relay';
   url.searchParams.set('host_device_id', host.deviceId);
   return url.toString();

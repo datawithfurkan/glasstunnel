@@ -820,7 +820,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       }, 20_000);
       void registerPushSubscription({
         phoneDeviceId: phoneKeypair.deviceId,
-        signalingHttpUrl: toHttp(pairedHost.signalingUrl),
+        signalingHttpUrl: toHttp(platformConfig.defaultSignalingUrl),
       }).catch((error) => {
         console.warn('Failed to register push subscription', error);
       });
@@ -2952,7 +2952,9 @@ function mapAccountHostToPairedHost(host: AccountHost): PairedHost {
     deviceId: host.deviceId,
     publicKeyB64: host.publicKeyB64,
     label: host.label,
-    signalingUrl: host.signalingUrl || platformConfig.defaultSignalingUrl,
+    // A Mac chooses its own signaling address when it creates a link code, so
+    // it is untrusted here; the web app only talks to its own service.
+    signalingUrl: platformConfig.defaultSignalingUrl,
     turnUrl: host.turnUrl,
     turnUsername: host.turnUsername,
     turnPassword: host.turnPassword,

@@ -107,7 +107,7 @@ describe('Your Macs list states', () => {
     expect(html.match(/role="alert"/g)).toHaveLength(1);
   });
 
-  it('shows the add flow at once when a Mac opened this page with its code, even while loading', () => {
+  it('shows the add flow at once when this page was opened with a code, even while loading', () => {
     vi.stubGlobal('window', { location: { search: '?linkCode=abc234' } });
     const html = render({ status: 'loading' });
     expect(html).toContain('Add this Mac');

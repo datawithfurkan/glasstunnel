@@ -3,6 +3,23 @@
 Notable user-facing changes are recorded here. Glasstunnel follows semantic
 versioning after the first public beta; pre-release compatibility may still change.
 
+## Unreleased
+
+### Security
+
+- The web app connects only to its own signaling service for signaling, the
+  relay, and notifications; an address a Mac reports is no longer used, and the
+  hosted service no longer stores one.
+- A one-time Mac code that arrives in a link is filled in, not claimed: the Mac
+  is added only when you choose **Add**, which you should do only for a page
+  you opened from Glasstunnel on your own Mac.
+- The web app and the site send HSTS and refuse to be framed by other sites.
+
+### Fixed
+
+- The Homebrew command on glasstunnel.io includes the tap's URL; without it,
+  `brew tap` looked for a repository that does not exist.
+
 ## 0.1.12 - A designed installer window
 
 ### Installing
