@@ -1,26 +1,25 @@
 # Mac App Release Evidence
 
-- Date: 2026-10-30T09:16:05Z
+- Date: 2026-10-30T11:58:39Z
 - Scope: permission-onboarding
 - Result: pass
-- Environment: published 0.1.11 app updated in place to the notarized 0.1.12 release by its own updater on macOS 27.0.1
-- Glasstunnel commit: f094160b
+- Environment: published 0.1.12 app updated in place to the notarized 0.1.13 release by its own updater on macOS 27.0.1
+- Glasstunnel commit: a1d3537f
 - Artifact: artifacts/mac-live-public-baseline.txt
 - Privacy review: pass
 
 ## Passed
 
-After the in-app update from 0.1.11 to 0.1.12, the system privacy database still
+After the in-app update from 0.1.12 to 0.1.13, the system privacy database still
 lists Screen Recording and Accessibility as allowed for `io.glasstunnel.host`, and
-the relaunched app opened straight to its linked Access page without any permission
-prompt or stale Grant action. The bundle keeps the same bundle identifier,
-Developer ID team, and designated requirement, which the isolated install smoke
-also checked. Gate tests still cover the missing-permission and disabled Continue
-states.
+the relaunched app started without any permission prompt or stale Grant action,
+although 0.1.13 changes both usage descriptions. The bundle keeps the same bundle
+identifier, Developer ID team, and designated requirement, which the isolated
+install smoke also checked. Gate tests still cover the missing-permission and
+disabled Continue states.
 
 ## Limitations
 
 macOS can still require an app relaunch after changing Screen Recording permission.
 A first install on a Mac that never granted the permissions still goes through the
-onboarding prompts; that path was last recorded live on 0.1.4. Screen sharing from
-a phone against the updated app was not repeated in this check.
+onboarding prompts; that path was last recorded live on 0.1.4.

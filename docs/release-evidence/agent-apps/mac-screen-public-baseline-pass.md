@@ -1,10 +1,10 @@
 # Agent App Release Evidence
 
-- Date: 2026-10-29T13:22:28Z
+- Date: 2026-10-30T11:58:27Z
 - App: Mac Screen
 - Result: pass
 - Environment: local lab host with authenticated mobile Chromium and WebKit screen E2E plus automated state regression coverage
-- Glasstunnel commit: 2033fef2
+- Glasstunnel commit: a1d3537f
 - Artifact: artifacts/mac-screen-public-baseline.txt
 - Privacy review: pass
 
@@ -45,6 +45,9 @@ For 0.1.12 (`f094160b`) only release packaging changed (the DMG installer
 window, the build script, the cask, the marketing site); `pnpm qa:screen-state`
 passed again at that commit, and the live lanes were not re-run because another
 project held the lab's web-app port.
+Re-recorded at a1d3537f for the 0.1.13 release after the Mac hardening (pull
+request #55); both Mac Screen lanes (Chromium and WebKit) and
+`pnpm qa:screen-state` passed.
 
 ## Limitations
 

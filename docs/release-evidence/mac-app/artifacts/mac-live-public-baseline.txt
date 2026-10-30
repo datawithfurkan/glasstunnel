@@ -1,6 +1,6 @@
 Privacy-reviewed summary artifact.
 Date: 2026-10-30.
-Commit: f094160b (notarized 0.1.12 build installed by the app's own updater over the published 0.1.11 app: Check for Updates, Install Update, automatic relaunch).
-Scope: the first in-app update from the published feed, native permission state after it, account persistence across the updater's relaunch, Gatekeeper assessment of the updated bundle, the source commit stamped in it, and the relay and signaling connections after relaunch.
+Commit: a1d3537f (notarized 0.1.13 build installed by the app's own updater over the published 0.1.12 app: Check for Updates, Install Update, Install and Relaunch).
+Scope: an in-app update from the published feed, native permission state after it, account persistence across the updater's relaunch, Gatekeeper assessment of the updated bundle, the source commit stamped in it, the relay and signaling connections after relaunch, and the hook commands the app rewrites at launch.
 Result: pass.
 Raw screenshots, account identifiers, and local machine names are intentionally not retained in Git.

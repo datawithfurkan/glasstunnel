@@ -22,7 +22,7 @@ the 2026-09-10 review fixes ship in 0.1.10. The E2E design is deferred.
 ## Current focus
 
 Publish and stabilize the first honest public beta. The repository is public and the
-signed, notarized `0.1.12` public beta release is available, and the app updates itself in place. Keep raw test artifacts, private
+signed, notarized `0.1.13` public beta release is available, and the app updates itself in place. Keep raw test artifacts, private
 account details, absolute machine paths, and personal credentials out of Git.
 
 The September security work (`docs/security-reconciliation.md`, stages 1-4 of
@@ -46,6 +46,8 @@ access, Open on Phone, in-app updates (Sparkle 2 with a signed feed), and the
 menu bar icon; Terminal and Mac Screen evidence was re-recorded at that commit,
 and the Preview app records stay at their 0.1.10 commits. 0.1.12 (`f094160b`)
 adds the designed DMG installer window and is the first in-app update from 0.1.11.
+0.1.13 (`a1d3537f`) ships the Mac side of the October security review; the web,
+Worker, and Convex fixes from it are deployed (pull requests #52-#54).
 The next loop returns to the product backlog.
 
 Paused product-audit slice: First-Run Activation. Use

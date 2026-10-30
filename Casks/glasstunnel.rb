@@ -1,6 +1,6 @@
 cask "glasstunnel" do
-  version "0.1.12"
-  sha256 "16291ce571d67d899cc42e5c1614d4fa847b26220d84f3a89e0d50bc4da795a0"
+  version "0.1.13"
+  sha256 "9138bceccd8e5af33a7e0a71e0b881afee62d3274aa3f1293a63966e56ed60b1"
 
   url "https://github.com/datawithfurkan/glasstunnel/releases/download/v#{version}/Glasstunnel-#{version}.dmg",
     verified: "github.com/datawithfurkan/glasstunnel"
