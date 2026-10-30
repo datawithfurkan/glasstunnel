@@ -102,7 +102,9 @@ normalized_lowercase() {
 }
 
 # Paths that cannot change what ships: docs, release metadata, this check's own
-# tooling, and the Mac host's unit tests (they never reach the binary).
+# tooling, the Mac host's unit tests (they never reach the binary), and the
+# DMG installer window (artwork and layout around the app, not the app), and
+# the marketing site (glasstunnel.io, not the app.glasstunnel.io web app).
 is_agent_evidence_neutral_path() {
   case "$1" in
     Casks/glasstunnel.rb|\
@@ -110,8 +112,10 @@ CHANGELOG.md|\
 README.md|\
 docs/*|\
 apps/host-macos/Tests/*|\
+apps/host-macos/Metadata/dmg/*|\
 scripts/agent-app-release-claims-smoke.sh|\
 scripts/build-app.sh|\
+scripts/dmg/*|\
 scripts/check-agent-app-release-claims.sh|\
 scripts/check-mac-live-evidence.sh|\
 scripts/check-real-mobile-evidence.sh|\
@@ -122,6 +126,7 @@ scripts/mac-release-preflight.sh|\
 scripts/mobile-evidence-recorder-smoke.sh|\
 scripts/record-mac-live-evidence.sh|\
 scripts/release-readiness.sh|\
+site/*|\
 tests/e2e/signed-screen.spec.ts)
       return 0
       ;;
