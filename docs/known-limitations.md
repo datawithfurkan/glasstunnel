@@ -57,6 +57,8 @@ disclosures, not hidden implementation details.
   restores its access to every Mac, so this is not a defense against someone
   who holds the account's credentials. Browser unlock is not mandatory biometric reauthentication. The read-only
   boundary is not a complete per-device administrator policy. See `docs/security.md`.
+- In-app updates start with 0.1.11. Macs on 0.1.10 or earlier install 0.1.11
+  by hand once; after that, Check for Updates installs new versions.
 - The picture-size readout next to "Screen ready" depends on the browser reporting
   the video's dimensions; on iOS Safari it can stay hidden while the stream itself
   is correct.

@@ -1,10 +1,10 @@
 # Agent App Release Evidence
 
-- Date: 2026-09-10T12:50:39Z
+- Date: 2026-10-29T13:22:28Z
 - App: Mac Screen
 - Result: pass
 - Environment: local lab host with authenticated mobile Chromium and WebKit screen E2E plus automated state regression coverage
-- Glasstunnel commit: 8550bec4
+- Glasstunnel commit: 2033fef2
 - Artifact: artifacts/mac-screen-public-baseline.txt
 - Privacy review: pass
 
@@ -37,6 +37,10 @@ stages and their follow-ups (pull requests #32-#36: truthful relay disclosure,
 acknowledged revocation, Mac-owned read-only control, 24-hour cache replicas,
 in-place relay renewal, clock-safe cache deadlines), again with the installed
 Glasstunnel app left running; both browsers passed.
+Re-recorded at 2033fef2 for the 0.1.11 release after the account and Mac app
+changes (pull requests #38-#47: accounts on Convex, Mac rename and removal,
+account-wide access, Open on Phone, in-app updates, the menu bar icon and
+background mode); both Mac Screen lanes and `pnpm qa:screen-state` passed.
 
 ## Limitations
 

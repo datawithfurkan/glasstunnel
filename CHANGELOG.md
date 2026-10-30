@@ -3,7 +3,7 @@
 Notable user-facing changes are recorded here. Glasstunnel follows semantic
 versioning after the first public beta; pre-release compatibility may still change.
 
-## Unreleased
+## 0.1.11 - Updates in the app, a menu bar icon, account-wide access
 
 ### Updates
 
@@ -42,8 +42,6 @@ versioning after the first public beta; pre-release compatibility may still chan
   same account.
 - The web app's sign-in screen says to use the same account as the Mac app and
   links to installing it, for people who arrive there first.
-- The site and web app changes are live without a Mac update; the Mac buttons
-  ship with the next Mac release.
 
 ### Access
 
@@ -58,8 +56,18 @@ versioning after the first public beta; pre-release compatibility may still chan
   signed this browser out. Sign in again to use your Macs."
 - Browsers get names you can recognise in the Mac's Access list, such as
   "Chrome on Mac" or "Safari on iPhone", instead of "Browser".
-- The server and web parts are live without a Mac update; the renamed Mac
-  buttons ship with the next Mac release.
+
+### Your Macs
+
+- Each Mac on the web app's Your Macs list has a ⋯ menu: **Rename**,
+  **Details** (with a copyable device ID), and **Remove from account**.
+  Removing a Mac cuts its access at once; the Mac shows "This Mac was removed
+  from your account on another device. Link it again to use it remotely." and
+  ends its phone sessions.
+- The Mac app shows the name your account uses for it ("Shown in your account
+  as …") and reports its app version to the account.
+- After signing in from a new browser, Your Macs shows a loading state instead
+  of an empty account, and the browser registers once per page load.
 
 ## 0.1.10 - Sharper screen, shared hooks, tighter access
 

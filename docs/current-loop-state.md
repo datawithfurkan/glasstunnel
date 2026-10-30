@@ -1,6 +1,6 @@
 # Current loop state
 
-Last updated: 2026-09-10.
+Last updated: 2026-10-29.
 
 The four hosted security stages are deployed at `0f98a93d`; their Mac side and
 the 2026-09-10 review fixes ship in 0.1.10. The E2E design is deferred.
@@ -22,7 +22,7 @@ the 2026-09-10 review fixes ship in 0.1.10. The E2E design is deferred.
 ## Current focus
 
 Publish and stabilize the first honest public beta. The repository is public and the
-signed, notarized `0.1.10` public beta release is available. Keep raw test artifacts, private
+signed, notarized `0.1.11` public beta release is available, and it updates itself in place. Keep raw test artifacts, private
 account details, absolute machine paths, and personal credentials out of Git.
 
 The September security work (`docs/security-reconciliation.md`, stages 1-4 of
@@ -40,8 +40,12 @@ signaling authorization is cached for two minutes instead of three database
 reads per message. The E2E encryption design (`docs/architecture/relay-e2e-design.md`)
 is deferred, not approved.
 
-0.1.10 was built from `8550bec4`, re-recorded, and published; the next loop
-returns to the product backlog.
+0.1.10 was built from `8550bec4`, re-recorded, and published. 0.1.11 was built
+from `2033fef2` with accounts on Convex, Mac rename and removal, account-wide
+access, Open on Phone, in-app updates (Sparkle 2 with a signed feed), and the
+menu bar icon; Terminal and Mac Screen evidence was re-recorded at that commit,
+and the Preview app records stay at their 0.1.10 commits. The next loop returns
+to the product backlog.
 
 Paused product-audit slice: First-Run Activation. Use
 `docs/product-audit-backlog.md` as the durable queue. After completing the

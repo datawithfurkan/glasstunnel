@@ -211,3 +211,19 @@ changes or a blocker is materially narrowed.
 - Next action: Create `v0.1.10` on the release documentation commit, upload the immutable and stable DMG assets, then verify the public download URL and a Homebrew upgrade.
 - End commit: The final release documentation and cask commit is the result of record.
 - CI/deploy: CI is green on `8550bec4` (PR #36 checks and the main push); Deploy run 34478636295 from `8550bec4` succeeded for the web app, the marketing site, and the Signaling Worker before the Mac build; the release documentation and cask commit is checked by one CI run before `v0.1.10` is tagged.
+
+## 2026-10-30 09:00 - In-app updates, menu bar, and account-wide access release
+
+- Start commit: 2033fef2
+- Release gate: Ship in-app updates (Sparkle 2 with an EdDSA-signed feed and DMG), the menu bar icon and background mode, the Open on Phone QR panel, and the Mac side of account-wide access and Mac rename/removal in one signed, notarized 0.1.11 build, and publish the first signed update feed.
+- Why chosen: The public release is still 0.1.10 while the account, web-app, and site changes from pull requests #38-#44 are live, and the maintainer could not find how to update; 0.1.11 is the last version anyone installs by hand.
+- Files changed: Mac host (Sparkle updater and Settings > Updates, menu bar extra and window-close behaviour, Open on Phone panel, account name and removal notice, Sign Out Browser wording), build and release scripts (Sparkle embedding and signing, signed appcast generation, update smoke), Homebrew cask (`auto_updates`), site FAQ, release docs and evidence.
+- Validation: CI (five checks) on pull requests #45-#47 and on `main` at `2033fef2`; `pnpm qa:terminal`, `pnpm qa:screen-state`, and both Mac Screen lab lanes (mobile Chromium and WebKit) at `2033fef2`; the update smoke (signed feed installs 1.0.1 over 1.0.0 and relaunches; a feed altered after signing is refused) on the PR; Developer ID signing, Apple notarization, stapling, Gatekeeper assessment, isolated install/reinstall and 0.1.10 → 0.1.11 upgrade smoke; the tracked cask audit and a disposable cask install; the appcast and DMG signatures verified against the committed public key.
+- Manual testing: The notarized 0.1.11 app replaced the installed 0.1.10 in Applications twice (over the running install, and over a fresh 0.1.10 download from the website) and each time launched signed in and linked with Screen Recording and Accessibility still allowed and no prompt, with relay and signaling connections established within ten seconds (recorded as the auth-relaunch and permission-onboarding Mac-app records at `2033fef2`).
+- Evidence recorded: The DMG is tied to source commit `2033fef2`; SHA-256 is `c9841ceff6f318669038f442348bf64e806c17dc3ae80ea3295a87239c9103e1`; Apple submission ID is `fe35e2a9-6279-4050-a72c-54ace3e0004a`. Deploy run 40879535241 from `c4ea46e3` published the update-feed redirect and the updates FAQ before the release.
+- Outcome: passed
+- Uncertainty: The Preview app records (Codex, Claude, Cursor) stay at their 0.1.10 commits; no phone-sized browser session was run against the installed release app; the first real in-app update is the move from 0.1.11 to the next version.
+- Stale-loop risk: Low; one notarization submission, one tag, one release, and one consolidated docs/cask push.
+- Next action: Create `v0.1.11` on the release documentation commit, upload the five assets including `appcast.xml`, then verify the download URL, the feed redirect, and a Homebrew upgrade.
+- End commit: The final release documentation and cask commit is the result of record.
+- CI/deploy: CI is green on `2033fef2`; the release documentation, FAQ, and cask commit is checked by one CI run before `v0.1.11` is tagged, and the site is deployed from it for the FAQ.
