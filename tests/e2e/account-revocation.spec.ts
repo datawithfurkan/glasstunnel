@@ -69,6 +69,8 @@ test('@revocation-account host permissions and revocation isolate two browsers',
     await page.getByRole('button', { name: 'Continue with email', exact: true }).click();
     await page.getByPlaceholder('Enter your password').fill(process.env.GT_LAB_PASSWORD!);
     await page.getByRole('button', { name: 'Sign in', exact: true }).last().click();
+    // A code that arrives in a link is only filled in; adding the Mac takes Add.
+    await page.getByRole('button', { name: /^Add (this )?Mac$/ }).filter({ visible: true }).first().click();
     // Never run markers in an existing user's default Terminal session.
     await marker(page, 'REVOCATION_BEFORE', true);
     await signIn(second);
