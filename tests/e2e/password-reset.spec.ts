@@ -459,11 +459,13 @@ test('@password-reset-mac links the Mac that started sign-in after a reset from 
   expect(claimRequests).toBe(0);
 
   // The sign-in form offers the address the reset was for. Signing in with the
-  // new password links that Mac, as the Mac's own sign-in would have.
+  // new password fills in that Mac's code, as the Mac's own sign-in would have,
+  // and Add links it.
   await expect(resetPage.getByPlaceholder('you@example.com').filter({ visible: true })).toHaveValue(email);
   await resetPage.getByRole('button', { name: 'Continue with email', exact: true }).click();
   const claimResponse = resetPage.waitForResponse((response) => isHostCodeClaim(response.request()));
   await signInWithPassword(resetPage, newPassword);
+  await resetPage.getByRole('button', { name: /^Add (this )?Mac$/ }).filter({ visible: true }).first().click();
   expect((await claimResponse).ok()).toBe(true);
   await expect(
     resetPage.getByText(hostLabel, { exact: true }).filter({ visible: true }).first(),

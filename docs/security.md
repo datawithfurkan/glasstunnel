@@ -125,6 +125,17 @@ Sign-in, sign-up and password reset requests go from the PWA straight to the
 Convex auth server (`/api/auth/*`), not through the Worker, so these limits do
 not cover them; the reset email throttles above are enforced in Convex.
 
+Email sign-in slows down after wrong passwords, per address
+(`convex/signInThrottle.ts`): the first five cost nothing, then each further
+failure doubles the wait before the next try (30 seconds up to 15 minutes),
+answered with 429 and Retry-After. A correct password clears the count; a day
+without failures forgets it. The record holds a SHA-256 of the address, never
+the address. Because the key is the address and not a client IP, someone who
+knows an address can keep its password sign-in waiting; Google, GitHub, and
+password reset still sign the owner in. Better Auth's own limiter stays off:
+without a trusted client IP it would fall back to one bucket shared by every
+user.
+
 ## Content And Credential Storage
 
 - **Mac:** the host identity is stored in the system Keychain; the local device

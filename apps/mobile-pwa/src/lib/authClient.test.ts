@@ -346,6 +346,16 @@ describe('password reset', () => {
     expect(replacedUrl).toBeNull();
   });
 
+  it('shows the server\'s wait after repeated wrong passwords', async () => {
+    const message = 'Too many sign-in attempts for this email. Try again in 1 minute, or reset your password.';
+    const { authClient } = await loadShim('https://app.test/', {
+      '/sign-in/email': () =>
+        Response.json({ code: 'TOO_MANY_SIGN_IN_ATTEMPTS', message }, { status: 429, headers: { 'Retry-After': '30' } }),
+    });
+    const result = await authClient!.auth.signInWithPassword({ email: 'person@example.test', password: 'wrong' });
+    expect(result.error).toMatchObject({ status: 429, code: 'TOO_MANY_SIGN_IN_ATTEMPTS', message });
+  });
+
   it('reports disabled reset, rate limits, and outages with status and code', async () => {
     const answers = [
       () => Response.json({ code: 'RESET_PASSWORD_DISABLED', message: "Reset password isn't enabled" }, { status: 400 }),

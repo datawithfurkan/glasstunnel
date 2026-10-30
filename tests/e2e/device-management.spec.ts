@@ -21,6 +21,8 @@ async function signIn(page: Page, linkCode?: string) {
   await page.getByRole('button', { name: 'Continue with email', exact: true }).click();
   await page.getByPlaceholder('Enter your password').fill(requiredEnv('GT_LAB_PASSWORD'));
   await page.getByRole('button', { name: 'Sign in', exact: true }).last().click();
+  // A code that arrives in a link is only filled in; adding the Mac takes Add.
+  if (linkCode) await page.getByRole('button', { name: /^Add (this )?Mac$/ }).filter({ visible: true }).first().click();
 }
 
 /** Opens the account's Mac (or waits for the claim to open it) until its workspace shows. */
