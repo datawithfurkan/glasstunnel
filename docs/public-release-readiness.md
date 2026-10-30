@@ -78,7 +78,7 @@ cask metadata validation passed. It makes agent transcripts readable on the phon
 (structured tool rows with previews and on-demand full output, protocol 0.2.2) and fixes
 the stuck "working" state after an interrupt.
 
-The `0.1.11` public beta release is the current public beta. Its signed and notarized DMG is tied
+The `0.1.11` public beta release was the first self-updating public beta. Its signed and notarized DMG is tied
 to source commit `2033fef2` and SHA-256
 `c9841ceff6f318669038f442348bf64e806c17dc3ae80ea3295a87239c9103e1`.
 Developer ID signing/notarization, stapling, Gatekeeper verification, isolated
@@ -86,3 +86,11 @@ install/reinstall and 0.1.10 → 0.1.11 upgrade, stable latest-download asset pr
 the EdDSA-signed update feed, and cask metadata validation passed. It is the first release
 that updates itself in place (Sparkle 2, signed feed and DMG), and it adds the menu bar
 icon, background mode, and the Open on Phone QR panel.
+
+The `0.1.12` public beta release is the current public beta. Its signed and notarized DMG is tied
+to source commit `f094160b` and SHA-256
+`16291ce571d67d899cc42e5c1614d4fa847b26220d84f3a89e0d50bc4da795a0`.
+Developer ID signing/notarization, stapling, Gatekeeper verification, isolated
+install/reinstall and 0.1.11 → 0.1.12 upgrade, stable latest-download asset preparation,
+the EdDSA-signed update feed, and cask metadata validation passed. It adds the designed
+installer window and is the first version 0.1.11 installs from inside the app.

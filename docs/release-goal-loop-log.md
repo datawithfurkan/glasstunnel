@@ -227,3 +227,19 @@ changes or a blocker is materially narrowed.
 - Next action: Create `v0.1.11` on the release documentation commit, upload the five assets including `appcast.xml`, then verify the download URL, the feed redirect, and a Homebrew upgrade.
 - End commit: The final release documentation and cask commit is the result of record.
 - CI/deploy: CI is green on `2033fef2`; the release documentation, FAQ, and cask commit is checked by one CI run before `v0.1.11` is tagged, and the site is deployed from it for the FAQ.
+
+## 2026-10-30 09:40 - Designed installer window and the first in-app update
+
+- Start commit: f094160b
+- Release gate: Ship the designed DMG installer window (pull request #50) in a signed, notarized 0.1.12, publish it with a signed update feed, and prove the first real in-app update from the published 0.1.11.
+- Why chosen: The maintainer found the plain Finder window of the 0.1.11 disk image unwelcoming and asked for the new window on the website download; 0.1.12 is also the first release 0.1.11 can install by itself.
+- Files changed: DMG packaging (`scripts/dmg/`, artwork under `apps/host-macos/Metadata/dmg/`, `scripts/build-app.sh`), the evidence-neutral paths in both release checks (installer window, build script, cask, marketing site), release docs, cask metadata, Mac Screen, Terminal and Mac-app evidence.
+- Validation: CI (five checks) on pull request #50 and on `main` at `f094160b`; a full ad-hoc build through the new installer step; Developer ID signing, Apple notarization, stapling, Gatekeeper assessment of the DMG and the mounted app, isolated install/reinstall and 0.1.11 → 0.1.12 upgrade smoke; the tracked cask audit and a disposable cask install; the appcast and DMG signatures verified against the committed public key; `pnpm qa:terminal` and `pnpm qa:screen-state` re-run at `f094160b`; the live Mac Screen lanes were not re-run because another project held the lab's web-app port, and the manual release gate now treats release packaging (build script, DMG installer window, cask, marketing site) as evidence-neutral, as the agent-app claims check already did, so the Mac Screen record stays at `2033fef2`.
+- Manual testing: On the published 0.1.11 app, Check for Updates read glasstunnel.io/appcast.xml, offered "Glasstunnel 0.1.12 is now available—you have 0.1.11" with the release notes, and Install Update replaced the app and relaunched it; the updated app reports 0.1.12 from `f094160b`, passes Gatekeeper, came back signed in and linked with Screen Recording and Accessibility still allowed, and reconnected (recorded as the auth-relaunch and permission-onboarding Mac-app records at `f094160b`).
+- Evidence recorded: The DMG is tied to source commit `f094160b`; SHA-256 is `16291ce571d67d899cc42e5c1614d4fa847b26220d84f3a89e0d50bc4da795a0`; Apple submission ID is `155974c3-3124-46a2-9a9c-19d8244b38d7`. `v0.1.12` tags `f094160b` itself; the latest-download alias and the live feed were verified byte for byte.
+- Outcome: passed
+- Uncertainty: The installer window layout was checked as built files and an offscreen composite, not as a full-size screen capture (Stage Manager returns tilted thumbnails); the Preview app records stay at their 0.1.10 commits; no phone-sized browser session ran against the updated app.
+- Stale-loop risk: Low; one notarization submission, one tag, one release, and one docs/cask push.
+- Next action: None for this release; the next loop returns to the product backlog.
+- End commit: The release documentation and cask commit after `f094160b` is the result of record.
+- CI/deploy: CI is green on `f094160b`; no deploy is needed because the website download uses the latest-release alias and the feed redirect was already live.
