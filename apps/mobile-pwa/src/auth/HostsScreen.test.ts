@@ -10,6 +10,7 @@ import {
   hostEmptyStateTitle,
   hostListAnnouncement,
   hostListView,
+  linkCodeFromLinkStatus,
   hostRefreshButtonLabel,
 } from './HostsScreen';
 
@@ -215,5 +216,14 @@ describe('HostsScreen host actions', () => {
     expect(setStatus).toHaveBeenCalledWith('Mac added. Waiting for this Mac…');
     expect(setLinking).toHaveBeenNthCalledWith(1, true);
     expect(setLinking).toHaveBeenLastCalledWith(false);
+  });
+});
+
+describe('a code that arrives in a link', () => {
+  it('asks the person to compare it with the Mac before adding', () => {
+    // Anyone can send such a link; the code is filled in, not claimed.
+    expect(linkCodeFromLinkStatus('ABC234')).toBe(
+      'Code ABC234 is filled in. Choose Add only if you opened this page from Glasstunnel on your own Mac.',
+    );
   });
 });

@@ -2308,8 +2308,9 @@ export class SignalingHub extends DurableObject<Env> {
     // The Mac proposes its computer name; it is made to follow the account's
     // name rule here, so a newly linked Mac never lists hidden characters.
     const hostLabel = proposedHostLabel(message.host_label);
+    // A Mac's own signaling address is not stored: browsers would otherwise
+    // be sent to it, carrying their account token. They use this service.
     const hostMetadata = {
-      signaling_url: stringField(message.signaling_url),
       turn_url: stringField(message.turn_url),
       turn_username: stringField(message.turn_username),
       turn_password: stringField(message.turn_password),

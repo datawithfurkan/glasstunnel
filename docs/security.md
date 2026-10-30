@@ -101,7 +101,11 @@ server connection; they are not individually verified as signed phone envelopes 
 the Mac. Account discovery and server-origin authorization therefore remain part
 of the trust boundary.
 
-A custom signaling URL must belong to an operator the user trusts. A server
+A custom signaling URL must belong to an operator the user trusts. The web app
+connects only to the signaling service it was built for (`VITE_SIGNALING_URL`)
+for signaling, the relay, and push; the address a Mac reports is ignored, and the
+hosted service does not store one. A one-time code that arrives in a link is only
+filled in; adding the Mac takes the person's tap. A server
 `auth_ok` response is not cryptographic proof of the server's device identity.
 HTTPS/WSS certificate validation authenticates the configured service endpoint.
 

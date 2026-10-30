@@ -37,9 +37,9 @@ export function HostsScreen() {
   const renameHost = useAppStore((s) => s.renameHost);
   const removeHost = useAppStore((s) => s.removeHost);
   const [linkCode, setLinkCode] = useState('');
-  // A Mac opened this page with its one-time code: the add flow shows at once,
-  // as it always has, even while the account's Macs are still loading, and
-  // only until that claim settles (see claimCodeFromMac).
+  // This page was opened with a one-time code: the add flow shows at once,
+  // even while the account's Macs are still loading, with the code filled in,
+  // and stays until a claim settles (see claimCodeFromMac).
   const [macClaimPending, setMacClaimPending] = useState(() => linkCodeInAddressBar() !== '');
   const macClaimUserIdRef = useRef(user?.id ?? null);
   // The live region starts empty and fills once on screen, so its first
@@ -167,8 +167,10 @@ export function HostsScreen() {
     const nextURL = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}${window.location.hash}`;
     window.history.replaceState({}, '', nextURL);
 
-    void claimCodeFromMac(code, { submitLinkCode, setMacClaimPending });
-  }, [submitLinkCode, user]);
+    // Anyone can send a link with a code, so the code is only filled in:
+    // adding the Mac takes the person's tap on Add.
+    setStatus(linkCodeFromLinkStatus(code));
+  }, [user]);
 
   useEffect(() => {
     if (!user) return;
@@ -297,7 +299,7 @@ export function HostsScreen() {
               linkCode={linkCode}
               linking={linking}
               onLinkCodeChange={setLinkCode}
-              onSubmit={() => void submitLinkCode(linkCode)}
+              onSubmit={() => void claimCodeFromMac(linkCode, { submitLinkCode, setMacClaimPending })}
             />
           ) : (
             <>
@@ -358,7 +360,7 @@ export function HostsScreen() {
                 linkCode={linkCode}
                 linking={linking}
                 onLinkCodeChange={setLinkCode}
-                onSubmit={() => void submitLinkCode(linkCode)}
+                onSubmit={() => void claimCodeFromMac(linkCode, { submitLinkCode, setMacClaimPending })}
                 compact
               />
             </>
@@ -624,8 +626,13 @@ export function hostListAnnouncement(input: {
   return '';
 }
 
+/** What the page says when a link filled in a one-time code. */
+export function linkCodeFromLinkStatus(code: string): string {
+  return `Code ${code} is filled in. Choose Add only if you opened this page from Glasstunnel on your own Mac.`;
+}
+
 /**
- * Claims the code a Mac put in this page's address. Its add flow shows while
+ * Claims a one-time code once the person chooses Add. Its add flow shows while
  * the claim is pending and goes once the claim settles, either way: then the
  * list shows what the account holds (loading, failed, empty, or the Macs).
  */

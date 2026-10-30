@@ -2616,6 +2616,22 @@ describe('Mac management: rename and remove', () => {
     expect(hostIdentities(mac).at(-1)).toMatchObject({ linked: true, host_label: 'Studio Mac mini' });
   });
 
+  it('never stores a signaling address a Mac proposes with its link code', async () => {
+    const host = await createDeviceIdentity();
+    const linkCodes: Record<string, unknown>[] = [];
+    stubAccountPlane({ devices: [], linkCodes });
+    const signaling = env.SIGNALING_HUB.get(env.SIGNALING_HUB.idFromName(`signaling-url-${host.deviceId}`));
+    const mac = await connectSignalingHost(signaling, host);
+
+    // Browsers that open this Mac would otherwise connect there with their token.
+    mac.client.send(JSON.stringify({
+      type: 'create_link_code', host_label: 'Studio Mac mini', signaling_url: 'wss://attacker.example/signal',
+    }));
+    await waitFor(() => mac.messages.some((m) => m.type === 'link_code_created'), 'a link code');
+    expect(linkCodes).toHaveLength(1);
+    expect(JSON.stringify(linkCodes[0])).not.toContain('attacker.example');
+  });
+
   it.each([
     ['ignores a removal record older than the Mac\'s current account row', -DAY_MS, { linked: true }],
     ['applies a removal record to an account row older than it', DAY_MS, { linked: false, reason: 'removed_from_account' }],
