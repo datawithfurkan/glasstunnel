@@ -48,11 +48,14 @@ async function signInAndLinkHost(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Continue with email', exact: true }).click();
   await page.getByPlaceholder('Enter your password').fill(password);
 
+  await page.getByRole('button', { name: 'Sign in', exact: true }).last().click();
+
+  // A code that arrives in a link is only filled in; adding the Mac takes Add.
   const claimResponse = page.waitForResponse(
     (response) =>
       response.url().includes('/account/claim-host-code') && response.request().method() === 'POST',
   );
-  await page.getByRole('button', { name: 'Sign in', exact: true }).last().click();
+  await page.getByRole('button', { name: /^Add (this )?Mac$/ }).filter({ visible: true }).first().click();
   await expect((await claimResponse).ok()).toBeTruthy();
   await expect(
     page.getByText(hostLabel, { exact: true }).filter({ visible: true }).first(),

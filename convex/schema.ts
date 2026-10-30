@@ -107,6 +107,21 @@ export default defineSchema({
     .index("by_device_uuid", ["deviceUuid"])
     .index("by_endpoint", ["endpoint"]),
 
+  /**
+   * Wrong-password counts for email sign-in, one row per address
+   * (convex/signInThrottle.ts). `emailKey` is a SHA-256 of the address, never
+   * the address. Deleted on a correct password; pruned a day after the last
+   * failure by the daily cron (auth:pruneSignInThrottles).
+   */
+  signInThrottles: defineTable({
+    emailKey: v.string(),
+    failures: v.number(),
+    lastFailureAt: v.number(),
+    lockedUntil: v.number(),
+  })
+    .index("by_email_key", ["emailKey"])
+    .index("by_last_failure", ["lastFailureAt"]),
+
   hostLinkCodes: defineTable({
     legacyId: v.string(),
     code: v.string(),

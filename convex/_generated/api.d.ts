@@ -14,6 +14,7 @@ import type * as crons from "../crons.js";
 import type * as email from "../email.js";
 import type * as hostLabel from "../hostLabel.js";
 import type * as http from "../http.js";
+import type * as signInThrottle from "../signInThrottle.js";
 
 import type {
   ApiFromModules,
@@ -28,6 +29,7 @@ declare const fullApi: ApiFromModules<{
   email: typeof email;
   hostLabel: typeof hostLabel;
   http: typeof http;
+  signInThrottle: typeof signInThrottle;
 }>;
 
 /**

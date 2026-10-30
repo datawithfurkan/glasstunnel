@@ -14,6 +14,10 @@ versioning after the first public beta; pre-release compatibility may still chan
   is added only when you choose **Add**, which you should do only for a page
   you opened from Glasstunnel on your own Mac.
 - The web app and the site send HSTS and refuse to be framed by other sites.
+- Email sign-in slows down after repeated wrong passwords for the same address:
+  after five, each further try waits longer (30 seconds, doubling up to 15
+  minutes), and the sign-in screen says how long. Google, GitHub, and password
+  reset are not affected.
 
 ### Fixed
 

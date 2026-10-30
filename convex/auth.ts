@@ -2,7 +2,7 @@ import { createClient, type GenericCtx } from "@convex-dev/better-auth";
 import { convex, crossDomain } from "@convex-dev/better-auth/plugins";
 import { isRunMutationCtx } from "@convex-dev/better-auth/utils";
 import { betterAuth, type BetterAuthOptions } from "better-auth/minimal";
-import { createAuthMiddleware, isAPIError } from "better-auth/api";
+import { APIError, createAuthMiddleware, isAPIError } from "better-auth/api";
 import { bearer } from "better-auth/plugins";
 import type { BetterAuthPlugin } from "better-auth/types";
 import bcrypt from "bcryptjs";
@@ -13,6 +13,13 @@ import type { DataModel } from "./_generated/dataModel";
 // (deploy key) and the Worker gateway in http.ts can call them.
 import { internalMutation as mutation, internalQuery as query } from "./_generated/server";
 import authConfig from "./auth.config";
+import {
+  recordAfterFailure,
+  retryAfterMessage,
+  retryAfterMs,
+  signInEmailKey,
+  FORGET_AFTER_MS,
+} from "./signInThrottle";
 import {
   appUrl,
   authBaseUrl,
@@ -208,6 +215,64 @@ function sleep(ms: number) {
  * answers 422 USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL for an address that has
  * an account, and the app says so, so account existence stays discoverable.
  */
+const SIGN_IN_EMAIL_PATH = "/sign-in/email";
+
+/**
+ * Email sign-in waits after repeated wrong passwords for the same address
+ * (convex/signInThrottle.ts). The before hook refuses a sign-in that must
+ * still wait with 429 and the wait in words; the after hook counts a wrong
+ * password (401) and clears the count on a correct one. Server-side
+ * `auth.api` calls without a body are not counted.
+ */
+function signInBackoff(ctx: AdapterCtx): BetterAuthPlugin {
+  const isEmailSignIn = (context: { path?: string }) => context.path === SIGN_IN_EMAIL_PATH;
+  const emailOf = (context: { body?: unknown }) => {
+    const email = (context.body as { email?: unknown } | undefined)?.email;
+    return typeof email === "string" && email.trim() ? email : null;
+  };
+  return {
+    id: "glasstunnel-sign-in-backoff",
+    hooks: {
+      before: [
+        {
+          matcher: isEmailSignIn,
+          handler: createAuthMiddleware(async (context) => {
+            const email = emailOf(context);
+            if (!email) return;
+            const emailKey = await signInEmailKey(email);
+            const wait: number = await ctx.runQuery(internal.auth.signInRetryAfter, { emailKey, now: Date.now() });
+            if (wait > 0) {
+              throw new APIError(
+                "TOO_MANY_REQUESTS",
+                { message: retryAfterMessage(wait), code: "TOO_MANY_SIGN_IN_ATTEMPTS" },
+                { "Retry-After": String(Math.ceil(wait / 1000)) },
+              );
+            }
+          }),
+        },
+      ],
+      after: [
+        {
+          matcher: isEmailSignIn,
+          handler: createAuthMiddleware(async (context) => {
+            const email = emailOf(context);
+            if (!email || !isRunMutationCtx(ctx)) return;
+            const returned = context.context.returned;
+            const emailKey = await signInEmailKey(email);
+            if (isAPIError(returned)) {
+              if (returned.statusCode === 401) {
+                await ctx.runMutation(internal.auth.recordSignInFailure, { emailKey, now: Date.now() });
+              }
+              return;
+            }
+            await ctx.runMutation(internal.auth.clearSignInFailures, { emailKey });
+          }),
+        },
+      ],
+    },
+  };
+}
+
 function uniformPasswordResetTiming(): BetterAuthPlugin {
   const startedAt = new WeakMap<Request, number>();
   const isResetRequest = (context: { path?: string }) => context.path === PASSWORD_RESET_REQUEST_PATH;
@@ -288,6 +353,7 @@ export const createAuthOptions = (ctx: AdapterCtx) =>
           }),
         },
       }),
+      signInBackoff(ctx),
       // Last, so its after hook also covers the other plugins' after hooks.
       uniformPasswordResetTiming(),
     ],
@@ -566,6 +632,70 @@ export const signOutSession = mutation({
 });
 
 /** Deletes an account's outstanding password reset tokens (Better Auth verification rows). */
+export const signInRetryAfter = query({
+  args: { emailKey: v.string(), now: v.number() },
+  returns: v.number(),
+  handler: async (ctx, args) => {
+    const record = await ctx.db
+      .query("signInThrottles")
+      .withIndex("by_email_key", (q) => q.eq("emailKey", args.emailKey))
+      .unique();
+    return retryAfterMs(record, args.now);
+  },
+});
+
+export const recordSignInFailure = mutation({
+  args: { emailKey: v.string(), now: v.number() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("signInThrottles")
+      .withIndex("by_email_key", (q) => q.eq("emailKey", args.emailKey))
+      .unique();
+    const next = recordAfterFailure(existing, args.now);
+    if (existing) {
+      await ctx.db.patch(existing._id, next);
+    } else {
+      await ctx.db.insert("signInThrottles", { emailKey: args.emailKey, ...next });
+    }
+    return null;
+  },
+});
+
+export const clearSignInFailures = mutation({
+  args: { emailKey: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("signInThrottles")
+      .withIndex("by_email_key", (q) => q.eq("emailKey", args.emailKey))
+      .unique();
+    if (existing) await ctx.db.delete(existing._id);
+    return null;
+  },
+});
+
+const SIGN_IN_THROTTLE_PRUNE_BATCH = 500;
+
+/** Daily: forget addresses with no wrong password for a day. */
+export const pruneSignInThrottles = mutation({
+  args: {},
+  returns: v.number(),
+  handler: async (ctx): Promise<number> => {
+    const stale = await ctx.db
+      .query("signInThrottles")
+      .withIndex("by_last_failure", (q) => q.lt("lastFailureAt", Date.now() - FORGET_AFTER_MS))
+      .take(SIGN_IN_THROTTLE_PRUNE_BATCH);
+    for (const row of stale) {
+      await ctx.db.delete(row._id);
+    }
+    if (stale.length === SIGN_IN_THROTTLE_PRUNE_BATCH) {
+      await ctx.scheduler.runAfter(0, internal.auth.pruneSignInThrottles, {});
+    }
+    return stale.length;
+  },
+});
+
 export const revokePasswordResetLinks = mutation({
   args: { userId: v.string() },
   returns: v.null(),
