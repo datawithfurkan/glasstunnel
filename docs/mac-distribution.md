@@ -4,12 +4,12 @@ The Swift package under `apps/host-macos` builds as an `executable` target, whic
 
 ## Verified baseline
 
-Apple accepted and notarized `Glasstunnel-0.1.12.dmg` (the first designed
-installer window) from source commit `f094160b`. Stapling, Gatekeeper assessment,
-isolated install/reinstall and 0.1.11 → 0.1.12 upgrade, stable latest-download
-asset preparation, the signed update feed (`appcast.xml`), and cask metadata
-validation all passed. The published artifact and cask use SHA-256
-`16291ce571d67d899cc42e5c1614d4fa847b26220d84f3a89e0d50bc4da795a0`.
+Apple accepted and notarized `Glasstunnel-0.1.13.dmg` from source commit
+`a1d3537f`. Stapling, Gatekeeper assessment, isolated install/reinstall and
+0.1.12 → 0.1.13 upgrade, an in-app update from the published 0.1.12, stable
+latest-download asset preparation, the signed update feed (`appcast.xml`), and
+cask metadata validation all passed. The published artifact and cask use SHA-256
+`9138bceccd8e5af33a7e0a71e0b881afee62d3274aa3f1293a63966e56ed60b1`.
 
 ## One-time setup
 

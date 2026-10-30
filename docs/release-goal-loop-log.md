@@ -243,3 +243,19 @@ changes or a blocker is materially narrowed.
 - Next action: None for this release; the next loop returns to the product backlog.
 - End commit: The release documentation and cask commit after `f094160b` is the result of record.
 - CI/deploy: CI is green on `f094160b`; no deploy is needed because the website download uses the latest-release alias and the feed redirect was already live.
+
+## 2026-10-30 16:30 - October security review: Mac release
+
+- Start commit: a1d3537f
+- Release gate: Ship the Mac side of the October security review (pull request #55) in a signed, notarized 0.1.13, delivered to 0.1.11+ Macs through the in-app updater, after the web, Worker, and Convex fixes (pull requests #52-#54) were deployed.
+- Why chosen: The public launch prompted a full security review; its Critical finding (a link that leaked the session token) and the sign-in and abuse fixes are live, and the remaining Mac findings need a Mac release.
+- Files changed: Mac host (isolated-mode hook Python, release builds ignoring endpoint and key-file overrides, relay commands only from known browsers, Mac-owned app switch with migration, honest permission strings, sign-in hint), lab harness and journeys (no app turned off on the lab Mac; Add after link-code sign-in; account-wide sign-out notice), release docs, evidence, cask.
+- Validation: CI (five checks) on pull request #55 and on `main` at `a1d3537f`; full `swift test`; at `a1d3537f` `pnpm qa:terminal`, `pnpm qa:screen-state`, and both Mac Screen lanes; on the pull request the default, retention, revocation, and device-management journeys; Developer ID signing, Apple notarization, stapling, Gatekeeper assessment, isolated install/reinstall and 0.1.12 → 0.1.13 upgrade smoke; the tracked cask audit and a disposable cask install; the appcast and DMG signatures verified against the committed public key.
+- Manual testing: The published 0.1.12 app on the development Mac offered 0.1.13 through Check for Updates; Install Update and Install and Relaunch replaced it, and the relaunched 0.1.13 from `a1d3537f` passed Gatekeeper, came back signed in with Screen Recording and Accessibility still allowed, reconnected, and rewrote the Claude Code hooks with `python3 -I` (recorded as the auth-relaunch and permission-onboarding Mac-app records at `a1d3537f`).
+- Evidence recorded: The DMG is tied to source commit `a1d3537f`; SHA-256 is `9138bceccd8e5af33a7e0a71e0b881afee62d3274aa3f1293a63966e56ed60b1`; Apple submission ID is `dcab3762-05b5-4df3-8ab2-43f90be00278`. `v0.1.13` tags `a1d3537f`; the latest-download alias and the live feed were verified byte for byte.
+- Outcome: passed
+- Uncertainty: Cursor hook commands are rewritten when the Cursor card starts, not at launch; on the development Mac they were switched to isolated mode by hand (backup kept). A Mac whose Mac Screen was off in the app's list before the upgrade now needs the Mac's own switch to use Mac Screen remotely. No phone-sized browser session ran against the updated app.
+- Stale-loop risk: Low; one notarization submission, one tag, one release, and one docs/cask push.
+- Next action: Install the Cursor hooks at launch; finish the remaining review items (email verification, OAuth token storage, CI pinning and permissions, WebRTC update, Go 1.26.10).
+- End commit: The release documentation and cask commit after `a1d3537f` is the result of record.
+- CI/deploy: CI is green on `a1d3537f`; the Mac change needs no deploy.
