@@ -428,6 +428,10 @@ const OFFLINE_QUEUE_TTL_MS = 60_000;
 const HOST_LINK_CODE_TTL_MS = 10 * 60_000;
 const APPROVAL_REQUEST_TTL_MS = 10 * 60_000;
 const MAX_QUEUED_PER_PEER = 256;
+/** A queued envelope larger than this is dropped; SDP offers and ICE candidates are a few KiB. */
+const MAX_QUEUED_ENVELOPE_CHARS = 64 * 1024;
+/** Client-supplied TURN settings stored with a link code; longer values are dropped. */
+const MAX_HOST_METADATA_FIELD_CHARS = 512;
 const LAST_SEEN_TOUCH_MIN_INTERVAL_MS = 60_000;
 const ACCOUNT_AUTH_CACHE_TTL_MS = 2 * 60_000;
 const GLOBAL_HUB_NAME = "global";
@@ -674,6 +678,19 @@ async function verifyEd25519(
 
 function stringField(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+/** A string no longer than `max` characters, or "". */
+function boundedStringField(value: unknown, max: number): string {
+  const text = stringField(value);
+  return text.length <= max ? text : "";
+}
+
+const DEVICE_ID_PATTERN = /^gt-[0-9a-f]{16}$/;
+
+/** A device id as deviceIdFromPublicKey makes them: "gt-" and 16 hex digits. */
+function isDeviceId(value: string): boolean {
+  return DEVICE_ID_PATTERN.test(value);
 }
 
 function boolField(value: unknown): boolean {
@@ -2250,8 +2267,8 @@ export class SignalingHub extends DurableObject<Env> {
 
   private async revokeAccountDevice(ws: WebSocket, session: SessionAttachment, message: ControlMessage): Promise<void> {
     const deviceId = stringField(message.device_id);
-    const requestId = stringField(message.request_id);
-    if (!deviceId || !requestId || !session.deviceId || !session.publicKeyB64) return;
+    const requestId = boundedStringField(message.request_id, 128);
+    if (!isDeviceId(deviceId) || !requestId || !session.deviceId || !session.publicKeyB64) return;
     let ok = false;
     try {
       const host = await findDeviceByDeviceId(this.env, session.deviceId);
@@ -2311,9 +2328,9 @@ export class SignalingHub extends DurableObject<Env> {
     // A Mac's own signaling address is not stored: browsers would otherwise
     // be sent to it, carrying their account token. They use this service.
     const hostMetadata = {
-      turn_url: stringField(message.turn_url),
-      turn_username: stringField(message.turn_username),
-      turn_password: stringField(message.turn_password),
+      turn_url: boundedStringField(message.turn_url, MAX_HOST_METADATA_FIELD_CHARS),
+      turn_username: boundedStringField(message.turn_username, MAX_HOST_METADATA_FIELD_CHARS),
+      turn_password: boundedStringField(message.turn_password, MAX_HOST_METADATA_FIELD_CHARS),
     } satisfies Record<string, JsonValue>;
 
     let code = "";
@@ -2453,7 +2470,7 @@ export class SignalingHub extends DurableObject<Env> {
     if (!session?.authenticated || !session.deviceId) return;
     if (!isEnvelope(parsed)) return;
 
-    if (parsed.fromDeviceId !== session.deviceId || !parsed.toDeviceId) {
+    if (parsed.fromDeviceId !== session.deviceId || !isDeviceId(parsed.toDeviceId)) {
       return;
     }
     if (this.isRevokedEnvelope(parsed)) return;
@@ -2483,6 +2500,7 @@ export class SignalingHub extends DurableObject<Env> {
     }
 
     if (this.isRevokedEnvelope(parsed)) return;
+    if (raw.length > MAX_QUEUED_ENVELOPE_CHARS) return;
     const queue = this.offlineQueues.get(parsed.toDeviceId) ?? [];
     queue.push({ raw, enqueuedAt: Date.now(), source: {
       deviceId: session.deviceId, publicKeyB64: session.publicKeyB64, role: session.role,
@@ -3889,7 +3907,11 @@ export default {
       );
     } else if (url.pathname === "/relay") {
       const hostDeviceId = url.searchParams.get("host_device_id") ?? "";
-      if (!hostDeviceId) {
+      // Checked here so a request that cannot become a relay socket never
+      // creates or wakes a relay object.
+      if (!isWebSocketUpgrade(request)) {
+        response = json({ ok: false, error: "websocket upgrade required" }, { status: 426 });
+      } else if (!isDeviceId(hostDeviceId)) {
         response = json({ ok: false, error: "host_device_id is required" }, { status: 400 });
       } else {
         const id = env.RELAY_HUB.idFromName(hostDeviceId);
