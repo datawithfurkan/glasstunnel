@@ -77,15 +77,33 @@ describe('Glasstunnel signaling Worker', () => {
     expect(response.headers.get('access-control-allow-methods')).toBe('GET, POST, OPTIONS');
   });
 
-  it('rejects relay requests without a host device id', async () => {
-    const response = await fetchWorker('/relay');
+  it('answers a relay request that is not a WebSocket without reaching a relay', async () => {
+    const response = await fetchWorker('/relay?host_device_id=gt-0123456789abcdef');
 
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      ok: false,
-      error: 'host_device_id is required',
-    });
+    expect(response.status).toBe(426);
+    await expect(response.json()).resolves.toEqual({ ok: false, error: 'websocket upgrade required' });
   });
+
+  it.each([
+    ['no id', '', '203.0.113.11'],
+    ['an empty id', 'host_device_id=', '203.0.113.12'],
+    ['a malformed id', 'host_device_id=not-a-device', '203.0.113.13'],
+    ['an oversized id', `host_device_id=gt-${'a'.repeat(4000)}`, '203.0.113.14'],
+  ])(
+    'rejects relay sockets with %s',
+    async (_label, query, address) => {
+      // Each case from its own address: upgrades share a per-address rate limit.
+      const response = await fetchWorker(`/relay?${query}`, {
+        headers: { Upgrade: 'websocket', 'CF-Connecting-IP': address },
+      });
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toEqual({
+        ok: false,
+        error: 'host_device_id is required',
+      });
+    },
+  );
 
   it('rejects account registration without a bearer token', async () => {
     const response = await fetchWorker('/account/device/register', {

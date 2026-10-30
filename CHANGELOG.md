@@ -18,6 +18,10 @@ versioning after the first public beta; pre-release compatibility may still chan
   after five, each further try waits longer (30 seconds, doubling up to 15
   minutes), and the sign-in screen says how long. Google, GitHub, and password
   reset are not affected.
+- The signaling service refuses malformed device IDs, oversized TURN settings
+  and queued messages, and relay requests that are not WebSockets. A Mac keeps
+  at most three unused link codes, and codes are deleted a day after they
+  expire.
 
 ### Fixed
 

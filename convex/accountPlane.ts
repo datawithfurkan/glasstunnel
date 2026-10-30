@@ -1,7 +1,7 @@
 // Internal only: the Cloudflare Worker reaches these through the
 // shared-secret gateway in http.ts. Nothing here is callable from a browser.
 import { ConvexError, v } from "convex/values";
-import { components } from "./_generated/api";
+import { components, internal } from "./_generated/api";
 import { internalMutation as mutation, internalQuery as query, type MutationCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { checkHostLabel } from "./hostLabel";
@@ -693,7 +693,41 @@ export const createHostLinkCode = mutation({
       consumedAt: null,
       claimedUserId: null,
     });
+    // A Mac keeps its newest few unclaimed codes; older ones stop working.
+    const unclaimed = (await ctx.db
+      .query("hostLinkCodes")
+      .withIndex("by_host_device_id", (q) => q.eq("hostDeviceId", args.hostDeviceId))
+      .filter((q) => q.eq(q.field("consumedAt"), null))
+      .collect())
+      .sort((a, b) => b._creationTime - a._creationTime);
+    for (const row of unclaimed.slice(MAX_UNCLAIMED_LINK_CODES_PER_HOST)) {
+      await ctx.db.delete(row._id);
+    }
     return null;
+  },
+});
+
+const MAX_UNCLAIMED_LINK_CODES_PER_HOST = 3;
+const LINK_CODE_RETENTION_MS = 24 * 60 * 60 * 1000;
+const LINK_CODE_PRUNE_BATCH = 500;
+
+/** Daily: deletes link codes a day after they expired, claimed or not. */
+export const pruneHostLinkCodes = mutation({
+  args: {},
+  returns: v.number(),
+  handler: async (ctx): Promise<number> => {
+    const cutoff = new Date(Date.now() - LINK_CODE_RETENTION_MS).toISOString();
+    const stale = await ctx.db
+      .query("hostLinkCodes")
+      .withIndex("by_expires_at", (q) => q.lt("expiresAt", cutoff))
+      .take(LINK_CODE_PRUNE_BATCH);
+    for (const row of stale) {
+      await ctx.db.delete(row._id);
+    }
+    if (stale.length === LINK_CODE_PRUNE_BATCH) {
+      await ctx.scheduler.runAfter(0, internal.accountPlane.pruneHostLinkCodes, {});
+    }
+    return stale.length;
   },
 });
 

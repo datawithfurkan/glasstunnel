@@ -136,7 +136,9 @@ export default defineSchema({
   })
     .index("by_legacy_id", ["legacyId"])
     .index("by_code", ["code"])
-    .index("by_host_device_id", ["hostDeviceId"]),
+    .index("by_host_device_id", ["hostDeviceId"])
+    // ISO strings, so they sort by time: the daily prune (accountPlane:pruneHostLinkCodes).
+    .index("by_expires_at", ["expiresAt"]),
 
   deviceApprovalRequests: defineTable({
     legacyId: v.string(),
