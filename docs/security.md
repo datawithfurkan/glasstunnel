@@ -99,7 +99,16 @@ The signed signaling-envelope path verifies signatures against trusted device ke
 Hosted relay commands are a separate JSON protocol trusted through the authenticated
 server connection; they are not individually verified as signed phone envelopes by
 the Mac. Account discovery and server-origin authorization therefore remain part
-of the trust boundary.
+of the trust boundary. The Mac accepts a relay command only from a browser it
+knows: the relay announces each account-authorized browser before it can send
+one, so an id the Mac never saw is refused. Apps turned off in the Mac app stay
+off: a browser can stop an app but cannot turn one back on.
+
+The installed app (bundle `io.glasstunnel.host`) ignores signaling, web-app,
+device-key-file, and device-registry overrides from the environment or saved
+settings; development and lab builds keep them. The hook commands installed into
+Claude Code and Cursor run Python in isolated mode (`python3 -I`), so a module
+planted in a project folder is never imported.
 
 A custom signaling URL must belong to an operator the user trusts. The web app
 connects only to the signaling service it was built for (`VITE_SIGNALING_URL`)

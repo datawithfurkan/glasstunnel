@@ -15,6 +15,9 @@ struct TerminalLiveHostHarness {
             let defaults = UserDefaults(suiteName: "TerminalLiveHostHarness.\(deviceKey.deviceId)") ?? .standard
             defaults.set([], forKey: "remoteApps.enabled.v1")
             defaults.set(true, forKey: "remoteApps.terminalDefaultEnabled.v1")
+            // Every app starts off but none was turned off on this Mac: the
+            // phone in the lab launches Terminal and Mac Screen itself.
+            defaults.set([], forKey: "remoteApps.hostDisabled.v1")
 
             let remoteApps = RemoteAppController(defaults: defaults)
             let syntheticScreenEnabled = env["GT_TERMINAL_LIVE_SYNTHETIC_SCREEN"] == "1"

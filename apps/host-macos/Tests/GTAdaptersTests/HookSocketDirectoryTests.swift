@@ -72,6 +72,33 @@ final class HookSocketDirectoryTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: listener.path))
     }
 
+    func testInstalledCommandsNeverImportModulesFromTheProjectFolder() throws {
+        // Claude Code and Cursor run hooks in the project folder. A repository
+        // can ship a json.py (or socket.py, glob.py) that Python would import.
+        let project = directory.appendingPathComponent("project", isDirectory: true)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        let marker = directory.appendingPathComponent("planted-module-ran").path
+        for module in ["json", "socket", "glob", "os"] {
+            try "open(\(String(reflecting: marker)), \"w\").write(\"\(module)\")\n"
+                .write(to: project.appendingPathComponent("\(module).py"), atomically: true, encoding: .utf8)
+        }
+
+        for command in [ClaudeCodeHookInstaller().commandFor(event: "Stop"), CursorHookInstaller.hookCommand()] {
+            XCTAssertTrue(command.contains("python3 -I -c"), "isolated mode: no project folder on sys.path")
+            let hook = Process()
+            hook.executableURL = URL(fileURLWithPath: "/bin/bash")
+            hook.arguments = ["-c", command]
+            hook.currentDirectoryURL = project
+            let input = Pipe()
+            hook.standardInput = input
+            try hook.run()
+            input.fileHandleForWriting.write(Data("{\"hook_event_name\":\"Stop\"}".utf8))
+            try input.fileHandleForWriting.close()
+            hook.waitUntilExit()
+            XCTAssertFalse(FileManager.default.fileExists(atPath: marker), "a module planted in the project ran")
+        }
+    }
+
     func testInstalledCommandsNameEveryHostAndTheLegacyPath() {
         // The override points the glob at this test's directory; the real
         // command names the hooks directory under Application Support.

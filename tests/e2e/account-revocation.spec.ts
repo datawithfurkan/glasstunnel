@@ -69,6 +69,8 @@ test('@revocation-account host permissions and revocation isolate two browsers',
     await page.getByRole('button', { name: 'Continue with email', exact: true }).click();
     await page.getByPlaceholder('Enter your password').fill(process.env.GT_LAB_PASSWORD!);
     await page.getByRole('button', { name: 'Sign in', exact: true }).last().click();
+    // A code that arrives in a link is only filled in; adding the Mac takes Add.
+    await page.getByRole('button', { name: /^Add (this )?Mac$/ }).filter({ visible: true }).first().click();
     // Never run markers in an existing user's default Terminal session.
     await marker(page, 'REVOCATION_BEFORE', true);
     await signIn(second);
@@ -121,12 +123,13 @@ test('@revocation-account host permissions and revocation isolate two browsers',
       try { return JSON.parse(await readFile(control + '.result', 'utf8')); }
       catch { return null; }
     }, { timeout: 35_000 }).toEqual({ requestID, confirmed: true });
-    await expect(page.getByText(/Access to this Mac was revoked/)).toBeVisible();
+    // Account-wide access: the Mac signs this browser out of the account.
+    await expect(page.getByText('One of your Macs signed this browser out. Sign in again to use your Macs.')).toBeVisible({ timeout: 20_000 });
     await expect(page.getByRole('textbox', { name: 'Read-only mode', exact: true })).toHaveCount(0);
     await page.screenshot({ path: testInfo.outputPath('access-revoked.png'), fullPage: true });
     await marker(second, 'SECOND_BROWSER_AFTER');
     await page.reload();
-    await expect(page.getByRole('heading', { name: 'Your Macs', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Open your agents', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Open', exact: true })).toHaveCount(0);
   } finally {
     await testInfo.attach('terminal-status', { body: JSON.stringify(states), contentType: 'application/json' });

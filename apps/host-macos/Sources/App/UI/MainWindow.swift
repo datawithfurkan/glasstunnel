@@ -370,7 +370,7 @@ private struct AccountLinkGateView: View {
     }
 
     private var signInSubtitle: String {
-        openingMethod == nil ? "Link this Mac to your account." : "Complete sign in in your browser."
+        openingMethod == nil ? "Link this Mac to your account." : "Sign in in your browser, then choose Add."
     }
 
     @MainActor

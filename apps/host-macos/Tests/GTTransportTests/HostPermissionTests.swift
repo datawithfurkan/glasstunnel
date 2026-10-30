@@ -27,6 +27,19 @@ final class HostPermissionTests: XCTestCase {
         XCTAssertEqual(h.clicks, 1)
     }
 
+    func testRelayCommandsFromABrowserThisMacNeverSawAreIgnored() async throws {
+        let h = try PermissionHarness()
+        // Never announced by the relay: not in this Mac's Access list.
+        h.manager.handleRelayCommand(h.pointer, from: "unannounced")
+        h.manager.handleRelayCommand(h.pointer, from: nil)
+        await h.settle()
+        XCTAssertEqual(h.clicks, 0)
+
+        h.manager.handleRelayCommand(h.pointer, from: "first")
+        await h.settle()
+        XCTAssertEqual(h.clicks, 1)
+    }
+
     func testQueuedRelayControlRechecksHostRestriction() async throws {
         let h = try PermissionHarness()
         h.manager.handleRelayCommand(h.pointer, from: "first")
@@ -107,8 +120,13 @@ private final class PermissionHarness {
         session = Session(peer: peer, phoneDeviceID: "first", hostDeviceKey: key,
             signaling: SignalingClient(url: url, deviceKey: key), autoLock: lock, remoteAppController: controller,
             screenPointerInputHandler: { [weak self] _ in self?.clicks += 1 })
+        // The relay announces each signed-in browser before it can send commands.
+        let registry = DeviceRegistry(fileURL: directory.appendingPathComponent("devices.json"))
+        for browser in ["first", "second"] {
+            _ = try registry.add(.init(deviceId: browser, publicKey: Data(repeating: 1, count: 32), label: browser))
+        }
         manager = SessionManager(deviceKey: key, signalingURL: url, turnURL: "", hostDeviceLabel: "Test",
-            autoLock: lock, registry: DeviceRegistry(fileURL: directory.appendingPathComponent("devices.json")),
+            autoLock: lock, registry: registry,
             remoteAppController: controller, screenPointerInputHandler: { [weak self] _ in self?.clicks += 1 })
     }
 

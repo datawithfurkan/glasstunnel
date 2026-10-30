@@ -844,6 +844,7 @@ final class AppState: ObservableObject {
             return explicit
         }
         if
+            GlasstunnelProtocol.allowsEndpointOverrides(),
             let raw = defaults.string(forKey: DefaultsKey.signalingURL),
             let url = URL(string: raw)
         {
@@ -864,6 +865,7 @@ final class AppState: ObservableObject {
             return explicit
         }
         if
+            GlasstunnelProtocol.allowsEndpointOverrides(),
             let raw = defaults.string(forKey: DefaultsKey.webAppURL),
             let url = URL(string: raw)
         {

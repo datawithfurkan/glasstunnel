@@ -84,11 +84,13 @@ public final class ClaudeCodeHookInstaller: @unchecked Sendable {
         // metadata to Glasstunnel; transcript content is read from Claude's
         // local JSONL store by `ClaudeCodeSessionParser`. The event goes to
         // every running host (see `HookSocketDirectory`) and to the legacy
-        // single socket path that hosts before 0.1.10 bind.
+        // single socket path that hosts before 0.1.10 bind. `-I` (isolated
+        // mode): hooks run in the project folder, and without it Python would
+        // import a `json.py` or `socket.py` planted there.
         let socket = ClaudeCodeHookInstaller.socketPath
         let delivery = HookSocketDirectory.pythonDelivery(family: "cc", legacyPath: socket)
         return """
-        /bin/bash -c 'python3 -c '"'"'import json, socket, sys
+        /bin/bash -c 'python3 -I -c '"'"'import json, socket, sys
         try:
             payload = json.load(sys.stdin)
         except Exception:

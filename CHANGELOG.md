@@ -22,11 +22,24 @@ versioning after the first public beta; pre-release compatibility may still chan
   and queued messages, and relay requests that are not WebSockets. A Mac keeps
   at most three unused link codes, and codes are deleted a day after they
   expire.
+- Mac app: the hook commands Glasstunnel installs into Claude Code and Cursor
+  run Python in isolated mode, so a `json.py` or similar file in a project
+  folder is never run. They update themselves when the app starts.
+- Mac app: the installed app ignores server-address, device-key, and
+  device-list overrides from the environment or saved settings, so other
+  software on the Mac cannot redirect it or the code it opens in your browser.
+- Mac app: relay commands are accepted only from browsers this Mac knows, and an
+  app turned off in the Mac app (Terminal, Mac Screen, an agent) can no longer be
+  turned back on from a browser; the browser says it is turned off on the Mac.
+- Mac app: the Screen Recording and Accessibility prompts describe what
+  Glasstunnel does with them.
 
 ### Fixed
 
 - The Homebrew command on glasstunnel.io includes the tap's URL; without it,
   `brew tap` looked for a repository that does not exist.
+- The Mac's sign-in screen says to choose **Add** in the browser after signing
+  in, which adding a Mac now takes.
 
 ## 0.1.12 - A designed installer window
 

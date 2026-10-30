@@ -67,6 +67,7 @@ final class SessionManagerTests: XCTestCase {
         let registry = DeviceRegistry(fileURL: directory.appendingPathComponent("devices.json"))
         let phone = DeviceKey()
         try registry.add(.init(deviceId: phone.deviceId, publicKey: phone.publicKeyRaw, label: "Local test"))
+        try registry.add(.init(deviceId: "other-phone", publicKey: DeviceKey().publicKeyRaw, label: "Other test"))
         let defaultsName = "UploadRevocationTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: defaultsName)!
         defer { defaults.removePersistentDomain(forName: defaultsName) }

@@ -115,7 +115,7 @@ public final class CursorHookInstaller: @unchecked Sendable {
     static func hookCommand() -> String {
         let delivery = HookSocketDirectory.pythonDelivery(family: "cursor", legacyPath: socketPath)
         return """
-        /bin/bash -c 'python3 -c '"'"'import json, socket, sys
+        /bin/bash -c 'python3 -I -c '"'"'import json, socket, sys
         try:
             p = json.load(sys.stdin)
         except Exception:

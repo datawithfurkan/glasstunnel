@@ -190,7 +190,8 @@ public final class DeviceRegistry: @unchecked Sendable {
     }
 
     private static func defaultFileURL(environment: [String: String]) -> URL {
-        if let path = environment[fileEnvironmentKey]?.trimmingCharacters(in: .whitespacesAndNewlines),
+        if GlasstunnelProtocol.allowsEndpointOverrides(),
+           let path = environment[fileEnvironmentKey]?.trimmingCharacters(in: .whitespacesAndNewlines),
            !path.isEmpty {
             return URL(fileURLWithPath: path)
         }
