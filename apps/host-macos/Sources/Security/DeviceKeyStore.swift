@@ -1,4 +1,5 @@
 import Foundation
+import GTProtocol
 
 /// Persistent store for the host's DeviceKey. Lazily generates on first use.
 public final class DeviceKeyStore: @unchecked Sendable {
@@ -40,7 +41,12 @@ public final class DeviceKeyStore: @unchecked Sendable {
         return "\(hostKeyAccountBase).\(sanitized)"
     }
 
-    static func resolveDevKeyFileURL(environment: [String: String]) -> URL? {
+    static func resolveDevKeyFileURL(
+        environment: [String: String],
+        allowsOverrides: Bool = GlasstunnelProtocol.allowsEndpointOverrides()
+    ) -> URL? {
+        // The release app keeps its key in the Keychain only.
+        guard allowsOverrides else { return nil }
         if let rawPath = environment[devKeyFileEnvironmentKey]?.trimmingCharacters(in: .whitespacesAndNewlines),
            !rawPath.isEmpty {
             return URL(fileURLWithPath: rawPath)

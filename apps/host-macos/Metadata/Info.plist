@@ -42,8 +42,8 @@
     <key>SUVerifyUpdateBeforeExtraction</key>
     <true/>
     <key>NSAccessibilityUsageDescription</key>
-    <string>Glasstunnel uses Accessibility to target the chat input fields of your local AI coding agents so the prompts you type on your phone land in the right place.</string>
+    <string>Glasstunnel uses Accessibility to type the prompts you send from your browser into your coding agents, and to click and type on this Mac when you control Mac Screen remotely.</string>
     <key>NSScreenCaptureUsageDescription</key>
-    <string>Glasstunnel captures the specific windows you pick (never your whole screen) and streams them over an end-to-end encrypted tunnel to your signed-in devices.</string>
+    <string>Glasstunnel captures this Mac's screen or the windows you pick and streams them to your signed-in browsers when you open Mac Screen there.</string>
 </dict>
 </plist>

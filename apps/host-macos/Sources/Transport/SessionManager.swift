@@ -1696,9 +1696,13 @@ public final class SessionManager {
 
     // MARK: - Envelope routing
 
+    /// A relay command is accepted only from a browser this Mac knows: the
+    /// relay announces every account-authorized browser
+    /// (`account_device_authorized`) before it can send one, and a device the
+    /// Mac never saw cannot appear in, or be signed out from, its Access list.
     private func isRelayClientAllowed(_ id: DeviceID?) -> Bool {
         guard let id, !id.isEmpty else { return false }
-        return !registry.isRevoked(id)
+        return registry.isKnown(id)
     }
 
     private func permitsRelayControl(_ message: DataChannelMessage, from id: DeviceID?) -> Bool {

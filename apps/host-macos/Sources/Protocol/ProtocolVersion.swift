@@ -65,8 +65,21 @@ public enum GlasstunnelProtocol {
         return FileManager.default.fileExists(atPath: marker)
     }
 
+    /// The installed release app's bundle identifier.
+    public static let releaseBundleIdentifier = "io.glasstunnel.host"
+
+    /// Whether this build honors endpoint, key-file, and registry overrides
+    /// from the environment or saved settings. The release app does not: on a
+    /// user's Mac anything running as that user could otherwise point it (and
+    /// the one-time code it hands the browser) at another server. Development
+    /// and lab builds (`.dev`, `.lab`) and `swift run` keep them.
+    public static func allowsEndpointOverrides(bundleIdentifier: String? = Bundle.main.bundleIdentifier) -> Bool {
+        bundleIdentifier != releaseBundleIdentifier
+    }
+
     private static func urlFromEnvironment(_ key: String) -> URL? {
         guard
+            allowsEndpointOverrides(),
             let raw = ProcessInfo.processInfo.environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
             !raw.isEmpty,
             let url = URL(string: raw),

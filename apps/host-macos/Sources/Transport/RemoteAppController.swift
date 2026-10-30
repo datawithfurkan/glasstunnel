@@ -320,12 +320,16 @@ public final class RemoteAppController {
         static let terminalSessionLabels = "remoteApps.terminalSessionLabels.v1"
         static let terminalSessionNames = "remoteApps.terminalSessionNames.v1"
         static let preferredWindow = "remoteApps.preferredWindow.v1"
+        static let hostDisabled = "remoteApps.hostDisabled.v1"
     }
 
     private let defaults: UserDefaults
     private let redactor: SecretRedactor
     private var windows: [CapturableWindow] = []
     private var enabledIDs: Set<String>
+    /// Apps turned off in the Mac app. A browser can stop them but not turn
+    /// them back on: only the Mac's own switch does.
+    private var hostDisabledIDs: Set<String>
     private var preferredWindowKeys: [String: String]
     private var adapters: [String: any AgentAdapter] = [:]
     private var adapterObservers: [String: Task<Void, Never>] = [:]
@@ -423,6 +427,14 @@ public final class RemoteAppController {
             self.enabledIDs = ["screen", "terminal"]
             defaults.set(true, forKey: DefaultsKey.terminalDefaultEnabledMigration)
         }
+        if let stored = defaults.stringArray(forKey: DefaultsKey.hostDisabled) {
+            self.hostDisabledIDs = Set(stored)
+        } else {
+            // Terminal and Mac Screen start on, so one that is off was turned
+            // off on this Mac before the switch became the Mac's alone.
+            self.hostDisabledIDs = Set(["screen", "terminal"]).subtracting(enabledIDs)
+            defaults.set(Array(hostDisabledIDs).sorted(), forKey: DefaultsKey.hostDisabled)
+        }
         if let data = defaults.data(forKey: DefaultsKey.preferredWindow),
            let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
             self.preferredWindowKeys = decoded
@@ -459,6 +471,12 @@ public final class RemoteAppController {
     }
 
     public func setEnabled(remoteAppId: String, enabled: Bool) {
+        if enabled {
+            hostDisabledIDs.remove(remoteAppId)
+        } else {
+            hostDisabledIDs.insert(remoteAppId)
+        }
+        defaults.set(Array(hostDisabledIDs).sorted(), forKey: DefaultsKey.hostDisabled)
         if !enabled, let definition = RemoteAppDefinition.definition(for: remoteAppId) {
             stopRemoteApp(definition)
             return
@@ -627,6 +645,17 @@ public final class RemoteAppController {
         #if os(macOS)
         remoteAppControllerLogger.info("remote app action handling remoteAppId=\(request.remoteAppId, privacy: .public) agentId=\(definition.agentId, privacy: .public) action=\(request.action.rawValue, privacy: .public)")
         #endif
+
+        let turnsOn: Set<RemoteAppActionRequest.Action> = [.enable, .start, .launch, .newSession]
+        if turnsOn.contains(request.action), hostDisabledIDs.contains(definition.remoteAppId) {
+            emitStatusSnapshot(
+                definition: definition,
+                status: .error,
+                detail: "Turned off on this Mac",
+                text: "\(definition.displayName) is turned off in Glasstunnel on the Mac. Turn it on there to use it from here."
+            )
+            return
+        }
 
         switch request.action {
         case .disable, .stop:

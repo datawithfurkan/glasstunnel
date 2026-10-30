@@ -913,7 +913,7 @@ final class RemoteAppControllerTests: XCTestCase {
         ))
 
         XCTAssertEqual(resetSessions, [TerminalSessionConfiguration.sharedSessionName])
-        XCTAssertEqual(controller.remoteAppsSnapshot().first { $0.remoteAppId == "terminal" }?.enabled, false)
+        XCTAssertFalse(enabledApps(defaults).contains("terminal"))
         XCTAssertTrue(snapshots.contains { snapshot in
             snapshot.agentId == "terminal" &&
             snapshot.status == .idle &&
@@ -1265,6 +1265,49 @@ final class RemoteAppControllerTests: XCTestCase {
         XCTAssertEqual(screen?.enabled, true)
         XCTAssertEqual(screen?.status, .idle)
         XCTAssertEqual(screen?.statusDetail, "Screen ready")
+    }
+
+    func testAppTurnedOffOnTheMacCannotBeTurnedBackOnFromABrowser() async throws {
+        let defaults = isolatedDefaults()
+        let controller = RemoteAppController(defaults: defaults, executableExists: { _ in false })
+        let snapshots = SnapshotRecorder()
+        controller.onAgentState = { snapshot in
+            snapshots.append(snapshot)
+        }
+        controller.setEnabled(remoteAppId: "terminal", enabled: false)
+
+        for action: RemoteAppActionRequest.Action in [.enable, .start, .launch, .newSession] {
+            try await controller.performRemoteAppAction(RemoteAppActionRequest(remoteAppId: "terminal", action: action))
+        }
+
+        XCTAssertFalse(enabledApps(defaults).contains("terminal"))
+        XCTAssertTrue(snapshots.contains { snapshot in
+            snapshot.agentId == "terminal" &&
+            snapshot.status == .error &&
+            snapshot.statusDetail == "Turned off on this Mac"
+        })
+
+        // The Mac's own switch, and a fresh launch after a restart, keep the choice.
+        let reopened = RemoteAppController(defaults: defaults, executableExists: { _ in false })
+        try await reopened.performRemoteAppAction(RemoteAppActionRequest(remoteAppId: "terminal", action: .launch))
+        XCTAssertFalse(enabledApps(defaults).contains("terminal"))
+        reopened.setEnabled(remoteAppId: "terminal", enabled: true)
+        XCTAssertFalse((defaults.stringArray(forKey: "remoteApps.hostDisabled.v1") ?? []).contains("terminal"))
+    }
+
+    private func enabledApps(_ defaults: UserDefaults) -> [String] {
+        defaults.stringArray(forKey: "remoteApps.enabled.v1") ?? []
+    }
+
+    func testTerminalOffBeforeTheUpgradeCountsAsTurnedOffOnTheMac() async throws {
+        let defaults = isolatedDefaults()
+        defaults.set(["screen"], forKey: "remoteApps.enabled.v1")
+        defaults.set(true, forKey: "remoteApps.terminalDefaultEnabled.v1")
+        let controller = RemoteAppController(defaults: defaults, executableExists: { _ in false })
+
+        try await controller.performRemoteAppAction(RemoteAppActionRequest(remoteAppId: "terminal", action: .launch))
+
+        XCTAssertFalse(enabledApps(defaults).contains("terminal"))
     }
 
     func testUnavailableRemoteAppActionPublishesErrorSnapshot() async throws {

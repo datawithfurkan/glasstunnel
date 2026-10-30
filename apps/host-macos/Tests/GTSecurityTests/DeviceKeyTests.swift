@@ -48,6 +48,20 @@ final class DeviceKeyTests: XCTestCase {
         XCTAssertEqual(url.lastPathComponent, "host.private_key.key")
     }
 
+    func testReleaseAppIgnoresKeyFileOverrides() {
+        // Anything running as the user could otherwise swap the Mac's identity.
+        let environment = ["GLASSTUNNEL_DEV": "1", "GLASSTUNNEL_DEV_DEVICE_KEY_FILE": "/tmp/planted.key"]
+        XCTAssertNil(DeviceKeyStore.resolveDevKeyFileURL(environment: environment, allowsOverrides: false))
+        XCTAssertNotNil(DeviceKeyStore.resolveDevKeyFileURL(environment: environment, allowsOverrides: true))
+    }
+
+    func testOnlyTheReleaseBundleRefusesEndpointOverrides() {
+        XCTAssertFalse(GlasstunnelProtocol.allowsEndpointOverrides(bundleIdentifier: "io.glasstunnel.host"))
+        XCTAssertTrue(GlasstunnelProtocol.allowsEndpointOverrides(bundleIdentifier: "io.glasstunnel.host.dev"))
+        XCTAssertTrue(GlasstunnelProtocol.allowsEndpointOverrides(bundleIdentifier: "io.glasstunnel.host.lab"))
+        XCTAssertTrue(GlasstunnelProtocol.allowsEndpointOverrides(bundleIdentifier: nil), "swift run has no bundle")
+    }
+
     func testDeviceKeyStoreDevFileRoundTripAndReset() throws {
         let tmp = FileManager.default.temporaryDirectory
             .appendingPathComponent("glasstunnel-device-key-\(UUID().uuidString).key")
