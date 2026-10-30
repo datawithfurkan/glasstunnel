@@ -3,6 +3,16 @@
 Notable user-facing changes are recorded here. Glasstunnel follows semantic
 versioning after the first public beta; pre-release compatibility may still change.
 
+## Unreleased
+
+### Installing
+
+- The downloaded disk image opens a designed installer window: the Glasstunnel
+  app and the Applications folder sit on artwork with an arrow between them,
+  "Drag Glasstunnel into Applications", and the next step (sign in on your
+  phone at app.glasstunnel.io). The disk shows the Glasstunnel icon. Updates
+  installed from inside the app skip this window.
+
 ## 0.1.11 - Updates in the app, a menu bar icon, account-wide access
 
 ### Updates

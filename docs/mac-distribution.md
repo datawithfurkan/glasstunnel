@@ -86,6 +86,18 @@ release signing, and creates `dist/Glasstunnel-0.1.0.dmg`.
 
 This mode is for local packaging checks only. It does not prove Developer ID signing, notarization, Gatekeeper behavior, or production macOS TCC identity.
 
+### Installer window
+
+`scripts/build-app.sh` packages the app with `scripts/dmg/build-dmg.sh`: a
+660x400 window with the drag-to-Applications artwork, the app and an
+`/Applications` link placed on it, and the app icon as the disk icon.
+[dmgbuild](https://github.com/dmgbuild/dmgbuild) (pinned, installed once into
+`apps/host-macos/.build/dmg-tools`) writes the Finder layout, so no Finder
+scripting or Automation permission is involved. The artwork lives in
+`apps/host-macos/Metadata/dmg/`; after changing `scripts/dmg/background.py`,
+regenerate it with that venv's Python after `pip install Pillow` there, and keep the icon
+positions in `scripts/dmg/settings.py` in step with it.
+
 After a current DMG exists, verify the install/reinstall artifact path without touching
 your real `/Applications` folder:
 
