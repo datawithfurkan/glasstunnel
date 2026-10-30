@@ -689,8 +689,8 @@ function boundedStringField(value: unknown, max: number): string {
 const DEVICE_ID_PATTERN = /^gt-[0-9a-f]{16}$/;
 
 /** A device id as deviceIdFromPublicKey makes them: "gt-" and 16 hex digits. */
-function isDeviceId(value: string): boolean {
-  return DEVICE_ID_PATTERN.test(value);
+function isDeviceId(value: unknown): value is string {
+  return typeof value === "string" && DEVICE_ID_PATTERN.test(value);
 }
 
 function boolField(value: unknown): boolean {
