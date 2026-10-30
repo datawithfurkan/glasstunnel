@@ -41,6 +41,10 @@ Re-recorded at 2033fef2 for the 0.1.11 release after the account and Mac app
 changes (pull requests #38-#47: accounts on Convex, Mac rename and removal,
 account-wide access, Open on Phone, in-app updates, the menu bar icon and
 background mode); both Mac Screen lanes and `pnpm qa:screen-state` passed.
+For 0.1.12 (`f094160b`) only release packaging changed (the DMG installer
+window, the build script, the cask, the marketing site); `pnpm qa:screen-state`
+passed again at that commit, and the live lanes were not re-run because another
+project held the lab's web-app port.
 
 ## Limitations
 

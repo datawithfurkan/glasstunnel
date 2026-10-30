@@ -1,10 +1,10 @@
 # Agent App Release Evidence
 
-- Date: 2026-10-29T13:22:28Z
+- Date: 2026-10-30T09:18:12Z
 - App: Terminal
 - Result: pass
 - Environment: local PTY and shared-screen-session regression coverage
-- Glasstunnel commit: 2033fef2
+- Glasstunnel commit: f094160b
 - Artifact: artifacts/terminal-public-baseline.txt
 - Privacy review: pass
 
@@ -37,6 +37,8 @@ changes (pull requests #38-#47: accounts on Convex, Mac rename and removal,
 account-wide access, Open on Phone, in-app updates, the menu bar icon and
 background mode); `pnpm qa:terminal` passed; the Terminal path itself is
 unchanged.
+Re-recorded at f094160b for the 0.1.12 release (the designed DMG installer
+window, pull request #50); `pnpm qa:terminal` passed again.
 
 ## Limitations
 

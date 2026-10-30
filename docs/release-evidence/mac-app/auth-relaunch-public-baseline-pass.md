@@ -1,32 +1,30 @@
 # Mac App Release Evidence
 
-- Date: 2026-10-30T08:45:13Z
+- Date: 2026-10-30T09:16:05Z
 - Scope: auth-relaunch
 - Result: pass
-- Environment: notarized 0.1.11 release build installed over the published 0.1.10 app with an existing linked account, on macOS 27.0.1
-- Glasstunnel commit: 2033fef2
+- Environment: published 0.1.11 app updated in place to the notarized 0.1.12 release by its own updater, with an existing linked account, on macOS 27.0.1
+- Glasstunnel commit: f094160b
 - Artifact: artifacts/mac-live-public-baseline.txt
 - Privacy review: pass
 
 ## Passed
 
-The running `0.1.10` app was quit from its Glasstunnel menu, the notarized
-`0.1.11` app from `2033fef2` replaced it in Applications, and on launch it came
-back signed in and linked on its Access page (the account menu and Sign Out
-present) without a sign-in, device-link, or permission screen. Gatekeeper
-accepted the installed bundle as "Notarized Developer ID", the bundle reports
-version 0.1.11 and source commit `2033fef2`, and within ten seconds of launch the
-app held two established TLS connections to the relay and signaling front end.
-The same check passed a second time after the maintainer deleted the app and
-installed the published 0.1.10 DMG from the website before 0.1.11 went over it.
-The isolated install smoke separately proved a clean 0.1.10 → 0.1.11 upgrade of
-the same DMG.
+With the published `0.1.11` app running, **Glasstunnel > Check for Updates…** read
+the live feed at glasstunnel.io/appcast.xml and showed "A new version of
+Glasstunnel is available! Glasstunnel 0.1.12 is now available—you have 0.1.11"
+with the 0.1.12 release notes. **Install Update** downloaded the DMG, verified it,
+replaced the app in Applications, and relaunched it with no further prompt. The
+relaunched app reports version 0.1.12 and source commit `f094160b`, Gatekeeper
+accepts it, it came back signed in and linked on its Access page (the account menu
+and Sign Out present) without a sign-in, device-link, or permission screen, and it
+held two established connections to the relay and signaling front end. The
+isolated install smoke separately proved a clean 0.1.11 → 0.1.12 upgrade of the
+same DMG.
 
 ## Limitations
 
-This check did not include a phone-sized browser session against the installed
-app; the Mac Screen lanes at `2033fef2` cover the phone side with the lab host.
-Revoking the account or macOS permissions correctly requires the corresponding
-flow again. In-app updating itself starts with this version, so the first real
-Sparkle update is the move from 0.1.11 to the next release; the update smoke
-(`pnpm qa:mac:update-smoke`) covers the mechanism with a throwaway app.
+This check did not include a phone-sized browser session against the updated app;
+the Mac Screen lanes at `2033fef2` cover the phone side, and the app code is
+unchanged since then apart from its version. Revoking the account or macOS
+permissions correctly requires the corresponding flow again.

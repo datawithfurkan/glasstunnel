@@ -3,7 +3,7 @@
 Notable user-facing changes are recorded here. Glasstunnel follows semantic
 versioning after the first public beta; pre-release compatibility may still change.
 
-## Unreleased
+## 0.1.12 - A designed installer window
 
 ### Installing
 
@@ -12,6 +12,8 @@ versioning after the first public beta; pre-release compatibility may still chan
   "Drag Glasstunnel into Applications", and the next step (sign in on your
   phone at app.glasstunnel.io). The disk shows the Glasstunnel icon. Updates
   installed from inside the app skip this window.
+- This is the first version that Macs on 0.1.11 install from inside the app:
+  **Glasstunnel > Check for Updates…**, then **Install Update**.
 
 ## 0.1.11 - Updates in the app, a menu bar icon, account-wide access
 

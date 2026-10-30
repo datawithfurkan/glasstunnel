@@ -211,9 +211,14 @@ has_app_specific_passed_section() {
   esac
 }
 
+# Paths that cannot change what an agent-app record tested. Release packaging
+# (the build script, the DMG installer window, the cask) wraps the same app, and
+# the marketing site is not the web app; scripts/check-agent-app-release-claims.sh
+# treats them the same way.
 is_evidence_neutral_path() {
   case "$1" in
-    docs/*|scripts/check-*|scripts/record-*|scripts/*-smoke.sh|package.json|README.md|CONTRIBUTING.md|SECURITY.md|CODE_OF_CONDUCT.md|CHANGELOG.md|.github/*|.gitleaks.toml|.gitignore|.nvmrc)
+    docs/*|scripts/check-*|scripts/record-*|scripts/*-smoke.sh|package.json|README.md|CONTRIBUTING.md|SECURITY.md|CODE_OF_CONDUCT.md|CHANGELOG.md|.github/*|.gitleaks.toml|.gitignore|.nvmrc|\
+scripts/build-app.sh|scripts/dmg/*|apps/host-macos/Metadata/dmg/*|Casks/glasstunnel.rb|site/*)
       return 0
       ;;
     *)

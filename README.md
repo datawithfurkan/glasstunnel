@@ -44,7 +44,7 @@ see [the security model](docs/security.md) for storage and authorization limits.
 Pre-1.0 public beta. The account-first product journey, Mac Screen, scoped
 Terminal control, Developer ID signing, Apple notarization, Gatekeeper launch,
 and production permission/auth relaunch flow have release evidence. The signed,
-notarized `0.1.11` public beta release is available through GitHub Releases and Homebrew,
+notarized `0.1.12` public beta release is available through GitHub Releases and Homebrew,
 and from 0.1.11 the Mac app installs later versions itself.
 
 The public-beta support tiers are:
