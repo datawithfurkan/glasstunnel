@@ -15,6 +15,11 @@ versioning after the first public beta; pre-release compatibility may still chan
   you opened from Glasstunnel on your own Mac.
 - The web app and the site send HSTS and refuse to be framed by other sites.
 
+### Fixed
+
+- The Homebrew command on glasstunnel.io includes the tap's URL; without it,
+  `brew tap` looked for a repository that does not exist.
+
 ## 0.1.12 - A designed installer window
 
 ### Installing
