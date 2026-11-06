@@ -79,4 +79,7 @@ if [[ "$trust_supported" == "1" ]]; then
 fi
 
 brew audit --cask --strict "$CASK_REF"
+# `brew audit` runs RuboCop only for formulae, so check the cask's style
+# separately. It must run on the tap copy to pick up Homebrew's cask rules.
+brew style "$tap_root/Casks/$TOKEN.rb"
 echo "Tracked Homebrew cask audit passed."
