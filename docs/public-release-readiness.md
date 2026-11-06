@@ -87,10 +87,18 @@ the EdDSA-signed update feed, and cask metadata validation passed. It is the fir
 that updates itself in place (Sparkle 2, signed feed and DMG), and it adds the menu bar
 icon, background mode, and the Open on Phone QR panel.
 
-The `0.1.12` public beta release is the current public beta. Its signed and notarized DMG is tied
+The `0.1.12` public beta release added the designed installer window. Its signed and notarized DMG is tied
 to source commit `f094160b` and SHA-256
 `16291ce571d67d899cc42e5c1614d4fa847b26220d84f3a89e0d50bc4da795a0`.
 Developer ID signing/notarization, stapling, Gatekeeper verification, isolated
 install/reinstall and 0.1.11 → 0.1.12 upgrade, stable latest-download asset preparation,
 the EdDSA-signed update feed, and cask metadata validation passed. It adds the designed
 installer window and is the first version 0.1.11 installs from inside the app.
+
+The `0.1.13` public beta release is the current public beta. Its signed and notarized DMG is tied
+to source commit `a1d3537f` and SHA-256
+`9138bceccd8e5af33a7e0a71e0b881afee62d3274aa3f1293a63966e56ed60b1`.
+Developer ID signing/notarization, stapling, Gatekeeper verification, isolated
+install/reinstall and 0.1.12 → 0.1.13 upgrade, an in-app update from the published
+0.1.12, the EdDSA-signed update feed, and cask metadata validation passed. It ships the
+Mac side of the October security review.

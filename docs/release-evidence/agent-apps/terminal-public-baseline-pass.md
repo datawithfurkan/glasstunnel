@@ -1,10 +1,10 @@
 # Agent App Release Evidence
 
-- Date: 2026-10-30T09:18:12Z
+- Date: 2026-10-30T11:58:27Z
 - App: Terminal
 - Result: pass
 - Environment: local PTY and shared-screen-session regression coverage
-- Glasstunnel commit: f094160b
+- Glasstunnel commit: a1d3537f
 - Artifact: artifacts/terminal-public-baseline.txt
 - Privacy review: pass
 
@@ -39,6 +39,10 @@ background mode); `pnpm qa:terminal` passed; the Terminal path itself is
 unchanged.
 Re-recorded at f094160b for the 0.1.12 release (the designed DMG installer
 window, pull request #50); `pnpm qa:terminal` passed again.
+Re-recorded at a1d3537f for the 0.1.13 release after the Mac hardening (pull
+request #55: relay commands only from known browsers, the Mac-owned app switch,
+isolated hook Python, release builds ignoring overrides); `pnpm qa:terminal`
+and the default, retention, revocation and device-management lab journeys passed.
 
 ## Limitations
 
